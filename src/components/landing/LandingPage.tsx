@@ -31,7 +31,11 @@ import {
   Globe,
   Search,
   SlidersHorizontal,
+  Coins,
+  LogIn,
+  User,
 } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
 
 interface LandingPageProps {
   onEnterCanvas: (presetTopic?: string) => void;
@@ -44,6 +48,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   theme = 'light',
   onToggleTheme,
 }) => {
+  const { user, openAuthModal, openRechargeModal } = useAuth();
   const isDark = theme === 'dark';
   const [activeScenario, setActiveScenario] = useState<number>(0);
   const [demoExpanded, setDemoExpanded] = useState<boolean>(false);
@@ -161,6 +166,33 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                     <span className="hidden sm:inline text-slate-300">浅色</span>
                   </>
                 )}
+              </button>
+            )}
+
+            {user ? (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={openRechargeModal}
+                  className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-xs font-semibold transition-all cursor-pointer"
+                  title="充值 AI 算力点数"
+                >
+                  <Coins className="w-3.5 h-3.5 text-amber-400" />
+                  <span>{user.credits_balance.toLocaleString()} 点</span>
+                </button>
+                <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-white/5 border border-white/10 text-xs text-slate-300">
+                  <div className="w-5 h-5 rounded-md bg-indigo-600 text-white flex items-center justify-center font-bold text-[10px]">
+                    {user.name ? user.name[0].toUpperCase() : user.email[0].toUpperCase()}
+                  </div>
+                  <span className="hidden md:inline max-w-[100px] truncate">{user.name || user.email.split('@')[0]}</span>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => openAuthModal('signin')}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-xl border border-white/15 bg-white/10 hover:bg-white/15 text-white text-xs font-medium transition-all cursor-pointer"
+              >
+                <LogIn className="w-3.5 h-3.5 text-blue-400" />
+                <span>登录 / 注册</span>
               </button>
             )}
 

@@ -28,6 +28,7 @@ import { ChatNodeData, TextSelectionPayload, GroundingMetadata } from '../../typ
 import { getLayoutedElements } from '../../lib/layout';
 import { buildAncestorContext } from '../../lib/context';
 import { NodeActionsContext, NodeActionsContextValue } from '../../context/NodeActionsContext';
+import { useAuth } from '../../context/AuthContext';
 
 const nodeTypes = {
   chat: ChatCardNode,
@@ -198,6 +199,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
   );
   const [selectionPayload, setSelectionPayload] = useState<TextSelectionPayload | null>(null);
   const reactFlowInstance = useReactFlow();
+  const { updateCredits, openAuthModal, openRechargeModal } = useAuth();
 
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
@@ -368,6 +370,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
           body: JSON.stringify({
             messages: ancestorContext,
             model: activeModel,
@@ -381,6 +384,15 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
             const bodyJson = await response.json();
             if (bodyJson?.error) errDetail = sanitizeErrorMessage(bodyJson.error);
           } catch {}
+
+          if (response.status === 401) {
+            openAuthModal('signin');
+            errDetail = '请先登录后再提问，新用户赠送 50,000 算力点数';
+          } else if (response.status === 402) {
+            openRechargeModal();
+            errDetail = 'AI 算力点数不足（当前余额为 0），请充值后继续使用';
+          }
+
           throw new Error(errDetail);
         }
 
@@ -407,9 +419,15 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
                 if (parsed.grounding) {
                   receivedGrounding = parsed.grounding;
                 }
+                if (typeof parsed.creditsBalance === 'number') {
+                  updateCredits(parsed.creditsBalance);
+                }
                 if (parsed.done) {
                   if (parsed.grounding) {
                     receivedGrounding = parsed.grounding;
+                  }
+                  if (typeof parsed.creditsBalance === 'number') {
+                    updateCredits(parsed.creditsBalance);
                   }
                   streamCompleted = true;
                   break;

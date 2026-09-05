@@ -20,8 +20,19 @@ import {
   Compass,
   Sun,
   Moon,
+  Database,
+  Server,
+  Cloud,
+  Coins,
+  ShieldAlert,
+  LogIn,
+  LogOut,
+  User,
+  Zap,
 } from 'lucide-react';
 import { DeepDiveBoardMeta } from '../../types';
+import { fetchDbStatus } from '../../lib/storage';
+import { useAuth } from '../../context/AuthContext';
 
 interface TopbarProps {
   boardName: string;
@@ -64,6 +75,29 @@ export const Topbar: React.FC<TopbarProps> = ({
   const [nameInput, setNameInput] = useState(boardName);
   const [showBoardMenu, setShowBoardMenu] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [showDbMenu, setShowDbMenu] = useState(false);
+  const [dbStatus, setDbStatus] = useState<{
+    connected: boolean;
+    type: 'postgresql' | 'in-memory-fallback';
+    message: string;
+    canvasCount: number;
+    nodeCount: number;
+    databaseUrlConfigured: boolean;
+  } | null>(null);
+  const [isLoadingDb, setIsLoadingDb] = useState(false);
+  const [showUserMenu, setShowUserMenu] = useState(false);
+
+  const { user, openAuthModal, openRechargeModal, openAdminModal, logout } = useAuth();
+
+  const handleOpenDbMenu = async () => {
+    setShowDbMenu((prev) => !prev);
+    if (!showDbMenu) {
+      setIsLoadingDb(true);
+      const status = await fetchDbStatus();
+      setDbStatus(status);
+      setIsLoadingDb(false);
+    }
+  };
 
   const handleNameSubmit = () => {
     setIsEditingName(false);
@@ -245,6 +279,101 @@ export const Topbar: React.FC<TopbarProps> = ({
           <Maximize2 className="w-4 h-4" />
         </button>
 
+        {/* Database Status Dropdown */}
+        <div className="relative">
+          <button
+            onClick={handleOpenDbMenu}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium transition-all ${
+              dbStatus?.connected
+                ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-900/50 border border-emerald-300/50 dark:border-emerald-700/50'
+                : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
+            }`}
+            title="查看 PostgreSQL 数据库连接与同步状态"
+          >
+            <Database className={`w-3.5 h-3.5 ${dbStatus?.connected ? 'text-emerald-500' : 'text-slate-500 dark:text-slate-400'}`} />
+            <span className="hidden sm:inline">
+              {dbStatus?.connected ? 'PG 已连接' : '数据库'}
+            </span>
+          </button>
+
+          {showDbMenu && (
+            <div className="absolute top-full right-0 mt-1.5 w-72 sm:w-80 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl p-4 z-50 animate-in fade-in zoom-in-95">
+              <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-100 dark:border-slate-800">
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center">
+                    <Database className="w-3.5 h-3.5" />
+                  </div>
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-100">
+                    PostgreSQL 存储状态
+                  </span>
+                </div>
+                <button
+                  onClick={handleOpenDbMenu}
+                  className="text-[11px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {isLoadingDb ? (
+                <div className="py-6 text-center text-xs text-slate-400 animate-pulse">
+                  正在探测数据库连接...
+                </div>
+              ) : (
+                <div className="space-y-3 text-xs">
+                  <div className="flex items-start gap-2 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60">
+                    <div className="mt-0.5">
+                      {dbStatus?.connected ? (
+                        <span className="flex h-2 w-2 relative">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex rounded-full h-2 w-2 bg-amber-400"></span>
+                      )}
+                    </div>
+                    <div className="flex-1">
+                      <div className="font-semibold text-slate-800 dark:text-slate-200">
+                        {dbStatus?.connected
+                          ? 'PostgreSQL 数据库在线'
+                          : '本地存储与内存回退中'}
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
+                        {dbStatus?.message}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-center">
+                    <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800">
+                      <div className="text-[10px] text-slate-400">已保存画板</div>
+                      <div className="text-sm font-bold text-slate-800 dark:text-slate-100 mt-0.5">
+                        {dbStatus?.canvasCount ?? 1}
+                      </div>
+                    </div>
+                    <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800">
+                      <div className="text-[10px] text-slate-400">思维节点总量</div>
+                      <div className="text-sm font-bold text-slate-800 dark:text-slate-100 mt-0.5">
+                        {dbStatus?.nodeCount ?? 0}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                    <div className="flex items-center gap-1 text-slate-700 dark:text-slate-300 font-medium">
+                      <Server className="w-3 h-3 text-blue-500" />
+                      <span>后端 RESTful API：已全面接驳</span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 leading-tight">
+                      已生成完整数据库设计规范文档与初始化 SQL 脚本（详见根目录 DATABASE_DESIGN.md 与 migrations/）。
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
         {/* Export Dropdown */}
         <div className="relative">
           <button
@@ -295,6 +424,121 @@ export const Topbar: React.FC<TopbarProps> = ({
         >
           <RotateCcw className="w-4 h-4" />
         </button>
+
+        <div className="h-4 w-[1px] bg-slate-200 dark:bg-slate-800 mx-0.5" />
+
+        {/* User Account & Credits Section */}
+        {user ? (
+          <div className="flex items-center gap-2">
+            {/* Credits Pill with Top-up Trigger */}
+            <button
+              onClick={openRechargeModal}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 dark:hover:bg-amber-900/50 text-amber-800 dark:text-amber-300 border border-amber-200/80 dark:border-amber-800/80 text-xs font-semibold transition-all cursor-pointer shadow-2xs"
+              title="点击充值 AI 算力点数"
+            >
+              <Coins className="w-3.5 h-3.5 text-amber-500" />
+              <span>{user.credits_balance.toLocaleString()}</span>
+              <span className="text-[10px] font-normal opacity-75">点</span>
+              <div className="w-3.5 h-3.5 rounded-full bg-amber-200/60 dark:bg-amber-800/60 flex items-center justify-center text-amber-700 dark:text-amber-200 ml-0.5">
+                <Plus className="w-2.5 h-2.5" />
+              </div>
+            </button>
+
+            {/* Admin Console Entry Button */}
+            {user.role === 'admin' && (
+              <button
+                onClick={openAdminModal}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/50 dark:hover:bg-purple-900/50 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 text-xs font-medium transition-colors cursor-pointer"
+                title="打开运营管理后台"
+              >
+                <ShieldAlert className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
+                <span className="hidden xl:inline">运营后台</span>
+              </button>
+            )}
+
+            {/* User Dropdown */}
+            <div className="relative">
+              <button
+                onClick={() => setShowUserMenu(!showUserMenu)}
+                className="flex items-center gap-1.5 p-1 sm:px-2.5 sm:py-1 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer text-xs"
+              >
+                <div className="w-6 h-6 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-bold text-[11px]">
+                  {user.name ? user.name[0].toUpperCase() : user.email[0].toUpperCase()}
+                </div>
+                <span className="hidden lg:inline text-slate-700 dark:text-slate-200 font-medium max-w-[90px] truncate">
+                  {user.name || user.email.split('@')[0]}
+                </span>
+                <span
+                  className={`hidden sm:inline px-1.5 py-0.2 rounded text-[9px] font-bold ${
+                    user.role === 'admin'
+                      ? 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300'
+                      : user.role === 'vip'
+                      ? 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300'
+                      : 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300'
+                  }`}
+                >
+                  {user.role.toUpperCase()}
+                </span>
+              </button>
+
+              {showUserMenu && (
+                <div className="absolute top-full right-0 mt-1.5 w-52 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl p-2 z-50 animate-in fade-in zoom-in-95">
+                  <div className="px-2.5 py-2 border-b border-slate-100 dark:border-slate-800">
+                    <div className="text-xs font-semibold text-slate-800 dark:text-slate-100 truncate">
+                      {user.name || '探索者'}
+                    </div>
+                    <div className="text-[10px] text-slate-400 truncate">{user.email}</div>
+                  </div>
+
+                  <div className="py-1">
+                    <button
+                      onClick={() => {
+                        setShowUserMenu(false);
+                        openRechargeModal();
+                      }}
+                      className="w-full text-left px-2.5 py-1.5 text-xs flex items-center gap-2 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg"
+                    >
+                      <Zap className="w-3.5 h-3.5 text-amber-500" />
+                      <span>充值 AI 算力</span>
+                    </button>
+
+                    {user.role === 'admin' && (
+                      <button
+                        onClick={() => {
+                          setShowUserMenu(false);
+                          openAdminModal();
+                        }}
+                        className="w-full text-left px-2.5 py-1.5 text-xs flex items-center gap-2 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg"
+                      >
+                        <ShieldAlert className="w-3.5 h-3.5 text-purple-600" />
+                        <span>运营管理控制台</span>
+                      </button>
+                    )}
+
+                    <button
+                      onClick={() => {
+                        setShowUserMenu(false);
+                        logout();
+                      }}
+                      className="w-full text-left px-2.5 py-1.5 text-xs flex items-center gap-2 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg"
+                    >
+                      <LogOut className="w-3.5 h-3.5" />
+                      <span>安全退出登录</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={() => openAuthModal('signin')}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white text-xs font-medium shadow-xs transition-colors cursor-pointer"
+          >
+            <LogIn className="w-3.5 h-3.5" />
+            <span>登录 / 注册</span>
+          </button>
+        )}
       </div>
     </header>
   );

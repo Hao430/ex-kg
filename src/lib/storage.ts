@@ -73,8 +73,55 @@ export function saveBoard(board: StoredBoard): void {
       list.unshift(meta);
     }
     saveBoardList(list);
+
+    // Asynchronously sync to backend (PostgreSQL)
+    syncBoardToBackend(board).catch((err) => {
+      console.warn('Background backend sync skipped or failed:', err?.message || err);
+    });
   } catch (e) {
     console.error(`Failed to save board ${board.id}:`, e);
+  }
+}
+
+/**
+ * Sync board to backend API
+ */
+export async function syncBoardToBackend(board: StoredBoard): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/canvases/${encodeURIComponent(board.id)}/save`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        title: board.name,
+        viewport: board.viewport,
+        nodes: board.nodes,
+        edges: board.edges,
+      }),
+    });
+    return res.ok;
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Fetch database connection status from backend
+ */
+export async function fetchDbStatus(): Promise<{
+  connected: boolean;
+  type: 'postgresql' | 'in-memory-fallback';
+  message: string;
+  canvasCount: number;
+  nodeCount: number;
+  databaseUrlConfigured: boolean;
+} | null> {
+  try {
+    const res = await fetch('/api/db/status');
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (e) {
+    return null;
   }
 }
 

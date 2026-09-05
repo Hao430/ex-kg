@@ -17,8 +17,12 @@ import {
   StoredBoard,
 } from './lib/storage';
 import { DeepDiveBoardMeta } from './types';
+import { AuthProvider } from './context/AuthContext';
+import { AuthModal } from './components/auth/AuthModal';
+import { RechargeModal } from './components/ui/RechargeModal';
+import { AdminDashboardModal } from './components/admin/AdminDashboardModal';
 
-export default function App() {
+function MainApp() {
   const [viewMode, setViewMode] = useState<'landing' | 'canvas'>(() => {
     try {
       const params = new URLSearchParams(window.location.search);
@@ -338,5 +342,16 @@ export default function App() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <MainApp />
+      <AuthModal />
+      <RechargeModal />
+      <AdminDashboardModal />
+    </AuthProvider>
   );
 }

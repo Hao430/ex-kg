@@ -77,3 +77,40 @@ export interface TextSelectionPayload {
     height: number;
   };
 }
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  name: string;
+  role: 'user' | 'vip' | 'admin';
+  credits_balance: number;
+  is_active?: boolean;
+  failed_attempts?: number;
+  locked_until?: string | null;
+  last_login_at?: string | null;
+  created_at?: string;
+  canvas_count?: number;
+  total_tokens_used?: number;
+}
+
+export interface CreditTransaction {
+  id: string;
+  user_id: string;
+  user_email?: string;
+  canvas_id: string | null;
+  model_name: string;
+  tokens_consumed: number;
+  balance_after: number;
+  action_type: string;
+  created_at: string;
+}
+
+export interface AdminOverview {
+  totalUsers: number;
+  activeUsers7d: number;
+  vipUsers: number;
+  totalCanvases: number;
+  todayTokens: number;
+  monthlyTokens: number;
+  modelDistribution: Record<string, number>;
+}
