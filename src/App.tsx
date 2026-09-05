@@ -234,7 +234,7 @@ function MainApp() {
               id: `root-${Date.now()}`,
               type: 'chat',
               position: { x: 120, y: 160 },
-              draggable: true,
+              draggable: false,
               data: {
                 title: presetTopic,
                 depth: 0,

@@ -212,9 +212,6 @@ export const ChatCardNode: React.FC<NodeProps> = ({ id, data, selected }) => {
             <span className="text-[11px] font-semibold text-indigo-900 dark:text-indigo-200">
               探索灵感
             </span>
-            <span className="px-1.5 py-0.2 text-[9px] font-medium rounded-full bg-indigo-100/60 dark:bg-indigo-900/60 text-indigo-600 dark:text-indigo-300">
-              深度 #{nodeData.depth}
-            </span>
           </div>
 
           <Tooltip content="关闭该探索建议" side="top">
@@ -333,10 +330,6 @@ export const ChatCardNode: React.FC<NodeProps> = ({ id, data, selected }) => {
               <span>就绪</span>
             </span>
           )}
-
-          <span className="shrink-0 px-2 py-0.5 text-[10px] font-medium tracking-wide rounded-full bg-slate-200/70 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-            {nodeData.depth === 0 ? '主线' : `深度 #${nodeData.depth}`}
-          </span>
         </div>
 
         {/* Header Action Buttons */}
@@ -410,7 +403,8 @@ export const ChatCardNode: React.FC<NodeProps> = ({ id, data, selected }) => {
           <div
             ref={contentRef}
             onWheel={(e) => e.stopPropagation()}
-            className="nowheel nopan p-4 max-h-[380px] overflow-y-auto overscroll-contain flex flex-col gap-3 text-sm text-slate-700 dark:text-slate-200 select-text"
+            onMouseDown={(e) => e.stopPropagation()}
+            className="nodrag nowheel nopan p-4 max-h-[380px] overflow-y-auto overscroll-contain flex flex-col gap-3 text-sm text-slate-700 dark:text-slate-200 select-text cursor-text"
           >
             {/* If node is an empty root node without a question yet */}
             {!hasQuestion && (

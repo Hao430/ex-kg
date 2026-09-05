@@ -102,7 +102,7 @@ const INITIAL_RAW_NODES: Node[] = [
     id: 'sug-init-1',
     type: 'chat',
     position: { x: 620, y: 60 },
-    draggable: true,
+    draggable: false,
     data: {
       title: 'Shor 算法加速机理',
       depth: 1,
@@ -127,7 +127,7 @@ const INITIAL_RAW_NODES: Node[] = [
     id: 'sug-init-2',
     type: 'chat',
     position: { x: 1040, y: 320 },
-    draggable: true,
+    draggable: false,
     data: {
       title: '量子退相干核心瓶颈',
       depth: 1,
@@ -307,7 +307,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
         const sugNode: Node = {
           id: sugId,
           type: 'chat',
-          draggable: true,
+          draggable: false,
           position: { x: 0, y: 0 }, // Layout will position correctly
           data: {
             title,
@@ -757,7 +757,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
           x: (sourceNode?.position.x || 0) + 520,
           y: sourceNode?.position.y || 0,
         },
-        draggable: true,
+        draggable: false,
         data: {
           title,
           depth,
@@ -940,7 +940,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       id: newId,
       type: 'chat',
       position: { x: newX, y: newY },
-      draggable: true,
+      draggable: false,
       data: {
         title: '新探索主题',
         depth: 0,
@@ -1004,7 +1004,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
           x: sourcePos.x + 380,
           y: sourcePos.y - 20,
         },
-        draggable: true,
+        draggable: false,
         data: {
           title: `推演: ${noteTitle.slice(0, 14)}`,
           depth: 1,
@@ -1102,12 +1102,23 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       };
 
       saveBoard(newBoard);
+
+      // Remove exported branch nodes and associated edges from current canvas to boost performance
+      setNodes((nds) => nds.filter((n) => !visitedNodeIds.has(n.id)));
+      setEdges((eds) =>
+        eds.filter((e) => !visitedNodeIds.has(e.source) && !visitedNodeIds.has(e.target))
+      );
+
+      setTimeout(() => {
+        applyLayout();
+      }, 50);
+
       setApiWarning(
-        `已成功将子分支「${title}」导出为独立画板（包含 ${subNodes.length} 个节点）！可在顶部画板列表中随时切换。`
+        `已成功将分支「${title}」及 ${subNodes.length} 个节点导出为独立画板《${newBoardName}》，并已从当前画布移除以显著提升性能！`
       );
       setTimeout(() => setApiWarning(null), 6000);
     },
-    [isVip, openRechargeModal]
+    [applyLayout, isVip, openRechargeModal, setEdges, setNodes]
   );
 
   // Add note node placed near viewport center

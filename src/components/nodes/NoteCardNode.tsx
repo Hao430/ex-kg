@@ -79,14 +79,13 @@ export const NoteCardNode: React.FC<NodeProps> = ({ id, data, selected }) => {
       )}
 
       {/* Left Handle: "结论下游" (Target) */}
-      <Tooltip content="【结论下游】接收来自上游卡片的推导或结论连线" side="left">
-        <Handle
-          type="target"
-          position={Position.Left}
-          id="in"
-          className="!w-4 !h-4 !bg-amber-500 !border-2 !border-white dark:!border-slate-900 !-left-[8px] transition-all hover:!scale-150 hover:!bg-amber-600 shadow-sm cursor-crosshair"
-        />
-      </Tooltip>
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="in"
+        title="【结论下游】接收来自上游卡片的推导或结论连线"
+        className="!w-4 !h-4 !bg-amber-500 !border-2 !border-white dark:!border-slate-900 !-left-[8px] !z-20 transition-all hover:!scale-150 hover:!bg-amber-600 shadow-sm cursor-crosshair"
+      />
 
       {/* Header with Grip & Drag indication */}
       <div className="flex items-center justify-between pb-2 border-b border-amber-200/70 dark:border-amber-900/60 mb-2 select-none">
@@ -136,9 +135,10 @@ export const NoteCardNode: React.FC<NodeProps> = ({ id, data, selected }) => {
         onChange={(e) => setContent(e.target.value)}
         onBlur={handleBlur}
         onKeyDown={handleKeyDown}
+        onMouseDown={(e) => e.stopPropagation()}
         placeholder="记录思考沉淀、提炼核心结论或行动项（按 Tab 键自动延伸下一个相连便签）..."
         rows={5}
-        className="nodrag nowheel w-full text-xs text-amber-950 dark:text-amber-100 placeholder:text-amber-700/50 dark:placeholder:text-amber-400/40 bg-transparent resize-none outline-none leading-relaxed font-sans"
+        className="nodrag nowheel nopan select-text w-full text-xs text-amber-950 dark:text-amber-100 placeholder:text-amber-700/50 dark:placeholder:text-amber-400/40 bg-transparent resize-none outline-none leading-relaxed font-sans"
       />
 
       {/* Bottom Guidance & Branch Action Bar */}
@@ -174,14 +174,13 @@ export const NoteCardNode: React.FC<NodeProps> = ({ id, data, selected }) => {
       </div>
 
       {/* Right Handle: "前置假设" (Source) */}
-      <Tooltip content="【前置假设】按住拖拽连线至后续便签或 AI 探索卡片" side="right">
-        <Handle
-          type="source"
-          position={Position.Right}
-          id="out"
-          className="!w-4 !h-4 !bg-amber-500 !border-2 !border-white dark:!border-slate-900 !-right-[8px] transition-all hover:!scale-150 hover:!bg-amber-600 shadow-sm cursor-crosshair"
-        />
-      </Tooltip>
+      <Handle
+        type="source"
+        position={Position.Right}
+        id="out"
+        title="【前置假设】按住拖拽连线至后续便签或 AI 探索卡片"
+        className="!w-4 !h-4 !bg-amber-500 !border-2 !border-white dark:!border-slate-900 !-right-[8px] !z-20 transition-all hover:!scale-150 hover:!bg-amber-600 shadow-sm cursor-crosshair"
+      />
     </div>
   );
 };

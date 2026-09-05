@@ -53,7 +53,7 @@ export function getLayoutedElements(
 
     return {
       ...node,
-      draggable: true,
+      draggable: node.type === 'note',
       position: {
         x: nodeWithPosition ? nodeWithPosition.x - width / 2 : node.position.x,
         y: nodeWithPosition ? nodeWithPosition.y - height / 2 : node.position.y,
