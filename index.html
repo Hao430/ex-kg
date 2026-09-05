@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DeepDive - 无限画布式 AI 深度思维与分支探索</title>
+    <meta name="description" content="DeepDive - 无限画布式 AI 深度思维与分支探索认知平台" />
+    <meta property="og:title" content="DeepDive - 无限画布式 AI 深度思维与分支探索" />
+    <meta property="og:description" content="DeepDive - 无限画布式 AI 深度思维与分支探索认知平台" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <script>
+      // Prevent benign ResizeObserver loop limit/undelivered notifications from bubbling as unhandled exceptions
+      window.addEventListener('error', function (e) {
+        if (
+          e &&
+          e.message &&
+          (e.message.indexOf('ResizeObserver') !== -1 ||
+            e.message.indexOf('resize observer') !== -1)
+        ) {
+          e.stopImmediatePropagation();
+          if (e.preventDefault) e.preventDefault();
+          return true;
+        }
+      }, true);
+      window.addEventListener('unhandledrejection', function (e) {
+        if (
+          e &&
+          e.reason &&
+          e.reason.message &&
+          (e.reason.message.indexOf('ResizeObserver') !== -1 ||
+            e.reason.message.indexOf('resize observer') !== -1)
+        ) {
+          e.stopImmediatePropagation();
+          if (e.preventDefault) e.preventDefault();
+          return true;
+        }
+      }, true);
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
