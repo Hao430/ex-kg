@@ -82,8 +82,10 @@ export interface AuthUser {
   id: string;
   email: string;
   name: string;
+  avatar?: string;
   role: 'user' | 'vip' | 'admin';
   credits_balance: number;
+  vip_expires_at?: string | null;
   is_active?: boolean;
   failed_attempts?: number;
   locked_until?: string | null;
@@ -91,6 +93,27 @@ export interface AuthUser {
   created_at?: string;
   canvas_count?: number;
   total_tokens_used?: number;
+}
+
+export type FeedbackType = 'suggestion' | 'bug' | 'ux' | 'other';
+
+export interface FeedbackPayload {
+  type: FeedbackType;
+  rating: number;
+  content: string;
+  contactInfo?: string;
+}
+
+export type SubscriptionPlanId = 'weekly' | 'monthly' | 'yearly';
+
+export interface SubscriptionPlan {
+  id: SubscriptionPlanId;
+  name: string;
+  durationDays: number;
+  price: string;
+  popular?: boolean;
+  desc: string;
+  badge?: string;
 }
 
 export interface CreditTransaction {
@@ -114,3 +137,18 @@ export interface AdminOverview {
   monthlyTokens: number;
   modelDistribution: Record<string, number>;
 }
+
+export interface AiModelConfig {
+  provider: 'gemini' | 'openai';
+  openai_base_url: string;
+  openai_api_key?: string;
+  has_openai_key?: boolean;
+  openai_model: string;
+  gemini_model: string;
+  temperature: number;
+  max_tokens: number;
+  custom_system_prompt?: string;
+  updated_at?: string;
+  updated_by?: string;
+}
+

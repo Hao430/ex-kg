@@ -17,10 +17,12 @@ import {
   StoredBoard,
 } from './lib/storage';
 import { DeepDiveBoardMeta } from './types';
-import { AuthProvider } from './context/AuthContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { AuthModal } from './components/auth/AuthModal';
 import { RechargeModal } from './components/ui/RechargeModal';
 import { AdminDashboardModal } from './components/admin/AdminDashboardModal';
+import { UserProfileModal } from './components/ui/UserProfileModal';
+import { FeedbackModal } from './components/ui/FeedbackModal';
 
 function MainApp() {
   const [viewMode, setViewMode] = useState<'landing' | 'canvas'>(() => {
@@ -41,6 +43,9 @@ function MainApp() {
   const [initialNodes, setInitialNodes] = useState<Node[] | undefined>(undefined);
   const [initialEdges, setInitialEdges] = useState<Edge[] | undefined>(undefined);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [nodeCount, setNodeCount] = useState<number>(1);
+
+  const { isVip, openRechargeModal } = useAuth();
 
   // Global Dark Mode state ('light' | 'dark')
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -107,6 +112,7 @@ function MainApp() {
         setInitialEdges(loaded.edges);
         currentNodesRef.current = loaded.nodes;
         currentEdgesRef.current = loaded.edges;
+        setNodeCount(loaded.nodes.length);
       }
     } else {
       const defaultMeta: DeepDiveBoardMeta = {
@@ -116,6 +122,7 @@ function MainApp() {
         nodeCount: 1,
       };
       setBoards([defaultMeta]);
+      setNodeCount(1);
     }
   }, []);
 
@@ -124,6 +131,7 @@ function MainApp() {
     (nodes: Node[], edges: Edge[]) => {
       currentNodesRef.current = nodes;
       currentEdgesRef.current = edges;
+      setNodeCount(nodes.length);
 
       if (saveTimeoutRef.current) {
         window.clearTimeout(saveTimeoutRef.current);
@@ -168,11 +176,16 @@ function MainApp() {
       setInitialEdges(loaded.edges);
       currentNodesRef.current = loaded.nodes;
       currentEdgesRef.current = loaded.edges;
+      setNodeCount(loaded.nodes.length);
       showToast(`已载入画板「${loaded.name}」`);
     }
   };
 
   const handleNewBoard = () => {
+    if (!isVip && boards.length >= 3) {
+      openRechargeModal('免费版用户最多支持创建 3 个独立画板。升级 Pro 会员解锁无限画板与无限节点！');
+      return;
+    }
     const newId = `board-${Date.now()}`;
     const newName = `探索课题 #${boards.length + 1}`;
     const emptyBoard: StoredBoard = {
@@ -191,6 +204,7 @@ function MainApp() {
     setInitialEdges([]);
     currentNodesRef.current = [];
     currentEdgesRef.current = [];
+    setNodeCount(0);
     showToast(`已创建新思考画板「${newName}」`);
   };
 
@@ -206,6 +220,10 @@ function MainApp() {
       if (existing) {
         handleSwitchBoard(existing.id);
       } else {
+        if (!isVip && boards.length >= 3) {
+          openRechargeModal('免费版用户最多支持创建 3 个独立画板。升级 Pro 会员解锁无限画板！');
+          return;
+        }
         const newId = `board-${Date.now()}`;
         const newBoard: StoredBoard = {
           id: newId,
@@ -316,6 +334,7 @@ function MainApp() {
         onGoToLanding={handleGoToLanding}
         theme={theme}
         onToggleTheme={toggleTheme}
+        nodeCount={nodeCount}
       />
 
       {/* Main Infinite Canvas Viewport */}
@@ -350,6 +369,8 @@ export default function App() {
     <AuthProvider>
       <MainApp />
       <AuthModal />
+      <UserProfileModal />
+      <FeedbackModal />
       <RechargeModal />
       <AdminDashboardModal />
     </AuthProvider>

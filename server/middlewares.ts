@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import rateLimit from 'express-rate-limit';
-import { findSession, UserRecord, SessionRecord } from './db.js';
+import { findSession, createUser, createSession, UserRecord, SessionRecord } from './db.js';
+import { hashPassword, generateSessionToken } from './auth.js';
 
 // Extend Express Request type
 declare global {
@@ -41,45 +42,74 @@ export function extractToken(req: Request): string | null {
 }
 
 /**
- * Required authentication middleware
+ * Seamless authentication middleware:
+ * - If valid session token exists: verifies and attaches user
+ * - If unauthenticated: automatically provisions a guest exploration account with 50,000 trial credits
+ *   so new visitors can immediately explore topics without friction.
  */
 export async function authMiddleware(req: Request, res: Response, next: NextFunction): Promise<void> {
   const token = extractToken(req);
-  if (!token) {
-    res.status(401).json({
-      error: '请先登录后继续访问',
-      code: 'UNAUTHORIZED',
-    });
-    return;
+
+  if (token) {
+    try {
+      const result = await findSession(token);
+      if (result) {
+        const { session, user } = result;
+
+        if (!user.is_active) {
+          res.clearCookie('session_token', { path: '/' });
+          res.status(403).json({
+            error: '账号已被系统冻结，请联系运营管理员',
+            code: 'ACCOUNT_FROZEN',
+          });
+          return;
+        }
+
+        req.user = user;
+        req.session = session;
+        next();
+        return;
+      }
+    } catch (error) {
+      console.error('Session lookup error:', error);
+    }
   }
 
+  // No valid token: auto-provision guest account with 50,000 initial credits
   try {
-    const result = await findSession(token);
-    if (!result) {
-      res.clearCookie('session_token', { path: '/' });
-      res.status(401).json({
-        error: '登录凭证已失效，请重新登录',
-        code: 'SESSION_EXPIRED',
-      });
-      return;
-    }
+    const guestId = `guest_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    const guestEmail = `${guestId}@guest.deepdive.ai`;
+    const passwordHash = await hashPassword(`guest_pass_${Date.now()}`);
 
-    const { session, user } = result;
+    const guestUser = await createUser({
+      email: guestEmail,
+      passwordHash,
+      name: `探索者 #${guestId.slice(-4).toUpperCase()}`,
+      role: 'user',
+      initialCredits: 50000,
+    });
 
-    if (!user.is_active) {
-      res.clearCookie('session_token', { path: '/' });
-      res.status(403).json({
-        error: '账号已被系统冻结，请联系运营管理员',
-        code: 'ACCOUNT_FROZEN',
-      });
-      return;
-    }
+    const newToken = generateSessionToken();
+    const newSession = await createSession({
+      userId: guestUser.id,
+      token: newToken,
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
 
-    req.user = user;
-    req.session = session;
+    res.cookie('session_token', newToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 7 * 24 * 3600 * 1000,
+    });
+
+    req.user = guestUser;
+    req.session = newSession;
     next();
-  } catch (error) {
-    console.error('Auth middleware error:', error);
+  } catch (err) {
+    console.error('Auto guest provision error:', err);
     res.status(500).json({ error: '认证服务异常' });
   }
 }
@@ -160,17 +190,17 @@ export function validateInputLimits(req: Request, res: Response, next: NextFunct
   // 1. Single question length check
   if (lastContent.length > 4000) {
     res.status(400).json({
-      error: `提问内容超出 4,000 字符限制 (当前为 ${lastContent.length} 字符)`,
-      code: 'QUESTION_TOO_LONG',
+      error: `单次提问内容过长（当前 ${lastContent.length} 字符，上限 4,000 字符）`,
+      code: 'PROMPT_TOO_LONG',
     });
     return;
   }
 
-  // 2. Total context length check
-  const totalChars = messages.reduce((acc: number, m: any) => acc + (typeof m.content === 'string' ? m.content.length : 0), 0);
-  if (totalChars > 16000) {
+  // 2. Total context history length check
+  const totalLength = messages.reduce((acc, msg) => acc + (typeof msg.content === 'string' ? msg.content.length : 0), 0);
+  if (totalLength > 16000) {
     res.status(400).json({
-      error: `历史上下文超出 16,000 字符限制 (当前为 ${totalChars} 字符)`,
+      error: `对话历史上下文过长（当前 ${totalLength} 字符，上限 16,000 字符）`,
       code: 'CONTEXT_TOO_LONG',
     });
     return;
@@ -180,36 +210,30 @@ export function validateInputLimits(req: Request, res: Response, next: NextFunct
 }
 
 /**
- * Dynamic rate limiter per role:
- * user: 10/min, vip: 30/min, admin: 100/min
+ * Dynamic role-based rate limiter
+ * - Admin: 120 req/min
+ * - VIP: 60 req/min
+ * - Normal user / guest: 25 req/min
  */
-const rateLimitBuckets = new Map<string, { count: number; resetTime: number }>();
-
-export function roleBasedRateLimiter(req: Request, res: Response, next: NextFunction): void {
-  const userId = req.user?.id || req.ip || 'anonymous';
-  const role = req.user?.role || 'user';
-  const limit = role === 'admin' ? 100 : role === 'vip' ? 30 : 10;
-  const now = Date.now();
-
-  let bucket = rateLimitBuckets.get(userId);
-  if (!bucket || now > bucket.resetTime) {
-    bucket = { count: 1, resetTime: now + 60 * 1000 };
-    rateLimitBuckets.set(userId, bucket);
-  } else {
-    bucket.count++;
-  }
-
-  res.setHeader('X-RateLimit-Limit', limit);
-  res.setHeader('X-RateLimit-Remaining', Math.max(0, limit - bucket.count));
-  res.setHeader('X-RateLimit-Reset', Math.ceil(bucket.resetTime / 1000));
-
-  if (bucket.count > limit) {
+export const roleBasedRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: (req: Request) => {
+    const role = req.user?.role;
+    if (role === 'admin') return 120;
+    if (role === 'vip') return 60;
+    return 25;
+  },
+  keyGenerator: (req: Request) => (req.user ? `user_${req.user.id}` : req.ip || 'anonymous'),
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req: Request, res: Response) => {
+    const role = req.user?.role || 'user';
+    const limit = role === 'admin' ? 120 : role === 'vip' ? 60 : 25;
     res.status(429).json({
-      error: `请求频率超出限制（当前角色配额为每分钟 ${limit} 次），请稍后重试`,
+      error: `请求过于频繁，当前每分钟上限为 ${limit} 次，请稍候再试`,
       code: 'RATE_LIMIT_EXCEEDED',
+      role,
+      limit,
     });
-    return;
-  }
-
-  next();
-}
+  },
+});

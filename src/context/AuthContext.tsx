@@ -1,12 +1,16 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { AuthUser } from '../types';
+import { AuthUser, FeedbackPayload } from '../types';
 
 interface AuthContextType {
   user: AuthUser | null;
   loading: boolean;
+  isVip: boolean;
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string; remainingMinutes?: number }>;
   register: (email: string, password: string, name?: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
+  updateProfile: (data: { name?: string; avatar?: string }) => Promise<{ success: boolean; error?: string }>;
+  submitFeedback: (data: FeedbackPayload) => Promise<{ success: boolean; message?: string; error?: string }>;
+  subscribe: (plan: 'weekly' | 'monthly' | 'yearly') => Promise<{ success: boolean; message?: string; error?: string }>;
   recharge: (amount: number) => Promise<{ success: boolean; newBalance?: number; error?: string }>;
   updateCredits: (newBalance: number) => void;
   // Modals state
@@ -14,8 +18,15 @@ interface AuthContextType {
   authModalMode: 'signin' | 'signup';
   openAuthModal: (mode?: 'signin' | 'signup') => void;
   closeAuthModal: () => void;
+  userProfileModalOpen: boolean;
+  openUserProfileModal: () => void;
+  closeUserProfileModal: () => void;
+  feedbackModalOpen: boolean;
+  openFeedbackModal: () => void;
+  closeFeedbackModal: () => void;
   rechargeModalOpen: boolean;
-  openRechargeModal: () => void;
+  upgradeModalReason: string | null;
+  openRechargeModal: (reason?: string) => void;
   closeRechargeModal: () => void;
   adminModalOpen: boolean;
   openAdminModal: () => void;
@@ -32,8 +43,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Modals
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalMode, setAuthModalMode] = useState<'signin' | 'signup'>('signin');
+  const [userProfileModalOpen, setUserProfileModalOpen] = useState(false);
+  const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
   const [rechargeModalOpen, setRechargeModalOpen] = useState(false);
+  const [upgradeModalReason, setUpgradeModalReason] = useState<string | null>(null);
   const [adminModalOpen, setAdminModalOpen] = useState(false);
+
+  // Determine VIP active status
+  const isVip = Boolean(
+    user &&
+      (user.role === 'admin' ||
+        user.role === 'vip' ||
+        (user.vip_expires_at && new Date(user.vip_expires_at).getTime() > Date.now()))
+  );
 
   const refreshUser = useCallback(async () => {
     try {
@@ -103,6 +125,45 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const updateProfile = async (data: { name?: string; avatar?: string }) => {
+    try {
+      const res = await fetch('/api/auth/profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(data),
+      });
+      const resData = await res.json();
+      if (!res.ok) {
+        return { success: false, error: resData.error || '更新失败' };
+      }
+      if (resData.user) {
+        setUser(resData.user);
+      }
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e?.message || '网络连接异常' };
+    }
+  };
+
+  const submitFeedback = async (payload: FeedbackPayload) => {
+    try {
+      const res = await fetch('/api/auth/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        return { success: false, error: data.error || '提交反馈失败' };
+      }
+      return { success: true, message: data.message };
+    } catch (e: any) {
+      return { success: false, error: e?.message || '网络连接异常' };
+    }
+  };
+
   const logout = async () => {
     try {
       await fetch('/api/auth/sign-out', {
@@ -111,6 +172,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
     } catch {}
     setUser(null);
+  };
+
+  const subscribe = async (plan: 'weekly' | 'monthly' | 'yearly') => {
+    try {
+      const res = await fetch('/api/auth/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ plan }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        return { success: false, error: data.error || '开通订阅失败' };
+      }
+      if (data.user) {
+        setUser(data.user);
+      }
+      return { success: true, message: data.message };
+    } catch (e: any) {
+      return { success: false, error: e?.message || '开通订阅异常' };
+    }
   };
 
   const recharge = async (amount: number) => {
@@ -147,12 +229,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setAuthModalOpen(false);
   }, []);
 
-  const openRechargeModal = useCallback(() => {
+  const openUserProfileModal = useCallback(() => {
+    setUserProfileModalOpen(true);
+  }, []);
+
+  const closeUserProfileModal = useCallback(() => {
+    setUserProfileModalOpen(false);
+  }, []);
+
+  const openFeedbackModal = useCallback(() => {
+    setFeedbackModalOpen(true);
+  }, []);
+
+  const closeFeedbackModal = useCallback(() => {
+    setFeedbackModalOpen(false);
+  }, []);
+
+  const openRechargeModal = useCallback((reason?: string) => {
+    setUpgradeModalReason(reason || null);
     setRechargeModalOpen(true);
   }, []);
 
   const closeRechargeModal = useCallback(() => {
     setRechargeModalOpen(false);
+    setUpgradeModalReason(null);
   }, []);
 
   const openAdminModal = useCallback(() => {
@@ -168,16 +268,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       value={{
         user,
         loading,
+        isVip,
         login,
         register,
         logout,
+        updateProfile,
+        submitFeedback,
+        subscribe,
         recharge,
         updateCredits,
         authModalOpen,
         authModalMode,
         openAuthModal,
         closeAuthModal,
+        userProfileModalOpen,
+        openUserProfileModal,
+        closeUserProfileModal,
+        feedbackModalOpen,
+        openFeedbackModal,
+        closeFeedbackModal,
         rechargeModalOpen,
+        upgradeModalReason,
         openRechargeModal,
         closeRechargeModal,
         adminModalOpen,

@@ -39,13 +39,36 @@ export function saveBoardList(boards: DeepDiveBoardMeta[]): void {
   }
 }
 
+export function deduplicateNodes(nodes: Node[]): Node[] {
+  const seen = new Set<string>();
+  return (nodes || []).filter((n) => {
+    if (!n || !n.id || seen.has(n.id)) return false;
+    seen.add(n.id);
+    return true;
+  });
+}
+
+export function deduplicateEdges(edges: Edge[]): Edge[] {
+  const seen = new Set<string>();
+  return (edges || []).filter((e) => {
+    if (!e || !e.id || seen.has(e.id)) return false;
+    seen.add(e.id);
+    return true;
+  });
+}
+
 export function loadBoard(boardId: string): StoredBoard | null {
   try {
     const raw =
       localStorage.getItem(`${STORAGE_BOARD_PREFIX}${boardId}`) ||
       localStorage.getItem(`${LEGACY_STORAGE_BOARD_PREFIX}${boardId}`);
     if (!raw) return null;
-    return JSON.parse(raw);
+    const parsed: StoredBoard = JSON.parse(raw);
+    if (parsed) {
+      parsed.nodes = deduplicateNodes(parsed.nodes);
+      parsed.edges = deduplicateEdges(parsed.edges);
+    }
+    return parsed;
   } catch (e) {
     console.error(`Failed to load board ${boardId}:`, e);
     return null;
@@ -54,18 +77,23 @@ export function loadBoard(boardId: string): StoredBoard | null {
 
 export function saveBoard(board: StoredBoard): void {
   try {
+    const cleanedBoard: StoredBoard = {
+      ...board,
+      nodes: deduplicateNodes(board.nodes),
+      edges: deduplicateEdges(board.edges),
+    };
     localStorage.setItem(
       `${STORAGE_BOARD_PREFIX}${board.id}`,
-      JSON.stringify(board)
+      JSON.stringify(cleanedBoard)
     );
     // Update index
     const list = loadBoardList();
     const existingIndex = list.findIndex((b) => b.id === board.id);
     const meta: DeepDiveBoardMeta = {
-      id: board.id,
-      name: board.name,
-      updatedAt: board.updatedAt,
-      nodeCount: board.nodes.length,
+      id: cleanedBoard.id,
+      name: cleanedBoard.name,
+      updatedAt: cleanedBoard.updatedAt,
+      nodeCount: cleanedBoard.nodes.length,
     };
     if (existingIndex >= 0) {
       list[existingIndex] = meta;
@@ -75,7 +103,7 @@ export function saveBoard(board: StoredBoard): void {
     saveBoardList(list);
 
     // Asynchronously sync to backend (PostgreSQL)
-    syncBoardToBackend(board).catch((err) => {
+    syncBoardToBackend(cleanedBoard).catch((err) => {
       console.warn('Background backend sync skipped or failed:', err?.message || err);
     });
   } catch (e) {

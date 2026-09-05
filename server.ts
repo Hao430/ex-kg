@@ -20,6 +20,9 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = 3000;
 
+// Trust the reverse proxy (required for express-rate-limit in production/cloud)
+app.set('trust proxy', 1);
+
 // Security headers with Helmet (per Spec 1.2)
 app.use(
   helmet({
@@ -52,6 +55,10 @@ app.get('/api/db/status', async (_req, res) => {
 
 // Mount modular sub-routers
 app.use('/api/auth', authRouter);
+app.use('/api/feedback', (req, res, next) => {
+  req.url = '/feedback';
+  authRouter(req, res, next);
+});
 app.use('/api/admin', adminRouter);
 app.use('/api/canvases', canvasesRouter);
 app.use('/api/chat', chatRouter);

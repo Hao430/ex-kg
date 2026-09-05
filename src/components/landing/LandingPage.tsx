@@ -31,7 +31,7 @@ import {
   Globe,
   Search,
   SlidersHorizontal,
-  Coins,
+  Crown,
   LogIn,
   User,
 } from 'lucide-react';
@@ -48,7 +48,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   theme = 'light',
   onToggleTheme,
 }) => {
-  const { user, openAuthModal, openRechargeModal } = useAuth();
+  const { user, isVip, openAuthModal, openRechargeModal } = useAuth();
   const isDark = theme === 'dark';
   const [activeScenario, setActiveScenario] = useState<number>(0);
   const [demoExpanded, setDemoExpanded] = useState<boolean>(false);
@@ -123,175 +123,197 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       </div>
 
       {/* Modern High-End Top Navigation */}
-      <header className="sticky top-0 z-50 backdrop-blur-xl bg-[#070a13]/80 border-b border-white/[0.08] transition-all">
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          {/* Brand */}
-          <div className="flex items-center gap-3 cursor-pointer" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-500 to-cyan-400 flex items-center justify-center text-white shadow-lg shadow-blue-500/25 ring-1 ring-white/20">
+      <header className="sticky top-0 z-50 backdrop-blur-xl bg-[#070a13]/85 border-b border-white/[0.08] transition-all">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
+          {/* Brand Identity */}
+          <div
+            className="flex items-center gap-3 cursor-pointer select-none shrink-0"
+            onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+          >
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-cyan-400 flex items-center justify-center text-white shadow-lg shadow-blue-500/20 ring-1 ring-white/20 hover:scale-105 transition-transform">
               <Compass className="w-5 h-5 text-white" />
             </div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-base font-bold tracking-tight text-white">DeepDive</span>
-              <span className="text-xs px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-300 font-medium border border-blue-500/30">
-                v2.0
+            <div className="flex items-center gap-2">
+              <span className="text-base font-bold tracking-tight text-white">
+                DeepDive<span className="text-blue-400 font-medium">.ai</span>
+              </span>
+              <span className="hidden sm:inline-block text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/25">
+                深度思维画布
               </span>
             </div>
           </div>
 
-          {/* Links */}
-          <nav className="hidden md:flex items-center gap-8 text-xs font-medium text-slate-300">
-            <a href="#features" className="hover:text-white transition-colors">核心特性</a>
-            <a href="#interactive-demo" className="hover:text-white transition-colors">交互式演示</a>
-            <a href="#scenarios" className="hover:text-white transition-colors">探索场景</a>
-            <a href="#comparison" className="hover:text-white transition-colors">思维范式对比</a>
-            <a href="#faq" className="hover:text-white transition-colors">常见疑问</a>
+          {/* Navigation Links (Desktop & Tablet) */}
+          <nav className="hidden md:flex items-center gap-0.5 lg:gap-1 px-2.5 py-1 rounded-full bg-white/[0.04] border border-white/[0.08] text-xs font-medium text-slate-300 whitespace-nowrap shrink-0">
+            <a href="#features" className="px-2.5 lg:px-3 py-1.5 rounded-lg hover:text-white hover:bg-white/[0.08] transition-colors whitespace-nowrap">
+              核心特性
+            </a>
+            <a href="#interactive-demo" className="px-2.5 lg:px-3 py-1.5 rounded-lg hover:text-white hover:bg-white/[0.08] transition-colors whitespace-nowrap">
+              交互演示
+            </a>
+            <a href="#scenarios" className="px-2.5 lg:px-3 py-1.5 rounded-lg hover:text-white hover:bg-white/[0.08] transition-colors whitespace-nowrap">
+              探索场景
+            </a>
+            <a href="#comparison" className="px-2.5 lg:px-3 py-1.5 rounded-lg hover:text-white hover:bg-white/[0.08] transition-colors whitespace-nowrap">
+              范式对比
+            </a>
+            <a href="#faq" className="px-2.5 lg:px-3 py-1.5 rounded-lg hover:text-white hover:bg-white/[0.08] transition-colors whitespace-nowrap">
+              常见疑问
+            </a>
           </nav>
 
-          {/* CTA Buttons */}
-          <div className="flex items-center gap-2.5 sm:gap-3">
+          {/* Action Zone */}
+          <div className="flex items-center gap-2 sm:gap-2.5 shrink-0 whitespace-nowrap">
             {onToggleTheme && (
               <button
                 onClick={onToggleTheme}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-xs font-medium text-slate-200 transition-all cursor-pointer"
+                className="p-2 rounded-xl border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] text-slate-300 hover:text-white transition-all cursor-pointer focus:outline-none shrink-0"
+                aria-label={isDark ? '切换浅色模式' : '切换深色模式'}
                 title={isDark ? '当前为深色模式（点击切换浅色）' : '切换为深色模式'}
               >
                 {isDark ? (
-                  <>
-                    <Moon className="w-3.5 h-3.5 text-amber-300 fill-amber-300/20" />
-                    <span className="hidden sm:inline text-amber-200">深色</span>
-                  </>
+                  <Moon className="w-4 h-4 text-amber-300 fill-amber-300/20" />
                 ) : (
-                  <>
-                    <Sun className="w-3.5 h-3.5 text-amber-400" />
-                    <span className="hidden sm:inline text-slate-300">浅色</span>
-                  </>
+                  <Sun className="w-4 h-4 text-amber-400" />
                 )}
               </button>
             )}
 
             {user ? (
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 shrink-0">
                 <button
-                  onClick={openRechargeModal}
-                  className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-xs font-semibold transition-all cursor-pointer"
-                  title="充值 AI 算力点数"
+                  onClick={() => openRechargeModal()}
+                  className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
+                    isVip
+                      ? 'bg-amber-500/15 hover:bg-amber-500/25 border-amber-500/30 text-amber-300'
+                      : 'bg-indigo-500/15 hover:bg-indigo-500/25 border-indigo-500/30 text-indigo-200'
+                  }`}
+                  title={isVip ? 'VIP Pro 尊享特权' : '升级 VIP 会员'}
                 >
-                  <Coins className="w-3.5 h-3.5 text-amber-400" />
-                  <span>{user.credits_balance.toLocaleString()} 点</span>
+                  <Crown className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <span className="whitespace-nowrap">{isVip ? 'VIP 会员' : '开通 VIP'}</span>
                 </button>
-                <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-white/5 border border-white/10 text-xs text-slate-300">
-                  <div className="w-5 h-5 rounded-md bg-indigo-600 text-white flex items-center justify-center font-bold text-[10px]">
-                    {user.name ? user.name[0].toUpperCase() : user.email[0].toUpperCase()}
+                <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-white/[0.05] border border-white/10 text-xs text-slate-300 shrink-0">
+                  <div className="w-5 h-5 rounded-md bg-gradient-to-tr from-indigo-600 to-purple-600 text-white flex items-center justify-center font-bold text-[10px] shrink-0 overflow-hidden">
+                    {user.avatar && (user.avatar.startsWith('http') || user.avatar.startsWith('data:')) ? (
+                      <img src={user.avatar} alt="avatar" className="w-full h-full object-cover" />
+                    ) : user.avatar ? (
+                      <span>{user.avatar}</span>
+                    ) : (
+                      <span>{user.name ? user.name[0].toUpperCase() : user.email[0].toUpperCase()}</span>
+                    )}
                   </div>
-                  <span className="hidden md:inline max-w-[100px] truncate">{user.name || user.email.split('@')[0]}</span>
+                  <span className="hidden md:inline max-w-[90px] truncate whitespace-nowrap">{user.name || user.email.split('@')[0]}</span>
                 </div>
               </div>
             ) : (
               <button
                 onClick={() => openAuthModal('signin')}
-                className="flex items-center gap-1 px-3 py-1.5 rounded-xl border border-white/15 bg-white/10 hover:bg-white/15 text-white text-xs font-medium transition-all cursor-pointer"
+                className="hidden sm:flex items-center gap-1 px-3 py-1.5 rounded-xl border border-white/15 bg-white/[0.06] hover:bg-white/[0.12] text-slate-200 hover:text-white text-xs font-medium transition-all cursor-pointer whitespace-nowrap shrink-0"
               >
-                <LogIn className="w-3.5 h-3.5 text-blue-400" />
-                <span>登录 / 注册</span>
+                <LogIn className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                <span className="whitespace-nowrap">登录 / 注册</span>
               </button>
             )}
 
             <button
               onClick={() => onEnterCanvas()}
-              className="group relative inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold text-white bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500 hover:from-blue-500 hover:to-indigo-500 shadow-md shadow-blue-500/20 border border-blue-400/30 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+              className="group relative inline-flex items-center gap-1.5 sm:gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs font-semibold text-white bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500 hover:from-blue-500 hover:to-indigo-500 shadow-md shadow-blue-500/20 border border-blue-400/30 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] cursor-pointer whitespace-nowrap shrink-0"
             >
-              <span>进入思维画布</span>
-              <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" />
+              <span className="whitespace-nowrap">进入画板</span>
+              <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5 shrink-0" />
             </button>
           </div>
         </div>
       </header>
 
       {/* Hero Section */}
-      <section className="relative z-10 pt-16 md:pt-24 pb-20 px-6 max-w-7xl mx-auto text-center">
+      <section className="relative z-10 pt-14 md:pt-20 pb-16 px-4 sm:px-6 max-w-7xl mx-auto text-center">
         {/* Eyebrow Pill */}
-        <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/[0.05] border border-white/[0.1] text-xs font-medium text-blue-300 backdrop-blur-md mb-8 hover:bg-white/[0.08] transition-colors">
-          <Sparkles className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
+        <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-blue-500/[0.08] border border-blue-500/20 text-xs font-medium text-blue-300 backdrop-blur-md mb-6 hover:bg-blue-500/[0.12] transition-colors cursor-default">
+          <Sparkles className="w-3.5 h-3.5 text-cyan-400 shrink-0 animate-pulse" />
           <span>非线性无限画布 · 递归推理与多分支认知平台</span>
-          <ChevronRight className="w-3.5 h-3.5 text-slate-500" />
         </div>
 
         {/* Display Title */}
-        <h1 className="text-4xl sm:text-6xl lg:text-7xl font-extrabold tracking-tight text-white leading-[1.12] max-w-5xl mx-auto">
-          告别单线程对话的遗忘与局限
-          <span className="block mt-2 bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-indigo-200 to-cyan-300">
-            在无限画布中，推演你的思维宇宙
+        <h1 className="text-3xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-white leading-[1.18] max-w-5xl mx-auto">
+          告别单线对话的遗忘与局限
+          <span className="block mt-2.5 bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-indigo-200 to-cyan-300">
+            在无限画布中，推演你的多维思考宇宙
           </span>
         </h1>
 
         {/* Subtitle */}
-        <p className="mt-6 text-base sm:text-lg text-slate-400 max-w-3xl mx-auto leading-relaxed font-normal">
-          人类的深度思考从不是单行道的自言自语。DeepDive 将传统垂直滚动的聊天窗口解构为具备拓扑关联的认知星图。
+        <p className="mt-5 text-sm sm:text-base text-slate-300/90 max-w-3xl mx-auto leading-relaxed font-normal">
+          人类的深度思考从不是一条单行道。DeepDive 将传统垂直对话解构为具备拓扑关联的认知星图。
           支持<b>划词深挖、递归分支推演、学术级 LaTeX 公式、便签双轨论证与全自动拓扑排版</b>。
         </p>
 
         {/* Action Buttons */}
-        <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
+        <div className="mt-8 sm:mt-10 flex flex-wrap items-center justify-center gap-3 sm:gap-4">
           <button
             onClick={() => onEnterCanvas()}
-            className="flex items-center gap-2.5 px-7 py-3.5 rounded-2xl text-sm font-semibold text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 shadow-xl shadow-blue-600/30 border border-blue-400/40 hover:scale-[1.02] active:scale-[0.98] transition-all"
+            className="flex items-center gap-2.5 px-6 sm:px-8 py-3.5 rounded-2xl text-sm font-semibold text-white bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500 hover:from-blue-500 hover:to-indigo-500 shadow-xl shadow-blue-600/30 border border-blue-400/40 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer"
           >
             <Compass className="w-4 h-4 text-cyan-200" />
             <span>立即开启探索 (进入画板)</span>
-            <ArrowRight className="w-4 h-4 text-blue-200 ml-1" />
+            <ArrowRight className="w-4 h-4 text-blue-200" />
           </button>
 
           <a
             href="#interactive-demo"
-            className="flex items-center gap-2 px-6 py-3.5 rounded-2xl text-sm font-medium text-slate-300 bg-white/[0.05] hover:bg-white/[0.09] border border-white/[0.1] hover:text-white backdrop-blur-md transition-all"
+            className="flex items-center gap-2 px-5 sm:px-6 py-3.5 rounded-2xl text-sm font-medium text-slate-200 bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.1] hover:text-white backdrop-blur-md transition-all"
           >
+            <Zap className="w-4 h-4 text-amber-400" />
             <span>体验交互演练</span>
           </a>
         </div>
 
-        {/* Quick Sample Triggers */}
-        <div className="mt-8 flex flex-wrap items-center justify-center gap-2 text-xs text-slate-400">
-          <span className="text-slate-500">预置探索课题:</span>
+        {/* Quick Sample Triggers ("一键开题") */}
+        <div className="mt-8 flex flex-wrap items-center justify-center gap-2 text-xs text-slate-400 max-w-4xl mx-auto">
+          <span className="text-slate-500 shrink-0 font-medium">推荐探索课题:</span>
           {[
-            '超导量子比特退相干机制',
-            'Transformer 注意力机制与数学形式',
-            '具身智能世界模型演进',
+            '超导量子纠错拓扑',
+            'Transformer 注意力数学形式',
+            '分布式 Raft 共识强一致性',
+            '具身智能商业落地与算力瓶颈',
           ].map((topic) => (
             <button
               key={topic}
               onClick={() => onEnterCanvas(topic)}
-              className="px-3 py-1 rounded-lg bg-white/[0.04] hover:bg-blue-500/10 hover:border-blue-500/30 border border-white/[0.06] text-slate-300 hover:text-blue-300 transition-all"
+              className="px-3 py-1.5 rounded-xl bg-white/[0.04] hover:bg-blue-500/15 hover:border-blue-500/40 border border-white/[0.08] text-slate-300 hover:text-blue-300 transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs"
             >
-              {topic} →
+              <span>{topic}</span>
+              <ChevronRight className="w-3 h-3 opacity-60" />
             </button>
           ))}
         </div>
 
-        {/* Core Specs Bar */}
-        <div className="mt-16 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 max-w-5xl mx-auto pt-8 border-t border-white/[0.07]">
-          <div className="flex flex-col items-center">
-            <span className="text-xl sm:text-2xl font-bold text-white tracking-tight">2D 无限画布</span>
-            <span className="text-[11px] text-slate-400 mt-1">自由平移与空间记忆</span>
+        {/* Core Specs Bento Strip */}
+        <div className="mt-14 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4 max-w-5xl mx-auto pt-8 border-t border-white/[0.08]">
+          <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/[0.05] flex flex-col items-center justify-center text-center">
+            <span className="text-base sm:text-lg font-bold text-white tracking-tight">2D 无限画布</span>
+            <span className="text-[11px] text-slate-400 mt-0.5">自由平移与空间记忆</span>
           </div>
-          <div className="flex flex-col items-center">
-            <span className="text-xl sm:text-2xl font-bold text-cyan-400 tracking-tight">KaTeX 原生</span>
-            <span className="text-[11px] text-slate-400 mt-1">学术级 LaTeX 公式推导</span>
+          <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/[0.05] flex flex-col items-center justify-center text-center">
+            <span className="text-base sm:text-lg font-bold text-cyan-400 tracking-tight">KaTeX 原生</span>
+            <span className="text-[11px] text-slate-400 mt-0.5">LaTeX 矩阵公式推导</span>
           </div>
-          <div className="flex flex-col items-center">
-            <span className="text-xl sm:text-2xl font-bold text-blue-400 tracking-tight">划词递归裂变</span>
-            <span className="text-[11px] text-slate-400 mt-1">任意点无缝开启子议题</span>
+          <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/[0.05] flex flex-col items-center justify-center text-center">
+            <span className="text-base sm:text-lg font-bold text-blue-400 tracking-tight">划词递归裂变</span>
+            <span className="text-[11px] text-slate-400 mt-0.5">任意词句瞬时衍生</span>
           </div>
-          <div className="flex flex-col items-center">
-            <span className="text-xl sm:text-2xl font-bold text-indigo-400 tracking-tight">模型自由切换</span>
-            <span className="text-[11px] text-slate-400 mt-1">Gemini 3.8 / 3.1 / 2.5</span>
+          <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/[0.05] flex flex-col items-center justify-center text-center">
+            <span className="text-base sm:text-lg font-bold text-indigo-400 tracking-tight">多模型自由切</span>
+            <span className="text-[11px] text-slate-400 mt-0.5">Gemini 3.8 / 3.1 / 2.5</span>
           </div>
-          <div className="flex flex-col items-center">
-            <span className="text-xl sm:text-2xl font-bold text-emerald-400 tracking-tight">实时联网检索</span>
-            <span className="text-[11px] text-slate-400 mt-1">Google Grounding 来源引证</span>
+          <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/[0.05] flex flex-col items-center justify-center text-center">
+            <span className="text-base sm:text-lg font-bold text-emerald-400 tracking-tight">实时联网检索</span>
+            <span className="text-[11px] text-slate-400 mt-0.5">Google 权威来源引证</span>
           </div>
-          <div className="flex flex-col items-center">
-            <span className="text-xl sm:text-2xl font-bold text-amber-400 tracking-tight">深夜护眼模式</span>
-            <span className="text-[11px] text-slate-400 mt-1">全时段沉浸深度思考</span>
+          <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/[0.05] flex flex-col items-center justify-center text-center">
+            <span className="text-base sm:text-lg font-bold text-amber-400 tracking-tight">深夜护眼模式</span>
+            <span className="text-[11px] text-slate-400 mt-0.5">沉浸式专注研究</span>
           </div>
         </div>
       </section>

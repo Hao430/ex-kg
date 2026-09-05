@@ -27,8 +27,19 @@ import { SelectionPopup } from './SelectionPopup';
 import { ChatNodeData, TextSelectionPayload, GroundingMetadata } from '../../types';
 import { getLayoutedElements } from '../../lib/layout';
 import { buildAncestorContext } from '../../lib/context';
+import { saveBoard, loadBoardList, StoredBoard, deduplicateNodes, deduplicateEdges } from '../../lib/storage';
 import { NodeActionsContext, NodeActionsContextValue } from '../../context/NodeActionsContext';
 import { useAuth } from '../../context/AuthContext';
+import { useRenderMonitor } from '../../hooks/useRenderMonitor';
+import { AlertCircle, Sparkles, X, FolderPlus, AlertTriangle, Trash2 } from 'lucide-react';
+
+let globalIdCounter = 0;
+export const generateUniqueId = (prefix: string = 'node'): string => {
+  globalIdCounter += 1;
+  const time = Date.now();
+  const rand = Math.random().toString(36).substring(2, 8);
+  return `${prefix}-${time}-${globalIdCounter}-${rand}`;
+};
 
 const nodeTypes = {
   chat: ChatCardNode,
@@ -198,13 +209,35 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
     initialEdges || INITIAL_LAYOUTED.edges
   );
   const [selectionPayload, setSelectionPayload] = useState<TextSelectionPayload | null>(null);
+  const [apiWarning, setApiWarning] = useState<string | null>(null);
+  const [dismissLargeCanvasBanner, setDismissLargeCanvasBanner] = useState(false);
+  const [deleteConfirmTarget, setDeleteConfirmTarget] = useState<{
+    nodeId: string;
+    nodeTitle: string;
+    descendantCount: number;
+    allTargetIds: string[];
+  } | null>(null);
+  const renderWarning = useRenderMonitor('DeepDiveCanvas');
   const reactFlowInstance = useReactFlow();
-  const { updateCredits, openAuthModal, openRechargeModal } = useAuth();
+  const { isVip, updateCredits, openAuthModal, openRechargeModal } = useAuth();
 
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
   nodesRef.current = nodes;
   edgesRef.current = edges;
+
+  // Free Tier AI Node Limit Check (10 AI nodes per canvas for free users)
+  const checkAiQuota = useCallback((): boolean => {
+    if (isVip) return true;
+    const currentAiNodes = nodesRef.current.filter(
+      (n) => n.type === 'chat' && (n.data as any)?.status !== 'suggested'
+    ).length;
+    if (currentAiNodes >= 10) {
+      openRechargeModal('当前画板已达到免费版 10 个 AI 节点上限。升级 Pro 畅享无限节点深度探索与推演！');
+      return false;
+    }
+    return true;
+  }, [isVip, openRechargeModal]);
 
   // Auto-save sync back to parent
   useEffect(() => {
@@ -268,7 +301,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       const newEdges: Edge[] = [];
 
       suggestions.slice(0, 3).forEach((questionText, idx) => {
-        const sugId = `sug-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 6)}`;
+        const sugId = generateUniqueId(`sug-${parentNodeId}`);
         const title = questionText.slice(0, 16);
 
         const sugNode: Node = {
@@ -289,7 +322,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
         };
 
         const sugEdge: Edge = {
-          id: `e-${parentNodeId}-${sugId}`,
+          id: generateUniqueId(`e-${parentNodeId}-${sugId}`),
           source: parentNodeId,
           target: sugId,
           type: 'default',
@@ -303,15 +336,15 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       });
 
       const baseList = currentBaseNodes || nodesRef.current;
-      const updatedNodes = [...baseList, ...newNodes];
-      const updatedEdges = [...edgesRef.current, ...newEdges];
+      const updatedNodes = deduplicateNodes([...baseList, ...newNodes]);
+      const updatedEdges = deduplicateEdges([...edgesRef.current, ...newEdges]);
 
       // Auto-layout to align cleanly
       const layouted = getLayoutedElements(updatedNodes, updatedEdges, 'LR');
-      nodesRef.current = layouted.nodes;
-      edgesRef.current = layouted.edges;
-      setNodes(layouted.nodes);
-      setEdges(layouted.edges);
+      nodesRef.current = deduplicateNodes(layouted.nodes);
+      edgesRef.current = deduplicateEdges(layouted.edges);
+      setNodes(nodesRef.current);
+      setEdges(edgesRef.current);
     },
     [defaultModel, defaultEnableWebSearch, setNodes, setEdges]
   );
@@ -323,6 +356,8 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       questionText: string,
       options?: { model?: string; enableWebSearch?: boolean }
     ) => {
+      if (!checkAiQuota()) return;
+
       const targetNode = nodesRef.current.find((n) => n.id === nodeId);
       const existingData = targetNode?.data as unknown as ChatNodeData | undefined;
 
@@ -366,6 +401,16 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       let rawAccumulatedText = '';
       let receivedGrounding: GroundingMetadata | undefined = undefined;
 
+      const abortController = new AbortController();
+      let isCompleted = false;
+      
+      const timeoutId = setTimeout(() => {
+        if (!isCompleted) {
+          setApiWarning('AI 模型响应较慢，由于云端算力排队或并发较高，请您耐心等待...');
+          setTimeout(() => setApiWarning(null), 5000);
+        }
+      }, 10000); // 10 seconds gentle prompt
+
       try {
         const response = await fetch('/api/chat', {
           method: 'POST',
@@ -376,7 +421,10 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
             model: activeModel,
             enableWebSearch: activeWebSearch,
           }),
+          signal: abortController.signal
         });
+
+        clearTimeout(timeoutId);
 
         if (!response.ok || !response.body) {
           let errDetail = `请求失败: ${response.statusText || response.status}`;
@@ -402,7 +450,25 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
 
         while (true) {
           const { done, value } = await reader.read();
-          if (done) break;
+          if (done) {
+            // Process any trailing data left in buffer
+            if (buffer.trim()) {
+              const trailingLines = buffer.split('\n');
+              for (const line of trailingLines) {
+                if (line.startsWith('data: ')) {
+                  try {
+                    const parsed = JSON.parse(line.slice(6));
+                    if (parsed.grounding) receivedGrounding = parsed.grounding;
+                    if (typeof parsed.creditsBalance === 'number') updateCredits(parsed.creditsBalance);
+                    if (parsed.text) rawAccumulatedText += parsed.text;
+                  } catch {
+                    // Ignore parse error on partial chunks
+                  }
+                }
+              }
+            }
+            break;
+          }
 
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split('\n\n');
@@ -513,11 +579,12 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
               model: activeModel,
               enableWebSearch: activeWebSearch,
               grounding: receivedGrounding || d.grounding,
+              errorMessage: undefined,
             },
           };
         });
 
-        // Immediately sync nodesRef to avoid race conditions
+        // Immediately sync nodesRef and React state to avoid race conditions
         nodesRef.current = finalizedNodes;
         setNodes(finalizedNodes);
 
@@ -526,20 +593,22 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       } catch (err: any) {
         console.error('Error generating AI response:', err);
         const friendlyMessage = sanitizeErrorMessage(err);
-        setNodes((nds) =>
-          nds.map((n) => {
+        setNodes((nds) => {
+          const updated = nds.map((n) => {
             if (n.id !== nodeId) return n;
             const d = n.data as unknown as ChatNodeData;
             return {
               ...n,
               data: {
                 ...d,
-                status: 'error',
+                status: 'error' as const,
                 errorMessage: friendlyMessage,
               },
             };
-          })
-        );
+          });
+          nodesRef.current = updated;
+          return updated;
+        });
       }
     },
     [defaultModel, defaultEnableWebSearch, setNodes, spawnSuggestedNodes]
@@ -552,6 +621,8 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       questionText: string,
       options?: { model?: string; enableWebSearch?: boolean }
     ) => {
+      if (!checkAiQuota()) return;
+
       const sourceNode = nodesRef.current.find((n) => n.id === sourceNodeId);
       const parentData = sourceNode?.data as unknown as ChatNodeData | undefined;
       const depth = (parentData?.depth ?? 0) + 1;
@@ -565,7 +636,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
           ? parentData.enableWebSearch
           : defaultEnableWebSearch;
 
-      const newId = `node-${Date.now()}`;
+      const newId = generateUniqueId(`node-${sourceNodeId}`);
       const title = questionText.slice(0, 16);
 
       const newNode: Node = {
@@ -589,7 +660,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       };
 
       const newEdge: Edge = {
-        id: `e-${sourceNodeId}-${newId}`,
+        id: generateUniqueId(`e-${sourceNodeId}-${newId}`),
         source: sourceNodeId,
         target: newId,
         type: 'default',
@@ -600,13 +671,15 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
         },
       };
 
-      const nextNodes = [...nodesRef.current, newNode];
-      const nextEdges = [...edgesRef.current, newEdge];
+      const nextNodes = deduplicateNodes([...nodesRef.current, newNode]);
+      const nextEdges = deduplicateEdges([...edgesRef.current, newEdge]);
 
       // Auto-layout with smooth transition
       const layouted = getLayoutedElements(nextNodes, nextEdges, 'LR');
-      setNodes(layouted.nodes);
-      setEdges(layouted.edges);
+      nodesRef.current = deduplicateNodes(layouted.nodes);
+      edgesRef.current = deduplicateEdges(layouted.edges);
+      setNodes(nodesRef.current);
+      setEdges(edgesRef.current);
 
       // Smooth camera pan to the newly branched child node
       setTimeout(() => {
@@ -634,6 +707,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
   // Requirement 3: User clicks on a suggested question node to generate answer
   const handleActivateSuggestion = useCallback(
     (nodeId: string) => {
+      if (!checkAiQuota()) return;
       const targetNode = nodesRef.current.find((n) => n.id === nodeId);
       if (!targetNode) return;
       const nodeData = targetNode.data as unknown as ChatNodeData;
@@ -657,17 +731,18 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       // Start generating answer
       generateNodeAnswer(nodeId, question);
     },
-    [generateNodeAnswer, setEdges]
+    [checkAiQuota, generateNodeAnswer, setEdges]
   );
 
   // Branch from node / phrase (DeepDive text selection feature)
   const handleBranch = useCallback(
     (sourceNodeId: string, triggerPhrase?: string) => {
+      if (!checkAiQuota()) return;
       const sourceNode = nodesRef.current.find((n) => n.id === sourceNodeId);
       const parentData = sourceNode?.data as unknown as ChatNodeData | undefined;
       const depth = (parentData?.depth ?? 0) + 1;
 
-      const newId = `branch-${Date.now()}`;
+      const newId = generateUniqueId(`branch-${sourceNodeId}`);
       const questionText = triggerPhrase
         ? `请围绕「${triggerPhrase}」深入展开剖析其核心原理与关键影响。`
         : '请在此分支展开深度探索与推演。';
@@ -696,7 +771,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       };
 
       const newEdge: Edge = {
-        id: `e-${sourceNodeId}-${newId}`,
+        id: generateUniqueId(`e-${sourceNodeId}-${newId}`),
         source: sourceNodeId,
         target: newId,
         type: 'default',
@@ -707,12 +782,14 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
         },
       };
 
-      const nextNodes = [...nodesRef.current, newNode];
-      const nextEdges = [...edgesRef.current, newEdge];
+      const nextNodes = deduplicateNodes([...nodesRef.current, newNode]);
+      const nextEdges = deduplicateEdges([...edgesRef.current, newEdge]);
 
       const layouted = getLayoutedElements(nextNodes, nextEdges, 'LR');
-      setNodes(layouted.nodes);
-      setEdges(layouted.edges);
+      nodesRef.current = deduplicateNodes(layouted.nodes);
+      edgesRef.current = deduplicateEdges(layouted.edges);
+      setNodes(nodesRef.current);
+      setEdges(edgesRef.current);
 
       setTimeout(() => {
         const targetNode = layouted.nodes.find((n) => n.id === newId);
@@ -732,16 +809,60 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
     [generateNodeAnswer, reactFlowInstance, setNodes, setEdges]
   );
 
-  // Delete node and cascade connected edges
-  const handleDeleteNode = useCallback(
-    (nodeId: string) => {
-      setNodes((nds) => nds.filter((n) => n.id !== nodeId));
-      setEdges((eds) => eds.filter((e) => e.source !== nodeId && e.target !== nodeId));
+  // Helper to recursively collect all descendant node IDs downstream
+  const getDescendantNodeIds = useCallback((rootId: string, currentEdges = edgesRef.current): Set<string> => {
+    const descendants = new Set<string>();
+    const queue = [rootId];
+    while (queue.length > 0) {
+      const curr = queue.shift()!;
+      const outgoing = currentEdges.filter((e) => e.source === curr);
+      outgoing.forEach((e) => {
+        if (!descendants.has(e.target)) {
+          descendants.add(e.target);
+          queue.push(e.target);
+        }
+      });
+    }
+    return descendants;
+  }, []);
+
+  // Internal execution of deleting specific node IDs
+  const executeDeleteNodeIds = useCallback(
+    (targetIds: string[]) => {
+      const targetSet = new Set(targetIds);
+      setNodes((nds) => nds.filter((n) => !targetSet.has(n.id)));
+      setEdges((eds) => eds.filter((e) => !targetSet.has(e.source) && !targetSet.has(e.target)));
       setTimeout(() => {
         applyLayout();
       }, 50);
     },
     [applyLayout, setNodes, setEdges]
+  );
+
+  // Delete node trigger: if it has child nodes, prompt with modal; otherwise delete immediately
+  const handleDeleteNode = useCallback(
+    (nodeId: string) => {
+      const descendants = getDescendantNodeIds(nodeId);
+      const targetNode = nodesRef.current.find((n) => n.id === nodeId);
+      const title =
+        (targetNode?.data as any)?.title ||
+        (targetNode?.data as any)?.question?.slice(0, 16) ||
+        '当前节点';
+
+      if (descendants.size > 0) {
+        // Has children: open confirmation dialog
+        setDeleteConfirmTarget({
+          nodeId,
+          nodeTitle: title,
+          descendantCount: descendants.size,
+          allTargetIds: [nodeId, ...Array.from(descendants)],
+        });
+      } else {
+        // Single leaf node: delete directly
+        executeDeleteNodeIds([nodeId]);
+      }
+    },
+    [getDescendantNodeIds, executeDeleteNodeIds]
   );
 
   // Collapse / Expand node
@@ -794,7 +915,8 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
 
   // Add new standalone Root topic node
   const handleAddRootNode = useCallback(() => {
-    const newId = `root-${Date.now()}`;
+    if (!checkAiQuota()) return;
+    const newId = generateUniqueId('root');
     
     // Find bottom-most root or leftmost node to place cleanly underneath
     const rootNodes = nodesRef.current.filter((n) => {
@@ -838,7 +960,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       },
     };
 
-    setNodes((nds) => [...nds, newNode]);
+    setNodes((nds) => deduplicateNodes([...nds, newNode]));
 
     // Smoothly pan camera to the new topic card
     setTimeout(() => {
@@ -848,6 +970,9 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       });
     }, 50);
   }, [
+    checkAiQuota,
+    defaultModel,
+    defaultEnableWebSearch,
     generateNodeAnswer,
     handleFollowUpInquiry,
     handleActivateSuggestion,
@@ -862,8 +987,9 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
   // Branch into an AI Chat inquiry directly from a Note premise
   const handleBranchFromNote = useCallback(
     (sourceNoteId: string, premiseText: string) => {
+      if (!checkAiQuota()) return;
       const sourceNode = nodesRef.current.find((n) => n.id === sourceNoteId);
-      const newId = `branch-note-${Date.now()}`;
+      const newId = generateUniqueId(`branch-note-${sourceNoteId}`);
       const noteTitle = (sourceNode?.data as any)?.title || '便签前置假设';
       const prompt = premiseText.trim()
         ? `基于前置假设与思考沉淀「${premiseText.trim()}」，请深入推演其逻辑可行性、潜在工程挑战与下一步突破方向。`
@@ -892,7 +1018,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       };
 
       const newEdge: Edge = {
-        id: `e-${sourceNoteId}-${newId}`,
+        id: generateUniqueId(`e-${sourceNoteId}-${newId}`),
         source: sourceNoteId,
         sourceHandle: 'out',
         target: newId,
@@ -906,19 +1032,87 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
         },
       };
 
-      setNodes((nds) => [...nds, newNode]);
-      setEdges((eds) => [...eds, newEdge]);
+      setNodes((nds) => deduplicateNodes([...nds, newNode]));
+      setEdges((eds) => deduplicateEdges([...eds, newEdge]));
 
       setTimeout(() => {
         generateNodeAnswer(newId, prompt);
       }, 100);
     },
-    [generateNodeAnswer, setNodes, setEdges]
+    [checkAiQuota, generateNodeAnswer, setNodes, setEdges]
+  );
+
+  // Export a sub-branch starting from a node into an independent board
+  const handleExportSubBranch = useCallback(
+    (rootNodeId: string) => {
+      const rootNode = nodesRef.current.find((n) => n.id === rootNodeId);
+      if (!rootNode) return;
+
+      if (!isVip) {
+        const existingBoards = loadBoardList();
+        if (existingBoards.length >= 3) {
+          openRechargeModal('免费版用户最多创建 3 个独立画板。升级 Pro 解锁无限画板与子分支导出！');
+          return;
+        }
+      }
+
+      // Breadth-First-Search down the directed tree to collect all descendants
+      const visitedNodeIds = new Set<string>([rootNodeId]);
+      const queue = [rootNodeId];
+
+      while (queue.length > 0) {
+        const currId = queue.shift()!;
+        const outgoingEdges = edgesRef.current.filter((e) => e.source === currId);
+        for (const edge of outgoingEdges) {
+          if (!visitedNodeIds.has(edge.target)) {
+            visitedNodeIds.add(edge.target);
+            queue.push(edge.target);
+          }
+        }
+      }
+
+      const subNodes = nodesRef.current.filter((n) => visitedNodeIds.has(n.id));
+      const subEdges = edgesRef.current.filter(
+        (e) => visitedNodeIds.has(e.source) && visitedNodeIds.has(e.target)
+      );
+
+      const title =
+        (rootNode.data as any)?.title ||
+        (rootNode.data as any)?.question?.slice(0, 15) ||
+        '子思维分支';
+      const newBoardId = generateUniqueId('board');
+      const newBoardName = `分支导出: ${title}`;
+
+      const minX = Math.min(...subNodes.map((n) => n.position.x));
+      const minY = Math.min(...subNodes.map((n) => n.position.y));
+      const normalizedNodes = subNodes.map((n) => ({
+        ...n,
+        position: {
+          x: n.position.x - minX + 80,
+          y: n.position.y - minY + 160,
+        },
+      }));
+
+      const newBoard: StoredBoard = {
+        id: newBoardId,
+        name: newBoardName,
+        updatedAt: Date.now(),
+        nodes: deduplicateNodes(normalizedNodes),
+        edges: deduplicateEdges(subEdges),
+      };
+
+      saveBoard(newBoard);
+      setApiWarning(
+        `已成功将子分支「${title}」导出为独立画板（包含 ${subNodes.length} 个节点）！可在顶部画板列表中随时切换。`
+      );
+      setTimeout(() => setApiWarning(null), 6000);
+    },
+    [isVip, openRechargeModal]
   );
 
   // Add note node placed near viewport center
   const handleAddNoteNode = useCallback(() => {
-    const newId = `note-${Date.now()}`;
+    const newId = generateUniqueId('note');
     let targetX = 300;
     let targetY = 200;
     try {
@@ -945,8 +1139,62 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
         content: '',
       },
     };
-    setNodes((nds) => [...nds, newNode]);
+    setNodes((nds) => deduplicateNodes([...nds, newNode]));
   }, [reactFlowInstance, setNodes]);
+
+  // Create and connect a subsequent Note node (e.g. on pressing Tab or clicking +)
+  const handleBranchNewNote = useCallback(
+    (sourceNoteId: string) => {
+      const sourceNode = nodesRef.current.find((n) => n.id === sourceNoteId);
+      const newId = generateUniqueId(`note-${sourceNoteId}`);
+      const sourceX = sourceNode ? sourceNode.position.x : 300;
+      const sourceY = sourceNode ? sourceNode.position.y : 200;
+
+      const newPosition = {
+        x: sourceX + 380,
+        y: sourceY + (Math.random() * 20 - 10),
+      };
+
+      const newNode: Node = {
+        id: newId,
+        type: 'note',
+        position: newPosition,
+        draggable: true,
+        data: {
+          title: '延伸思考与假设',
+          content: '',
+        },
+      };
+
+      const newEdge: Edge = {
+        id: generateUniqueId(`e-${sourceNoteId}-${newId}`),
+        source: sourceNoteId,
+        target: newId,
+        type: 'default',
+        animated: true,
+        style: {
+          stroke: '#d97706',
+          strokeWidth: 2,
+          strokeDasharray: '4,3',
+        },
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          color: '#d97706',
+        },
+      };
+
+      setNodes((nds) => deduplicateNodes([...nds, newNode]));
+      setEdges((eds) => deduplicateEdges([...eds, newEdge]));
+
+      setTimeout(() => {
+        reactFlowInstance.setCenter(newPosition.x + 160, newPosition.y + 120, {
+          zoom: Math.max(reactFlowInstance.getZoom(), 0.85),
+          duration: 400,
+        });
+      }, 50);
+    },
+    [reactFlowInstance, setNodes, setEdges]
+  );
 
   // Re-bind callbacks into node data
   useEffect(() => {
@@ -1079,19 +1327,22 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       const strokeColor = isNoteInvolved ? '#d97706' : '#3b82f6';
 
       setEdges((eds) =>
-        addEdge(
-          {
-            ...params,
-            type: 'default',
-            animated: isNoteInvolved,
-            style: {
-              stroke: strokeColor,
-              strokeWidth: 2,
-              strokeDasharray: isNoteInvolved ? '4,3' : undefined,
+        deduplicateEdges(
+          addEdge(
+            {
+              ...params,
+              id: generateUniqueId(`e-${params.source}-${params.target}`),
+              type: 'default',
+              animated: isNoteInvolved,
+              style: {
+                stroke: strokeColor,
+                strokeWidth: 2,
+                strokeDasharray: isNoteInvolved ? '4,3' : undefined,
+              },
+              markerEnd: { type: MarkerType.ArrowClosed, color: strokeColor },
             },
-            markerEnd: { type: MarkerType.ArrowClosed, color: strokeColor },
-          },
-          eds
+            eds
+          )
         )
       );
     },
@@ -1110,6 +1361,8 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       toggleCollapse: handleToggleCollapse,
       updateTitle: handleUpdateTitle,
       updateNote: handleUpdateNote,
+      exportSubBranch: handleExportSubBranch,
+      branchNewNote: handleBranchNewNote,
       retry: (nId: string, opts?: any) => {
         const target = nodesRef.current.find((n) => n.id === nId);
         const chatData = target?.data as unknown as ChatNodeData;
@@ -1129,11 +1382,61 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       handleToggleCollapse,
       handleUpdateTitle,
       handleUpdateNote,
+      handleExportSubBranch,
+      handleBranchNewNote,
     ]
   );
 
+  const isLargeCanvas = nodes.length >= 150;
+
   return (
     <div className="w-full h-full relative">
+      {/* Large Canvas Mind Branch Performance Optimization Banner */}
+      {isLargeCanvas && !dismissLargeCanvasBanner && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 max-w-xl w-[92%] px-4 py-3 rounded-2xl bg-amber-50 dark:bg-amber-950/80 border border-amber-300 dark:border-amber-700/60 shadow-xl backdrop-blur-md animate-in fade-in slide-in-from-top-4 flex items-center justify-between gap-3 text-amber-900 dark:text-amber-200">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-amber-100 dark:bg-amber-900/60 flex items-center justify-center shrink-0 text-amber-600 dark:text-amber-400">
+              <FolderPlus className="w-4 h-4" />
+            </div>
+            <div className="text-xs sm:text-sm">
+              <span className="font-semibold">当前画板思维分支较为庞大（{nodes.length} 个节点）：</span>
+              <span className="text-amber-800 dark:text-amber-300 ml-1">
+                为保持极致流畅度与低延迟渲染，建议点击卡片右上角的
+                <span className="inline-flex items-center px-1.5 py-0.5 mx-1 rounded bg-amber-200/60 dark:bg-amber-800/60 text-amber-900 dark:text-amber-100 font-mono text-xs">
+                  <FolderPlus className="w-3 h-3 mr-0.5 inline" /> 导出分支
+                </span>
+                将子分支导出为独立画板。
+              </span>
+            </div>
+          </div>
+          <button
+            onClick={() => setDismissLargeCanvasBanner(true)}
+            className="p-1 rounded-lg hover:bg-amber-200/50 dark:hover:bg-amber-800/50 text-amber-600 dark:text-amber-400 transition-colors shrink-0"
+            title="关闭提示"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* Performance & API Warnings */}
+      {(apiWarning || renderWarning) && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2 pointer-events-none">
+          {apiWarning && (
+            <div className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-500 text-sm font-medium shadow-lg backdrop-blur-md animate-in fade-in slide-in-from-top-4">
+              <AlertCircle className="w-4 h-4" />
+              {apiWarning}
+            </div>
+          )}
+          {renderWarning && (
+            <div className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-blue-500/10 border border-blue-500/30 text-blue-500 text-sm font-medium shadow-lg backdrop-blur-md animate-in fade-in slide-in-from-top-4">
+              <AlertCircle className="w-4 h-4" />
+              {renderWarning}
+            </div>
+          )}
+        </div>
+      )}
+
       <NodeActionsContext.Provider value={actionsValue}>
         <ReactFlow
           nodes={nodes}
@@ -1183,6 +1486,57 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
         onBranch={handleBranch}
         onClose={() => setSelectionPayload(null)}
       />
+
+      {/* Delete Parent Node & Cascade Children Confirmation Modal */}
+      {deleteConfirmTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="p-2.5 rounded-xl bg-rose-500/10 text-rose-500 dark:bg-rose-500/20 shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                  确认删除该分支及其全部子节点？
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+                  您正在尝试删除「<span className="font-medium text-slate-800 dark:text-slate-200">{deleteConfirmTarget.nodeTitle}</span>」。
+                  该节点包含 <span className="font-semibold text-rose-500">{deleteConfirmTarget.descendantCount}</span> 个衍生的下级子节点，
+                  确认删除后，<strong className="text-slate-700 dark:text-slate-300">该父节点及其全部下游子节点将一并级联删除</strong>，该操作不可撤销。
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-slate-50 dark:bg-slate-800/60 rounded-xl p-3 border border-slate-100 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-300 flex items-center justify-between">
+              <span>受影响节点总数</span>
+              <span className="font-mono font-semibold text-rose-600 dark:text-rose-400">
+                {deleteConfirmTarget.allTargetIds.length} 个节点
+              </span>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-1">
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmTarget(null)}
+                className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  executeDeleteNodeIds(deleteConfirmTarget.allTargetIds);
+                  setDeleteConfirmTarget(null);
+                }}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white text-xs font-semibold shadow-sm transition-colors flex items-center gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>确认一并删除 ({deleteConfirmTarget.allTargetIds.length})</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

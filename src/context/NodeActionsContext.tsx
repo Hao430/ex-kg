@@ -16,6 +16,8 @@ export interface NodeActionsContextValue {
   updateTitle: (nodeId: string, title: string) => void;
   updateNote: (nodeId: string, content: string, title?: string) => void;
   retry: (nodeId: string, options?: { model?: string; enableWebSearch?: boolean }) => void;
+  exportSubBranch?: (nodeId: string) => void;
+  branchNewNote?: (sourceNoteId: string) => void;
 }
 
 export const NodeActionsContext = createContext<NodeActionsContextValue | null>(null);

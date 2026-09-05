@@ -9,14 +9,27 @@ export interface UserRecord {
   email: string;
   password_hash: string;
   name: string;
+  avatar?: string;
   role: 'user' | 'vip' | 'admin';
   credits_balance: number;
+  vip_expires_at?: string | null;
   is_active: boolean;
   failed_attempts: number;
   locked_until: string | null;
   last_login_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface FeedbackRecord {
+  id: string;
+  user_id?: string;
+  user_email?: string;
+  type: string;
+  rating: number;
+  content: string;
+  contact_info?: string;
+  created_at: string;
 }
 
 export interface SessionRecord {
@@ -109,6 +122,8 @@ export const inMemoryStore = {
   canvases: new Map<string, CanvasRecord>(),
   creditTransactions: [] as CreditTransactionRecord[],
   snapshots: new Map<string, any[]>(),
+  systemSettings: new Map<string, any>(),
+  feedbacks: [] as FeedbackRecord[],
 };
 
 // Seed default users in inMemoryStore
@@ -198,8 +213,10 @@ export async function initDbSchema(): Promise<boolean> {
         email VARCHAR(255) UNIQUE NOT NULL,
         password_hash VARCHAR(255) NOT NULL,
         name VARCHAR(100) DEFAULT '' NOT NULL,
+        avatar TEXT,
         role VARCHAR(20) DEFAULT 'user' NOT NULL CHECK (role IN ('user', 'vip', 'admin')),
         credits_balance BIGINT DEFAULT 50000 NOT NULL CHECK (credits_balance >= 0),
+        vip_expires_at TIMESTAMPTZ,
         is_active BOOLEAN DEFAULT TRUE NOT NULL,
         failed_attempts INT DEFAULT 0 NOT NULL,
         locked_until TIMESTAMPTZ,
@@ -207,6 +224,8 @@ export async function initDbSchema(): Promise<boolean> {
         created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
         updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
       );
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS vip_expires_at TIMESTAMPTZ;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar TEXT;
     `);
 
     // 2. Safe Sessions table
@@ -284,7 +303,98 @@ export async function initDbSchema(): Promise<boolean> {
       );
     `);
 
-    // 7. Indices
+    // 7. System Settings table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS system_settings (
+        key VARCHAR(64) PRIMARY KEY,
+        value JSONB NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+    `);
+
+    
+    // 7.1 Canvas Shares (公开分享与协作)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS canvas_shares (
+        id VARCHAR(64) PRIMARY KEY,
+        canvas_id VARCHAR(64) NOT NULL REFERENCES canvases(id) ON DELETE CASCADE,
+        share_code VARCHAR(64) UNIQUE NOT NULL,
+        password_hash VARCHAR(255),
+        permission VARCHAR(20) DEFAULT 'view' NOT NULL,
+        views_count INT DEFAULT 0,
+        expires_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+    `);
+
+    // 7.2 Canvas Snapshots (版本控制与历史记录)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS canvas_snapshots (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        canvas_id VARCHAR(64) NOT NULL REFERENCES canvases(id) ON DELETE CASCADE,
+        name VARCHAR(128) NOT NULL,
+        snapshot_data JSONB NOT NULL,
+        created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+    `);
+
+    // 7.3 Tags (标签分类系统)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS tags (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name VARCHAR(64) NOT NULL,
+        color VARCHAR(32) DEFAULT 'blue',
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UNIQUE(user_id, name)
+      );
+    `);
+
+    // 7.4 Canvas Tags (画布标签关联)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS canvas_tags (
+        canvas_id VARCHAR(64) NOT NULL REFERENCES canvases(id) ON DELETE CASCADE,
+        tag_id UUID NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+        PRIMARY KEY (canvas_id, tag_id)
+      );
+    `);
+
+    // 7.5 User API Keys (BYOK - 自带密钥支持)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS user_api_keys (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        provider VARCHAR(32) NOT NULL,
+        encrypted_key TEXT NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UNIQUE(user_id, provider)
+      );
+    `);
+
+    // 7.6 Feedbacks (用户反馈系统)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS feedbacks (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        user_email VARCHAR(255),
+        type VARCHAR(32) DEFAULT 'suggestion' NOT NULL,
+        rating INT DEFAULT 5 NOT NULL,
+        content TEXT NOT NULL,
+        contact_info VARCHAR(255),
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+    `);
+
+    // 8. Indices
+    
+    // 新增 PM 视角优化索引
+      await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email);`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_nodes_parent_id ON nodes(parent_id);`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_canvas_shares_code ON canvas_shares(share_code);`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_canvas_snapshots_canvas ON canvas_snapshots(canvas_id, created_at DESC);`);
+
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_canvases_user_updated ON canvases(user_id, updated_at DESC);
       CREATE INDEX IF NOT EXISTS idx_nodes_canvas_id ON nodes(canvas_id);
@@ -504,6 +614,100 @@ export async function resetFailedLogin(userId: string): Promise<void> {
   }
 }
 
+export async function updateUserProfile(data: {
+  userId: string;
+  name?: string;
+  avatar?: string;
+}): Promise<UserRecord | null> {
+  const now = new Date().toISOString();
+  const user = await findUserById(data.userId);
+  if (!user) return null;
+
+  const newName = data.name !== undefined ? data.name.trim() : user.name;
+  const newAvatar = data.avatar !== undefined ? data.avatar : user.avatar;
+
+  const p = getPool();
+  if (p) {
+    try {
+      const res = await p.query(
+        `UPDATE users SET name = $1, avatar = $2, updated_at = NOW() WHERE id = $3 RETURNING *`,
+        [newName, newAvatar, data.userId]
+      );
+      if (res.rows.length > 0) return res.rows[0];
+    } catch (e) {
+      console.warn('PG updateUserProfile fallback to in-memory:', e);
+    }
+  }
+
+  const inMem = inMemoryStore.users.get(data.userId);
+  if (inMem) {
+    inMem.name = newName;
+    inMem.avatar = newAvatar;
+    inMem.updated_at = now;
+    return inMem;
+  }
+
+  user.name = newName;
+  user.avatar = newAvatar;
+  user.updated_at = now;
+  return user;
+}
+
+export async function createFeedback(data: {
+  userId?: string;
+  userEmail?: string;
+  type: string;
+  rating?: number;
+  content: string;
+  contactInfo?: string;
+}): Promise<FeedbackRecord> {
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const type = data.type || 'suggestion';
+  const rating = data.rating ?? 5;
+  const content = data.content.trim();
+  const contactInfo = data.contactInfo?.trim() || '';
+
+  const p = getPool();
+  if (p) {
+    try {
+      const res = await p.query(
+        `INSERT INTO feedbacks (id, user_id, user_email, type, rating, content, contact_info, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+         RETURNING *`,
+        [id, data.userId || null, data.userEmail || null, type, rating, content, contactInfo]
+      );
+      if (res.rows.length > 0) {
+        return {
+          id: res.rows[0].id,
+          user_id: res.rows[0].user_id,
+          user_email: res.rows[0].user_email,
+          type: res.rows[0].type,
+          rating: res.rows[0].rating,
+          content: res.rows[0].content,
+          contact_info: res.rows[0].contact_info,
+          created_at: res.rows[0].created_at,
+        };
+      }
+    } catch (e) {
+      console.warn('PG createFeedback fallback to in-memory:', e);
+    }
+  }
+
+  const record: FeedbackRecord = {
+    id,
+    user_id: data.userId,
+    user_email: data.userEmail,
+    type,
+    rating,
+    content,
+    contact_info: contactInfo,
+    created_at: now,
+  };
+  inMemoryStore.feedbacks.push(record);
+  return record;
+}
+
 export async function createSession(data: {
   userId: string;
   token: string;
@@ -549,7 +753,7 @@ export async function findSession(token: string): Promise<{ session: SessionReco
       await initDbSchema();
       const res = await p.query(
         `SELECT s.id as session_id, s.user_id, s.token, s.expires_at, s.ip_address, s.user_agent, s.created_at as session_created_at,
-                u.id as u_id, u.email, u.password_hash, u.name, u.role, u.credits_balance, u.is_active, u.failed_attempts, u.locked_until, u.last_login_at, u.created_at as user_created_at, u.updated_at as user_updated_at
+                u.id as u_id, u.email, u.password_hash, u.name, u.avatar, u.role, u.credits_balance, u.vip_expires_at, u.is_active, u.failed_attempts, u.locked_until, u.last_login_at, u.created_at as user_created_at, u.updated_at as user_updated_at
          FROM sessions s
          JOIN users u ON u.id = s.user_id
          WHERE s.token = $1 AND s.expires_at > NOW()`,
@@ -571,8 +775,10 @@ export async function findSession(token: string): Promise<{ session: SessionReco
           email: row.email,
           password_hash: row.password_hash,
           name: row.name,
+          avatar: row.avatar,
           role: row.role,
           credits_balance: Number(row.credits_balance),
+          vip_expires_at: row.vip_expires_at ? new Date(row.vip_expires_at).toISOString() : null,
           is_active: row.is_active,
           failed_attempts: row.failed_attempts,
           locked_until: row.locked_until,
@@ -597,6 +803,8 @@ export async function findSession(token: string): Promise<{ session: SessionReco
   if (!u) return null;
   return { session: s, user: u };
 }
+
+export const findSessionByToken = findSession;
 
 export async function deleteSession(token: string): Promise<boolean> {
   const p = getPool();
@@ -767,6 +975,151 @@ export async function adjustUserCredits(data: {
   };
   inMemoryStore.creditTransactions.unshift(txRecord);
   return { newBalance: user.credits_balance, transactionId: txId };
+}
+
+/**
+ * Subscribe user to a time-based membership plan (weekly, monthly, yearly)
+ */
+export async function subscribeUserPlan(data: {
+  userId: string;
+  plan: 'weekly' | 'monthly' | 'yearly';
+}): Promise<{ role: 'vip'; vip_expires_at: string; user: UserRecord }> {
+  const daysMap = {
+    weekly: 7,
+    monthly: 30,
+    yearly: 365,
+  };
+  const addDays = daysMap[data.plan] || 30;
+
+  let baseTime = Date.now();
+  const currentUser = await findUserById(data.userId);
+  if (currentUser?.vip_expires_at && new Date(currentUser.vip_expires_at).getTime() > baseTime) {
+    baseTime = new Date(currentUser.vip_expires_at).getTime();
+  }
+
+  const newExpiresAt = new Date(baseTime + addDays * 24 * 3600 * 1000).toISOString();
+  const p = getPool();
+
+  if (p) {
+    try {
+      await initDbSchema();
+      const res = await p.query(
+        `UPDATE users
+         SET role = CASE WHEN role = 'admin' THEN 'admin' ELSE 'vip' END,
+             vip_expires_at = $1,
+             updated_at = NOW()
+         WHERE id = $2
+         RETURNING *`,
+        [newExpiresAt, data.userId]
+      );
+      if (res.rows.length > 0) {
+        const row = res.rows[0];
+        const updated: UserRecord = {
+          id: row.id,
+          email: row.email,
+          password_hash: row.password_hash,
+          name: row.name,
+          role: row.role,
+          credits_balance: Number(row.credits_balance),
+          vip_expires_at: row.vip_expires_at ? new Date(row.vip_expires_at).toISOString() : newExpiresAt,
+          is_active: row.is_active,
+          failed_attempts: row.failed_attempts,
+          locked_until: row.locked_until,
+          last_login_at: row.last_login_at,
+          created_at: row.created_at,
+          updated_at: row.updated_at,
+        };
+        inMemoryStore.users.set(data.userId, updated);
+        return { role: 'vip', vip_expires_at: newExpiresAt, user: updated };
+      }
+    } catch (e) {
+      console.warn('PG subscribeUserPlan failed, updating memory:', e);
+    }
+  }
+
+  const memUser = inMemoryStore.users.get(data.userId);
+  if (!memUser) throw new Error('User not found');
+  if (memUser.role !== 'admin') {
+    memUser.role = 'vip';
+  }
+  memUser.vip_expires_at = newExpiresAt;
+  memUser.updated_at = new Date().toISOString();
+
+  return { role: 'vip', vip_expires_at: newExpiresAt, user: memUser };
+}
+
+/**
+ * Grant or extend VIP days for a user by admin
+ */
+export async function grantUserVipDays(data: {
+  userId: string;
+  days: number;
+}): Promise<{ role: string; vip_expires_at: string | null; user: UserRecord }> {
+  const currentUser = await findUserById(data.userId);
+  if (!currentUser) throw new Error('User not found');
+
+  let baseTime = Date.now();
+  if (currentUser.vip_expires_at && new Date(currentUser.vip_expires_at).getTime() > baseTime) {
+    baseTime = new Date(currentUser.vip_expires_at).getTime();
+  }
+
+  let newExpiresAt: string | null = null;
+  let newRole = currentUser.role;
+
+  if (data.days > 0) {
+    newExpiresAt = new Date(baseTime + data.days * 24 * 3600 * 1000).toISOString();
+    if (newRole !== 'admin') newRole = 'vip';
+  } else if (data.days === 0) {
+    newExpiresAt = null;
+    if (newRole !== 'admin') newRole = 'user';
+  }
+
+  const p = getPool();
+  if (p) {
+    try {
+      await initDbSchema();
+      const res = await p.query(
+        `UPDATE users
+         SET role = $1,
+             vip_expires_at = $2,
+             updated_at = NOW()
+         WHERE id = $3
+         RETURNING *`,
+        [newRole, newExpiresAt, data.userId]
+      );
+      if (res.rows.length > 0) {
+        const row = res.rows[0];
+        const updated: UserRecord = {
+          id: row.id,
+          email: row.email,
+          password_hash: row.password_hash,
+          name: row.name,
+          avatar: row.avatar,
+          role: row.role,
+          credits_balance: Number(row.credits_balance),
+          vip_expires_at: row.vip_expires_at ? new Date(row.vip_expires_at).toISOString() : null,
+          is_active: row.is_active,
+          failed_attempts: row.failed_attempts,
+          locked_until: row.locked_until,
+          last_login_at: row.last_login_at,
+          created_at: row.created_at,
+          updated_at: row.updated_at,
+        };
+        inMemoryStore.users.set(data.userId, updated);
+        return { role: updated.role, vip_expires_at: updated.vip_expires_at || null, user: updated };
+      }
+    } catch (e) {
+      console.warn('PG grantUserVipDays failed, updating memory:', e);
+    }
+  }
+
+  const memUser = inMemoryStore.users.get(data.userId);
+  if (!memUser) throw new Error('User not found');
+  memUser.role = newRole;
+  memUser.vip_expires_at = newExpiresAt;
+  memUser.updated_at = new Date().toISOString();
+
+  return { role: memUser.role, vip_expires_at: memUser.vip_expires_at || null, user: memUser };
 }
 
 /* ==========================================================================
@@ -1107,8 +1460,15 @@ export async function getCanvas(canvasId: string, userId?: string, isAdmin = fal
       if (cRes.rows.length === 0) return null;
 
       const c = cRes.rows[0];
-      // Multi-tenant check: if not admin and canvas belongs to someone else, reject
-      if (userId && !isAdmin && c.user_id !== userId) {
+      // Multi-tenant check: if not admin and canvas belongs to someone else, check if adoptable/public
+      const isPublicOrAdoptable =
+        c.user_id === 'demo-user-1' ||
+        (typeof c.user_id === 'string' && c.user_id.startsWith('guest_')) ||
+        c.id === 'default-board' ||
+        c.id === 'default-canvas' ||
+        c.id.startsWith('seed_');
+
+      if (userId && !isAdmin && c.user_id !== userId && !isPublicOrAdoptable) {
         return null;
       }
 
@@ -1193,11 +1553,22 @@ export async function saveCanvas(
 
       // Check ownership if canvas exists
       const existing = await client.query('SELECT user_id FROM canvases WHERE id = $1', [data.id]);
-      if (existing.rows.length > 0 && !isAdmin && existing.rows[0].user_id !== userId) {
+      const existingUserId = existing.rows.length > 0 ? existing.rows[0].user_id : null;
+      const isAdoptable =
+        data.id === 'default-board' ||
+        data.id === 'default-canvas' ||
+        data.id.startsWith('seed_') ||
+        data.id.startsWith('board-') ||
+        !existingUserId ||
+        existingUserId === 'demo-user-1' ||
+        (typeof existingUserId === 'string' && existingUserId.startsWith('guest_')) ||
+        (typeof userId === 'string' && userId.startsWith('guest_'));
+
+      if (existing.rows.length > 0 && !isAdmin && existingUserId !== userId && !isAdoptable) {
         throw new Error('无权修改其他用户的画板 (IDOR)');
       }
 
-      const assignedUserId = existing.rows.length > 0 ? existing.rows[0].user_id : userId;
+      const assignedUserId = (isAdoptable || existing.rows.length === 0) ? userId : (existingUserId || userId);
 
       await client.query(
         `INSERT INTO canvases (id, user_id, title, description, viewport_x, viewport_y, viewport_zoom, default_model, updated_at)
@@ -1273,13 +1644,24 @@ export async function saveCanvas(
 
   // In-memory store
   const existing = inMemoryStore.canvases.get(data.id);
-  if (existing && !isAdmin && existing.user_id !== userId) {
+  const existingUserId = existing?.user_id || null;
+  const isAdoptable =
+    data.id === 'default-board' ||
+    data.id === 'default-canvas' ||
+    data.id.startsWith('seed_') ||
+    data.id.startsWith('board-') ||
+    !existingUserId ||
+    existingUserId === 'demo-user-1' ||
+    (typeof existingUserId === 'string' && existingUserId.startsWith('guest_')) ||
+    (typeof userId === 'string' && userId.startsWith('guest_'));
+
+  if (existing && !isAdmin && existingUserId !== userId && !isAdoptable) {
     throw new Error('无权修改其他用户的画板 (IDOR)');
   }
 
   const record: CanvasRecord = {
     id: data.id,
-    user_id: existing?.user_id || userId,
+    user_id: isAdoptable ? userId : (existing?.user_id || userId),
     title: data.title,
     description: data.description,
     viewport: vp,
@@ -1303,7 +1685,16 @@ export async function deleteCanvas(canvasId: string, userId: string, isAdmin = f
       await initDbSchema();
       const check = await p.query('SELECT user_id FROM canvases WHERE id = $1', [canvasId]);
       if (check.rows.length === 0) return false;
-      if (!isAdmin && check.rows[0].user_id !== userId) {
+      const existingUserId = check.rows[0].user_id;
+      const isAdoptableOrGuest =
+        canvasId === 'default-board' ||
+        canvasId === 'default-canvas' ||
+        canvasId.startsWith('seed_') ||
+        canvasId.startsWith('board-') ||
+        existingUserId === 'demo-user-1' ||
+        (typeof existingUserId === 'string' && existingUserId.startsWith('guest_'));
+
+      if (!isAdmin && existingUserId !== userId && !isAdoptableOrGuest) {
         throw new Error('无权删除此画板 (IDOR)');
       }
       await p.query('DELETE FROM canvases WHERE id = $1', [canvasId]);
@@ -1315,7 +1706,16 @@ export async function deleteCanvas(canvasId: string, userId: string, isAdmin = f
 
   const canvas = inMemoryStore.canvases.get(canvasId);
   if (!canvas) return false;
-  if (!isAdmin && canvas.user_id !== userId) {
+  const existingUserId = canvas.user_id;
+  const isAdoptableOrGuest =
+    canvasId === 'default-board' ||
+    canvasId === 'default-canvas' ||
+    canvasId.startsWith('seed_') ||
+    canvasId.startsWith('board-') ||
+    existingUserId === 'demo-user-1' ||
+    (typeof existingUserId === 'string' && existingUserId.startsWith('guest_'));
+
+  if (!isAdmin && existingUserId !== userId && !isAdoptableOrGuest) {
     throw new Error('无权删除此画板 (IDOR)');
   }
   return inMemoryStore.canvases.delete(canvasId);
@@ -1377,3 +1777,85 @@ export async function searchNodes(queryText: string, canvasId?: string, userId?:
   }
   return results.slice(0, 30);
 }
+
+export interface AiModelConfig {
+  provider: 'gemini' | 'openai';
+  openai_base_url: string;
+  openai_api_key: string;
+  openai_model: string;
+  gemini_model: string;
+  temperature: number;
+  max_tokens: number;
+  custom_system_prompt?: string;
+  updated_at?: string;
+  updated_by?: string;
+}
+
+export const DEFAULT_AI_MODEL_CONFIG: AiModelConfig = {
+  provider: 'gemini',
+  openai_base_url: 'https://api.openai.com/v1',
+  openai_api_key: '',
+  openai_model: 'deepseek-chat',
+  gemini_model: 'gemini-3.8-flash',
+  temperature: 0.7,
+  max_tokens: 4096,
+  custom_system_prompt: '',
+};
+
+/**
+ * Get current system AI Model & API Provider configuration
+ */
+export async function getAiModelConfig(): Promise<AiModelConfig> {
+  const pool = getPool();
+  if (!pool) {
+    const cached = inMemoryStore.systemSettings.get('ai_model_config');
+    return cached ? { ...DEFAULT_AI_MODEL_CONFIG, ...cached } : { ...DEFAULT_AI_MODEL_CONFIG };
+  }
+
+  try {
+    await initDbSchema();
+    const res = await pool.query('SELECT value FROM system_settings WHERE key = $1', ['ai_model_config']);
+    if (res.rows.length > 0) {
+      return { ...DEFAULT_AI_MODEL_CONFIG, ...res.rows[0].value };
+    }
+  } catch (err) {
+    console.error('Failed to get ai_model_config from DB:', err);
+  }
+
+  const cached = inMemoryStore.systemSettings.get('ai_model_config');
+  return cached ? { ...DEFAULT_AI_MODEL_CONFIG, ...cached } : { ...DEFAULT_AI_MODEL_CONFIG };
+}
+
+/**
+ * Save or update system AI Model & API Provider configuration
+ */
+export async function saveAiModelConfig(config: Partial<AiModelConfig>, operatorEmail?: string): Promise<AiModelConfig> {
+  const current = await getAiModelConfig();
+  const updated: AiModelConfig = {
+    ...current,
+    ...config,
+    updated_at: new Date().toISOString(),
+    updated_by: operatorEmail || current.updated_by || 'admin',
+  };
+
+  // Update in-memory
+  inMemoryStore.systemSettings.set('ai_model_config', updated);
+
+  const pool = getPool();
+  if (pool) {
+    try {
+      await initDbSchema();
+      await pool.query(
+        `INSERT INTO system_settings (key, value, updated_at)
+         VALUES ($1, $2, NOW())
+         ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
+        ['ai_model_config', JSON.stringify(updated)]
+      );
+    } catch (err) {
+      console.error('Failed to save ai_model_config to DB:', err);
+    }
+  }
+
+  return updated;
+}
+
