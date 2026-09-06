@@ -14,6 +14,8 @@ import {
   saveBoard,
   exportBoardToJson,
   exportBoardToMarkdown,
+  fetchBoardFromServer,
+  fetchBoardListFromServer,
   StoredBoard,
 } from './lib/storage';
 import { DeepDiveBoardMeta } from './types';
@@ -46,7 +48,7 @@ function MainApp() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [nodeCount, setNodeCount] = useState<number>(1);
 
-  const { isVip, openRechargeModal } = useAuth();
+  const { isVip, openRechargeModal, user } = useAuth();
 
   // Global Dark Mode state ('light' | 'dark')
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -101,6 +103,7 @@ function MainApp() {
 
   // 保存冲突提示（Spec A4 乐观锁）+ 同步状态订阅（Spec A5，仅指示当前画板）
   const [syncState, setSyncState] = useState<'idle' | 'saved' | 'pending' | 'error' | 'conflict'>('idle');
+  const [boardReady, setBoardReady] = useState(false); // Spec A2：画布数据就绪前不挂载画布
   const currentBoardIdRef = useRef(currentBoardId);
   useEffect(() => {
     currentBoardIdRef.current = currentBoardId;
@@ -130,37 +133,74 @@ function MainApp() {
     };
   }, []);
 
-  // Load boards on startup
-  useEffect(() => {
-    const list = loadBoardList();
-    if (list.length > 0) {
-      setBoards(list);
-      const activeId = list[0].id;
-      setCurrentBoardId(activeId);
-      const loaded = loadBoard(activeId);
-      if (loaded) {
-        setBoardName(loaded.name);
-        setInitialNodes(loaded.nodes);
-        setInitialEdges(loaded.edges);
-        currentNodesRef.current = loaded.nodes;
-        currentEdgesRef.current = loaded.edges;
-        setNodeCount(loaded.nodes.length);
-      }
-    } else {
-      const defaultMeta: DeepDiveBoardMeta = {
-        id: 'default-board',
-        name: '量子计算深度探索',
-        updatedAt: Date.now(),
-        nodeCount: 1,
-      };
-      setBoards([defaultMeta]);
-      setNodeCount(1);
-    }
+  const applyLoadedBoard = useCallback((loaded: StoredBoard) => {
+    setCurrentBoardId(loaded.id);
+    setBoardName(loaded.name);
+    setInitialNodes(loaded.nodes);
+    setInitialEdges(loaded.edges);
+    currentNodesRef.current = loaded.nodes;
+    currentEdgesRef.current = loaded.edges;
+    setNodeCount(loaded.nodes.length);
+    setBoardReady(true);
   }, []);
+
+  // Load boards on startup（Spec A2：已登录时服务端为真源，失败回退本地）
+  const loadSeqRef = useRef(0);
+  useEffect(() => {
+    let cancelled = false;
+    const seq = ++loadSeqRef.current;
+    const boot = async () => {
+      const localList = loadBoardList();
+      let activeId: string | undefined;
+      let activeList: DeepDiveBoardMeta[] = localList;
+
+      if (user) {
+        const serverList = await fetchBoardListFromServer();
+        if (cancelled || seq !== loadSeqRef.current) return;
+        if (serverList) {
+          // 服务端为主，本地独有画板（未同步草稿）保留在尾部
+          const merged = [...serverList];
+          for (const b of localList) {
+            if (!merged.some((m) => m.id === b.id)) merged.push(b);
+          }
+          activeList = merged;
+        }
+      }
+
+      if (activeList.length > 0) {
+        setBoards(activeList);
+        activeId = activeList[0].id;
+      } else {
+        const defaultMeta: DeepDiveBoardMeta = {
+          id: 'default-board',
+          name: '量子计算深度探索',
+          updatedAt: Date.now(),
+          nodeCount: 1,
+        };
+        setBoards([defaultMeta]);
+        setNodeCount(1);
+        setBoardReady(true);
+        return;
+      }
+
+      if (!activeId) return;
+      let loaded: StoredBoard | null = null;
+      if (user) loaded = await fetchBoardFromServer(activeId);
+      if (cancelled || seq !== loadSeqRef.current) return;
+      if (!loaded) loaded = loadBoard(activeId);
+      if (loaded) applyLoadedBoard(loaded);
+      else setBoardReady(true);
+    };
+    void boot();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, applyLoadedBoard]);
 
   // Debounced auto-save whenever nodes or edges change
   const handleCanvasChange = useCallback(
     (nodes: Node[], edges: Edge[]) => {
+      if (!boardReady) return; // Spec A2：数据就绪前不触发自动保存，防模板/旧数据污染
       currentNodesRef.current = nodes;
       currentEdgesRef.current = edges;
       setNodeCount(nodes.length);
@@ -181,7 +221,7 @@ function MainApp() {
         setBoards(loadBoardList());
       }, 600);
     },
-    [currentBoardId, boardName]
+    [currentBoardId, boardName, boardReady]
   );
 
   const handleRenameBoard = (newName: string) => {
@@ -198,18 +238,18 @@ function MainApp() {
     showToast(`画板已重命名为「${newName}」`);
   };
 
-  const handleSwitchBoard = (targetId: string) => {
+  const handleSwitchBoard = async (targetId: string) => {
     if (targetId === currentBoardId) return;
-    const loaded = loadBoard(targetId);
+    const seq = ++loadSeqRef.current; // 过期的加载结果直接丢弃（Spec A2 审计修复）
+    let loaded: StoredBoard | null = null;
+    if (user) loaded = await fetchBoardFromServer(targetId); // Spec A2：服务端优先
+    if (seq !== loadSeqRef.current) return; // 期间用户又切换了画板
+    if (!loaded) loaded = loadBoard(targetId); // 回退本地草稿
     if (loaded) {
-      setCurrentBoardId(targetId);
-      setBoardName(loaded.name);
-      setInitialNodes(loaded.nodes);
-      setInitialEdges(loaded.edges);
-      currentNodesRef.current = loaded.nodes;
-      currentEdgesRef.current = loaded.edges;
-      setNodeCount(loaded.nodes.length);
+      applyLoadedBoard(loaded); // 加载完成后再整体切换，避免旧数据污染新画板
       showToast(`已载入画板「${loaded.name}」`);
+    } else {
+      showToast('画板加载失败，请稍后重试');
     }
   };
 
@@ -343,6 +383,18 @@ function MainApp() {
     );
   }
 
+  // Spec A2：画布数据就绪前不挂载画布，避免初始模板/旧数据触发自动保存污染服务端画板
+  if (!boardReady) {
+    return (
+      <div className="w-screen h-screen flex items-center justify-center bg-slate-100 dark:bg-[#070b14] text-slate-500 dark:text-slate-400">
+        <div className="flex items-center gap-3 text-sm">
+          <span className="w-4 h-4 rounded-full border-2 border-slate-300 dark:border-slate-700 border-t-indigo-500 animate-spin" />
+          正在载入画板…
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="w-screen h-screen overflow-hidden bg-slate-100 dark:bg-[#070b14] text-slate-900 dark:text-slate-100 flex flex-col font-sans select-none transition-colors duration-200">
       {/* Top Bar Navigation */}
@@ -351,7 +403,7 @@ function MainApp() {
         onRenameBoard={handleRenameBoard}
         boards={boards}
         currentBoardId={currentBoardId}
-        onSwitchBoard={handleSwitchBoard}
+        onSwitchBoard={(id) => void handleSwitchBoard(id)}
         onNewBoard={handleNewBoard}
         onAddRootNode={() => triggerAddRootRef.current?.()}
         onAddNoteNode={() => triggerAddNoteRef.current?.()}

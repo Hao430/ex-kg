@@ -85,31 +85,35 @@ export function saveBoard(board: StoredBoard): void {
       nodes: deduplicateNodes(board.nodes),
       edges: deduplicateEdges(board.edges),
     };
-    localStorage.setItem(
-      `${STORAGE_BOARD_PREFIX}${board.id}`,
-      JSON.stringify(cleanedBoard)
-    );
-    // Update index
-    const list = loadBoardList();
-    const existingIndex = list.findIndex((b) => b.id === board.id);
-    const meta: DeepDiveBoardMeta = {
-      id: cleanedBoard.id,
-      name: cleanedBoard.name,
-      updatedAt: cleanedBoard.updatedAt,
-      nodeCount: cleanedBoard.nodes.length,
-    };
-    if (existingIndex >= 0) {
-      list[existingIndex] = meta;
-    } else {
-      list.unshift(meta);
-    }
-    saveBoardList(list);
-
+    persistBoard(cleanedBoard);
     // Asynchronously sync to backend (PostgreSQL) via retry queue (Spec A5)
     enqueueBoardSync(cleanedBoard.id);
   } catch (e) {
     console.error(`Failed to save board ${board.id}:`, e);
   }
+}
+
+/** 纯本地持久化（写画布记录 + 更新索引），不触发服务端入队 */
+function persistBoard(cleanedBoard: StoredBoard): void {
+  localStorage.setItem(
+    `${STORAGE_BOARD_PREFIX}${cleanedBoard.id}`,
+    JSON.stringify(cleanedBoard)
+  );
+  // Update index
+  const list = loadBoardList();
+  const existingIndex = list.findIndex((b) => b.id === cleanedBoard.id);
+  const meta: DeepDiveBoardMeta = {
+    id: cleanedBoard.id,
+    name: cleanedBoard.name,
+    updatedAt: cleanedBoard.updatedAt,
+    nodeCount: cleanedBoard.nodes.length,
+  };
+  if (existingIndex >= 0) {
+    list[existingIndex] = meta;
+  } else {
+    list.unshift(meta);
+  }
+  saveBoardList(list);
 }
 
 /**
@@ -208,6 +212,55 @@ export async function fetchDbStatus(): Promise<{
     const res = await fetch('/api/db/status');
     if (!res.ok) return null;
     return await res.json();
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Spec A2：画布加载走服务端（服务端为真源）。
+ * GET /api/canvases/:id 成功 → 映射为 StoredBoard 并写本地缓存/索引；404（从未同步）或网络失败 → null（调用方回退本地）。
+ */
+export async function fetchBoardFromServer(boardId: string): Promise<StoredBoard | null> {
+  try {
+    const res = await fetch(`/api/canvases/${encodeURIComponent(boardId)}`, {
+      credentials: 'include',
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as any;
+    if (!data?.id) return null;
+
+    const board: StoredBoard = {
+      id: data.id,
+      name: data.title || '未命名思维探索',
+      updatedAt: Date.parse(data.updatedAt) || Date.now(),
+      viewport: data.viewport || { x: 0, y: 0, zoom: 1 },
+      nodes: deduplicateNodes(data.nodes || []),
+      edges: deduplicateEdges(data.edges || []),
+      serverUpdatedAt: data.updatedAt,
+    };
+    persistBoard(board);
+    return board;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Spec A2：从服务端拉取画板列表（跨设备登录后恢复画板清单）。失败 → null。
+ */
+export async function fetchBoardListFromServer(): Promise<DeepDiveBoardMeta[] | null> {
+  try {
+    const res = await fetch('/api/canvases', { credentials: 'include' });
+    if (!res.ok) return null;
+    const data = await res.json() as any[];
+    if (!Array.isArray(data)) return null;
+    return data.map((c) => ({
+      id: c.id,
+      name: c.title || '未命名思维探索',
+      updatedAt: Date.parse(c.updatedAt) || 0,
+      nodeCount: c.nodeCount || 0,
+    }));
   } catch (e) {
     return null;
   }
