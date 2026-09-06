@@ -1,18 +1,21 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import {
-  getAdminOverview,
   listAdminUsers,
+  listAdminTransactions,
+  getAdminOverview,
   updateUserStatus,
   adjustUserCredits,
   grantUserVipDays,
-  listAdminTransactions,
-  findUserById,
-  getAiModelConfig,
+  getUserOrFail,
+  getMaskedModelConfig,
+  resolveConfigForSave,
   saveAiModelConfig,
-  AiModelConfig,
-} from '../db.js';
-import { authMiddleware, requireAdmin } from '../middlewares.js';
+} from '../services/admin.service.js';
+import { getAiModelConfig } from '../services/ai.service.js';
+import { asyncHandler } from '../lib/async-handler.js';
+import { validate } from '../lib/validate.js';
+import { authMiddleware, requireAdmin } from '../middleware/auth.js';
 import { GoogleGenAI } from '@google/genai';
 
 export const adminRouter = Router();
@@ -25,40 +28,30 @@ adminRouter.use(requireAdmin);
  * GET /api/admin/overview
  * Operation dashboard metrics (total users, tokens, canvases, models)
  */
-adminRouter.get('/overview', async (_req: Request, res: Response) => {
-  try {
-    const overview = await getAdminOverview();
-    res.json({ success: true, overview });
-  } catch (error: any) {
-    console.error('Admin overview error:', error);
-    res.status(500).json({ error: error?.message || '获取看板数据失败' });
-  }
-});
+adminRouter.get('/overview', asyncHandler(async (_req: Request, res: Response) => {
+  const overview = await getAdminOverview();
+  res.json({ success: true, overview });
+}));
 
 /**
  * GET /api/admin/users
  * Paginated user query with filters
  */
-adminRouter.get('/users', async (req: Request, res: Response) => {
-  try {
-    const page = parseInt(req.query.page as string, 10) || 1;
-    const limit = parseInt(req.query.limit as string, 10) || 10;
-    const search = typeof req.query.search === 'string' ? req.query.search : undefined;
-    const role = typeof req.query.role === 'string' ? req.query.role : undefined;
-    const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+adminRouter.get('/users', asyncHandler(async (req: Request, res: Response) => {
+  const page = parseInt(req.query.page as string, 10) || 1;
+  const limit = parseInt(req.query.limit as string, 10) || 10;
+  const search = typeof req.query.search === 'string' ? req.query.search : undefined;
+  const role = typeof req.query.role === 'string' ? req.query.role : undefined;
+  const status = typeof req.query.status === 'string' ? req.query.status : undefined;
 
-    const result = await listAdminUsers({ page, limit, search, role, status });
-    res.json({
-      success: true,
-      ...result,
-      page,
-      limit,
-    });
-  } catch (error: any) {
-    console.error('Admin list users error:', error);
-    res.status(500).json({ error: error?.message || '获取用户列表失败' });
-  }
-});
+  const result = await listAdminUsers({ page, limit, search, role, status });
+  res.json({
+    success: true,
+    ...result,
+    page,
+    limit,
+  });
+}));
 
 /**
  * PUT /api/admin/users/:id/status
@@ -68,38 +61,23 @@ const UserStatusSchema = z.object({
   is_active: z.boolean(),
 });
 
-adminRouter.put('/users/:id/status', async (req: Request, res: Response) => {
-  try {
-    const parseResult = UserStatusSchema.safeParse(req.body);
-    if (!parseResult.success) {
-      res.status(400).json({ error: '无效的状态参数', code: 'INVALID_STATUS' });
-      return;
-    }
+adminRouter.put('/users/:id/status', asyncHandler(async (req: Request, res: Response) => {
+  const { is_active } = validate(UserStatusSchema, req.body, 'INVALID_STATUS');
+  const targetUser = await getUserOrFail(req.params.id);
 
-    const { id } = req.params;
-    const targetUser = await findUserById(id);
-    if (!targetUser) {
-      res.status(404).json({ error: '用户不存在' });
-      return;
-    }
-
-    // Protect super admin from self-freezing
-    if (targetUser.id === req.user!.id && !parseResult.data.is_active) {
-      res.status(400).json({ error: '不能冻结当前登录的管理员自身账号' });
-      return;
-    }
-
-    const updated = await updateUserStatus(id, parseResult.data.is_active);
-    res.json({
-      success: true,
-      message: parseResult.data.is_active ? '账号已成功解封' : '账号已被冻结并强制踢下线',
-      user: updated,
-    });
-  } catch (error: any) {
-    console.error('Admin update status error:', error);
-    res.status(500).json({ error: error?.message || '更改用户状态失败' });
+  // Protect super admin from self-freezing
+  if (targetUser.id === req.user!.id && !is_active) {
+    res.status(400).json({ error: '不能冻结当前登录的管理员自身账号' });
+    return;
   }
-});
+
+  const updated = await updateUserStatus(targetUser.id, is_active);
+  res.json({
+    success: true,
+    message: is_active ? '账号已成功解封' : '账号已被冻结并强制踢下线',
+    user: updated,
+  });
+}));
 
 /**
  * POST /api/admin/users/:id/credits
@@ -110,45 +88,25 @@ const AdjustCreditsSchema = z.object({
   reason: z.string().min(2, '请填写调账原因（至少 2 个字）'),
 });
 
-adminRouter.post('/users/:id/credits', async (req: Request, res: Response) => {
-  try {
-    const parseResult = AdjustCreditsSchema.safeParse(req.body);
-    if (!parseResult.success) {
-      res.status(400).json({
-        error: parseResult.error.issues[0]?.message || '调账参数无效',
-        code: 'INVALID_ADJUSTMENT',
-      });
-      return;
-    }
+adminRouter.post('/users/:id/credits', asyncHandler(async (req: Request, res: Response) => {
+  const { amount, reason } = validate(AdjustCreditsSchema, req.body, 'INVALID_ADJUSTMENT');
+  const targetUser = await getUserOrFail(req.params.id);
+  const operator = req.user!;
 
-    const { id } = req.params;
-    const targetUser = await findUserById(id);
-    if (!targetUser) {
-      res.status(404).json({ error: '用户不存在' });
-      return;
-    }
+  const { newBalance, transactionId } = await adjustUserCredits({
+    userId: targetUser.id,
+    amount,
+    operatorId: operator.id,
+    reason: `[管理员 ${operator.email}] ${reason}`,
+  });
 
-    const { amount, reason } = parseResult.data;
-    const operator = req.user!;
-
-    const { newBalance, transactionId } = await adjustUserCredits({
-      userId: id,
-      amount,
-      operatorId: operator.id,
-      reason: `[管理员 ${operator.email}] ${reason}`,
-    });
-
-    res.json({
-      success: true,
-      message: `已成功${amount > 0 ? '增加' : '扣除'} ${Math.abs(amount)} 点数，用户当前余额为 ${newBalance} 点`,
-      new_balance: newBalance,
-      transaction_id: transactionId,
-    });
-  } catch (error: any) {
-    console.error('Admin adjust credits error:', error);
-    res.status(500).json({ error: error?.message || '调账失败' });
-  }
-});
+  res.json({
+    success: true,
+    message: `已成功${amount > 0 ? '增加' : '扣除'} ${Math.abs(amount)} 点数，用户当前余额为 ${newBalance} 点`,
+    new_balance: newBalance,
+    transaction_id: transactionId,
+  });
+}));
 
 /**
  * POST /api/admin/users/:id/vip
@@ -158,100 +116,57 @@ const GrantVipSchema = z.object({
   days: z.number().int().min(0, '天数不能为负数'),
 });
 
-adminRouter.post('/users/:id/vip', async (req: Request, res: Response) => {
-  try {
-    const parseResult = GrantVipSchema.safeParse(req.body);
-    if (!parseResult.success) {
-      res.status(400).json({
-        error: parseResult.error.issues[0]?.message || 'VIP 天数参数无效',
-        code: 'INVALID_VIP_DAYS',
-      });
-      return;
-    }
+adminRouter.post('/users/:id/vip', asyncHandler(async (req: Request, res: Response) => {
+  const { days } = validate(GrantVipSchema, req.body, 'INVALID_VIP_DAYS');
+  const targetUser = await getUserOrFail(req.params.id);
 
-    const { id } = req.params;
-    const targetUser = await findUserById(id);
-    if (!targetUser) {
-      res.status(404).json({ error: '用户不存在' });
-      return;
-    }
+  const result = await grantUserVipDays({ userId: targetUser.id, days });
 
-    const { days } = parseResult.data;
-    const result = await grantUserVipDays({ userId: id, days });
+  const formattedDate = result.vip_expires_at
+    ? new Date(result.vip_expires_at).toLocaleDateString('zh-CN', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      })
+    : null;
 
-    const formattedDate = result.vip_expires_at
-      ? new Date(result.vip_expires_at).toLocaleDateString('zh-CN', {
-          year: 'numeric',
-          month: 'long',
-          day: 'numeric',
-        })
-      : null;
-
-    res.json({
-      success: true,
-      message: days > 0
-        ? `已成功为用户 ${targetUser.email} 增授 ${days} 天 VIP 会员（到期时间：${formattedDate}）`
-        : `已取消用户 ${targetUser.email} 的 VIP 会员权限`,
-      user: result.user,
-      vip_expires_at: result.vip_expires_at,
-    });
-  } catch (error: any) {
-    console.error('Admin grant VIP error:', error);
-    res.status(500).json({ error: error?.message || '设置 VIP 会员天数失败' });
-  }
-});
+  res.json({
+    success: true,
+    message: days > 0
+      ? `已成功为用户 ${targetUser.email} 增授 ${days} 天 VIP 会员（到期时间：${formattedDate}）`
+      : `已取消用户 ${targetUser.email} 的 VIP 会员权限`,
+    user: result.user,
+    vip_expires_at: result.vip_expires_at,
+  });
+}));
 
 /**
  * GET /api/admin/transactions
  * Global credit transaction ledger
  */
-adminRouter.get('/transactions', async (req: Request, res: Response) => {
-  try {
-    const page = parseInt(req.query.page as string, 10) || 1;
-    const limit = parseInt(req.query.limit as string, 10) || 20;
-    const userId = typeof req.query.userId === 'string' ? req.query.userId : undefined;
-    const actionType = typeof req.query.actionType === 'string' ? req.query.actionType : undefined;
+adminRouter.get('/transactions', asyncHandler(async (req: Request, res: Response) => {
+  const page = parseInt(req.query.page as string, 10) || 1;
+  const limit = parseInt(req.query.limit as string, 10) || 20;
+  const userId = typeof req.query.userId === 'string' ? req.query.userId : undefined;
+  const actionType = typeof req.query.actionType === 'string' ? req.query.actionType : undefined;
 
-    const result = await listAdminTransactions({ page, limit, userId, actionType });
-    res.json({
-      success: true,
-      ...result,
-      page,
-      limit,
-    });
-  } catch (error: any) {
-    console.error('Admin list transactions error:', error);
-    res.status(500).json({ error: error?.message || '获取流水失败' });
-  }
-});
+  const result = await listAdminTransactions({ page, limit, userId, actionType });
+  res.json({
+    success: true,
+    ...result,
+    page,
+    limit,
+  });
+}));
 
 /**
  * GET /api/admin/model-config
  * Retrieve current active AI Model & Provider settings (masking secrets)
  */
-adminRouter.get('/model-config', async (_req: Request, res: Response) => {
-  try {
-    const config = await getAiModelConfig();
-    const hasKey = Boolean(config.openai_api_key && config.openai_api_key.trim().length > 0);
-    const maskedKey = hasKey
-      ? config.openai_api_key.length > 8
-        ? `${config.openai_api_key.slice(0, 3)}••••••••${config.openai_api_key.slice(-4)}`
-        : '••••••••'
-      : '';
-
-    res.json({
-      success: true,
-      config: {
-        ...config,
-        openai_api_key: maskedKey,
-        has_openai_key: hasKey,
-      },
-    });
-  } catch (error: any) {
-    console.error('Admin get model-config error:', error);
-    res.status(500).json({ error: error?.message || '获取模型配置失败' });
-  }
-});
+adminRouter.get('/model-config', asyncHandler(async (_req: Request, res: Response) => {
+  const config = await getMaskedModelConfig();
+  res.json({ success: true, config });
+}));
 
 /**
  * PUT /api/admin/model-config
@@ -268,47 +183,22 @@ const ModelConfigSchema = z.object({
   custom_system_prompt: z.string().optional().default(''),
 });
 
-adminRouter.put('/model-config', async (req: Request, res: Response) => {
-  try {
-    const parseResult = ModelConfigSchema.safeParse(req.body);
-    if (!parseResult.success) {
-      res.status(400).json({
-        error: parseResult.error.issues[0]?.message || '配置参数无效',
-        code: 'INVALID_CONFIG',
-      });
-      return;
-    }
+adminRouter.put('/model-config', asyncHandler(async (req: Request, res: Response) => {
+  const data = validate(ModelConfigSchema, req.body, 'INVALID_CONFIG');
+  const resolved = await resolveConfigForSave(data);
 
-    const currentConfig = await getAiModelConfig();
-    let newApiKey = parseResult.data.openai_api_key;
+  const saved = await saveAiModelConfig(resolved, req.user?.email);
 
-    // If key contains mask bullets or is empty and previous key exists, keep current key
-    if (!newApiKey || newApiKey.includes('••••') || newApiKey.trim() === '') {
-      newApiKey = currentConfig.openai_api_key || '';
-    }
-
-    const saved = await saveAiModelConfig(
-      {
-        ...parseResult.data,
-        openai_api_key: newApiKey,
-      },
-      req.user?.email
-    );
-
-    res.json({
-      success: true,
-      message: '模型与接口配置已成功保存并立即生效',
-      config: {
-        ...saved,
-        openai_api_key: saved.openai_api_key ? '••••••••' : '',
-        has_openai_key: Boolean(saved.openai_api_key),
-      },
-    });
-  } catch (error: any) {
-    console.error('Admin save model-config error:', error);
-    res.status(500).json({ error: error?.message || '保存模型配置失败' });
-  }
-});
+  res.json({
+    success: true,
+    message: '模型与接口配置已成功保存并立即生效',
+    config: {
+      ...saved,
+      openai_api_key: saved.openai_api_key ? '••••••••' : '',
+      has_openai_key: Boolean(saved.openai_api_key),
+    },
+  });
+}));
 
 /**
  * POST /api/admin/model-config/test
@@ -414,4 +304,3 @@ adminRouter.post('/model-config/test', async (req: Request, res: Response) => {
     });
   }
 });
-

@@ -1,6 +1,13 @@
 import { Router, Request, Response } from 'express';
-import { listCanvases, getCanvas, saveCanvas, deleteCanvas, searchNodes } from '../db.js';
-import { authMiddleware } from '../middlewares.js';
+import {
+  listUserCanvases,
+  getCanvasOrFail,
+  saveUserCanvas,
+  deleteUserCanvas,
+  searchUserNodes,
+} from '../services/canvas.service.js';
+import { asyncHandler } from '../lib/async-handler.js';
+import { authMiddleware } from '../middleware/auth.js';
 
 export const canvasesRouter = Router();
 
@@ -11,97 +18,69 @@ canvasesRouter.use(authMiddleware);
  * GET /api/canvases
  * List only current user's canvases (admin can see all)
  */
-canvasesRouter.get('/', async (req: Request, res: Response) => {
-  try {
-    const user = req.user!;
-    const isAdmin = user.role === 'admin';
-    const canvases = await listCanvases(user.id, isAdmin);
-    res.json(canvases);
-  } catch (error: any) {
-    res.status(500).json({ error: error?.message || 'Failed to list canvases' });
-  }
-});
+canvasesRouter.get('/', asyncHandler(async (req: Request, res: Response) => {
+  const user = req.user!;
+  const isAdmin = user.role === 'admin';
+  const canvases = await listUserCanvases(user.id, isAdmin);
+  res.json(canvases);
+}));
 
 /**
  * GET /api/canvases/:id
  * Get single canvas with IDOR check
  */
-canvasesRouter.get('/:id', async (req: Request, res: Response) => {
-  try {
-    const user = req.user!;
-    const isAdmin = user.role === 'admin';
-    const canvas = await getCanvas(req.params.id, user.id, isAdmin);
-
-    if (!canvas) {
-      res.status(404).json({ error: '画板不存在或无权访问 (IDOR Protected)' });
-      return;
-    }
-    res.json(canvas);
-  } catch (error: any) {
-    res.status(500).json({ error: error?.message || 'Failed to get canvas' });
-  }
-});
+canvasesRouter.get('/:id', asyncHandler(async (req: Request, res: Response) => {
+  const user = req.user!;
+  const isAdmin = user.role === 'admin';
+  const canvas = await getCanvasOrFail(req.params.id, user.id, isAdmin);
+  res.json(canvas);
+}));
 
 /**
  * POST /api/canvases/:id/save
  * Save canvas state with tenant ownership enforcement
  */
-canvasesRouter.post('/:id/save', async (req: Request, res: Response) => {
-  try {
-    const user = req.user!;
-    const isAdmin = user.role === 'admin';
-    const { title, description, viewport, defaultModel, enableWebSearch, nodes, edges } = req.body;
+canvasesRouter.post('/:id/save', asyncHandler(async (req: Request, res: Response) => {
+  const user = req.user!;
+  const isAdmin = user.role === 'admin';
+  const { title, description, viewport, defaultModel, enableWebSearch, nodes, edges } = req.body;
 
-    const saved = await saveCanvas(
-      {
-        id: req.params.id,
-        title,
-        description,
-        viewport,
-        defaultModel,
-        enableWebSearch,
-        nodes: nodes || [],
-        edges: edges || [],
-      },
-      user.id,
-      isAdmin
-    );
+  const saved = await saveUserCanvas(
+    {
+      id: req.params.id,
+      title,
+      description,
+      viewport,
+      defaultModel,
+      enableWebSearch,
+      nodes: nodes || [],
+      edges: edges || [],
+    },
+    user.id,
+    isAdmin
+  );
 
-    res.json({ success: true, canvas: saved });
-  } catch (error: any) {
-    console.error('Failed to save canvas:', error);
-    const status = error?.message?.includes('IDOR') ? 403 : 500;
-    res.status(status).json({ error: error?.message || 'Failed to save canvas state' });
-  }
-});
+  res.json({ success: true, canvas: saved });
+}));
 
 /**
  * DELETE /api/canvases/:id
  * Delete canvas with tenant check
  */
-canvasesRouter.delete('/:id', async (req: Request, res: Response) => {
-  try {
-    const user = req.user!;
-    const isAdmin = user.role === 'admin';
-    const success = await deleteCanvas(req.params.id, user.id, isAdmin);
-    res.json({ success });
-  } catch (error: any) {
-    const status = error?.message?.includes('IDOR') ? 403 : 500;
-    res.status(status).json({ error: error?.message || 'Failed to delete canvas' });
-  }
-});
+canvasesRouter.delete('/:id', asyncHandler(async (req: Request, res: Response) => {
+  const user = req.user!;
+  const isAdmin = user.role === 'admin';
+  const success = await deleteUserCanvas(req.params.id, user.id, isAdmin);
+  res.json({ success });
+}));
 
 /**
  * GET /api/canvases/:id/search
  * Search nodes inside canvas
  */
-canvasesRouter.get('/:id/search', async (req: Request, res: Response) => {
-  try {
-    const user = req.user!;
-    const query = typeof req.query.q === 'string' ? req.query.q : '';
-    const results = await searchNodes(query, req.params.id, user.id);
-    res.json({ results });
-  } catch (error: any) {
-    res.status(500).json({ error: error?.message || 'Search failed' });
-  }
-});
+canvasesRouter.get('/:id/search', asyncHandler(async (req: Request, res: Response) => {
+  const user = req.user!;
+  const query = typeof req.query.q === 'string' ? req.query.q : '';
+  const results = await searchUserNodes(query, req.params.id, user.id);
+  res.json({ results });
+}));

@@ -1,7 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { GoogleGenAI } from '@google/genai';
-import { deductCredits, getAiModelConfig, recordAiRequestLog } from '../db.js';
-import { authMiddleware, quotaMiddleware, validateInputLimits, roleBasedRateLimiter } from '../middlewares.js';
+import { deductCredits } from '../services/billing.service.js';
+import { getAiModelConfig, recordAiRequestLog } from '../services/ai.service.js';
+import { authMiddleware, quotaMiddleware, validateInputLimits, roleBasedRateLimiter } from '../middleware/auth.js';
 
 export const chatRouter = Router();
 

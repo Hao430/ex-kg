@@ -1281,10 +1281,10 @@ export const AdminDashboardModal: React.FC = () => {
                   </label>
                   <div className="grid grid-cols-4 gap-2">
                     {[
-                      { label: '+7 天体验', days: 7 },
-                      { label: '+30 天月卡', days: 30 },
-                      { label: '+90 天季卡', days: 90 },
-                      { label: '+365 天年卡', days: 365 },
+                      { label: '+7 天周度', days: 7 },
+                      { label: '+30 天月度', days: 30 },
+                      { label: '+90 天季度', days: 90 },
+                      { label: '+365 天年度', days: 365 },
                     ].map((preset) => (
                       <button
                         key={preset.days}

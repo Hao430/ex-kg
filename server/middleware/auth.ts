@@ -1,7 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
-import rateLimit from 'express-rate-limit';
-import { findSession, createUser, createSession, UserRecord, SessionRecord } from './db.js';
-import { hashPassword, generateSessionToken } from './auth.js';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
+import { findSession } from '../repositories/session.repository.js';
+import type { UserRecord, SessionRecord } from '../core/records.js';
+import { UnauthorizedError } from '../lib/errors.js';
 
 // Extend Express Request type
 declare global {
@@ -42,12 +43,12 @@ export function extractToken(req: Request): string | null {
 }
 
 /**
- * Seamless authentication middleware:
- * - If valid session token exists: verifies and attaches user
- * - If unauthenticated: automatically provisions a guest exploration account with 50,000 trial credits
- *   so new visitors can immediately explore topics without friction.
+ * 强制登录鉴权中间件（Spec A1：游客模式已删除）：
+ * - 有效会话：校验并附着 user/session
+ * - 冻结账号：403 ACCOUNT_FROZEN
+ * - 未登录 / 会话失效：401 UNAUTHORIZED（前端应跳转登录页）
  */
-export async function authMiddleware(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function authMiddleware(req: Request, _res: Response, next: NextFunction): Promise<void> {
   const token = extractToken(req);
 
   if (token) {
@@ -57,8 +58,8 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
         const { session, user } = result;
 
         if (!user.is_active) {
-          res.clearCookie('session_token', { path: '/' });
-          res.status(403).json({
+          _res.clearCookie('session_token', { path: '/' });
+          _res.status(403).json({
             error: '账号已被系统冻结，请联系运营管理员',
             code: 'ACCOUNT_FROZEN',
           });
@@ -75,65 +76,7 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
     }
   }
 
-  // No valid token: auto-provision guest account with 50,000 initial credits
-  try {
-    const guestId = `guest_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
-    const guestEmail = `${guestId}@guest.deepdive.ai`;
-    const passwordHash = await hashPassword(`guest_pass_${Date.now()}`);
-
-    const guestUser = await createUser({
-      email: guestEmail,
-      passwordHash,
-      name: `探索者 #${guestId.slice(-4).toUpperCase()}`,
-      role: 'user',
-      initialCredits: 50000,
-    });
-
-    const newToken = generateSessionToken();
-    const newSession = await createSession({
-      userId: guestUser.id,
-      token: newToken,
-      ipAddress: req.ip,
-      userAgent: req.headers['user-agent'],
-    });
-
-    res.cookie('session_token', newToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      path: '/',
-      maxAge: 7 * 24 * 3600 * 1000,
-    });
-
-    req.user = guestUser;
-    req.session = newSession;
-    next();
-  } catch (err) {
-    console.error('Auto guest provision error:', err);
-    res.status(500).json({ error: '认证服务异常' });
-  }
-}
-
-/**
- * Optional authentication middleware: attaches user if token is present
- */
-export async function optionalAuthMiddleware(req: Request, _res: Response, next: NextFunction): Promise<void> {
-  const token = extractToken(req);
-  if (!token) {
-    next();
-    return;
-  }
-
-  try {
-    const result = await findSession(token);
-    if (result && result.user.is_active) {
-      req.user = result.user;
-      req.session = result.session;
-    }
-  } catch (e) {
-    // ignore
-  }
-  next();
+  next(new UnauthorizedError());
 }
 
 /**
@@ -223,7 +166,7 @@ export const roleBasedRateLimiter = rateLimit({
     if (role === 'vip') return 60;
     return 25;
   },
-  keyGenerator: (req: Request) => (req.user ? `user_${req.user.id}` : req.ip || 'anonymous'),
+  keyGenerator: (req: Request) => (req.user ? `user_${req.user.id}` : ipKeyGenerator(req.ip || 'anonymous')),
   standardHeaders: true,
   legacyHeaders: false,
   handler: (req: Request, res: Response) => {

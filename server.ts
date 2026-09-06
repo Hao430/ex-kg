@@ -1,67 +1,19 @@
-import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
-import helmet from 'helmet';
-import cookieParser from 'cookie-parser';
+import express from 'express';
 import { createServer as createViteServer } from 'vite';
 
-import { checkDbStatus, initDbSchema } from './server/db.js';
-import { authRouter } from './server/routes/auth.js';
-import { adminRouter } from './server/routes/admin.js';
-import { canvasesRouter } from './server/routes/canvases.js';
-import { chatRouter } from './server/routes/chat.js';
+import { initDbSchema } from './server/core/schema.js';
+import { createApp } from './server/app.js';
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const app = express();
-const PORT = 3000;
-
-// Trust the reverse proxy (required for express-rate-limit in production/cloud)
-app.set('trust proxy', 1);
-
-// Security headers with Helmet (per Spec 1.2)
-app.use(
-  helmet({
-    contentSecurityPolicy: false, // Allow inline styles/scripts for Vite & Math rendering
-    crossOriginEmbedderPolicy: false,
-  })
-);
-
-app.use(cookieParser());
-app.use(express.json({ limit: '10mb' }));
-
-// Health check
-app.get('/api/health', (_req, res) => {
-  res.json({
-    status: 'ok',
-    hasApiKey: Boolean(process.env.GEMINI_API_KEY),
-    timestamp: new Date().toISOString(),
-  });
-});
-
-// Database Diagnostics
-app.get('/api/db/status', async (_req, res) => {
-  try {
-    const status = await checkDbStatus();
-    res.json(status);
-  } catch (error: any) {
-    res.status(500).json({ error: error?.message || 'Failed to check database status' });
-  }
-});
-
-// Mount modular sub-routers
-app.use('/api/auth', authRouter);
-app.use('/api/feedback', (req, res, next) => {
-  req.url = '/feedback';
-  authRouter(req, res, next);
-});
-app.use('/api/admin', adminRouter);
-app.use('/api/canvases', canvasesRouter);
-app.use('/api/chat', chatRouter);
+const app = createApp();
+const PORT = Number(process.env.PORT) || 3000;
 
 async function start() {
   // Initialize DB in background

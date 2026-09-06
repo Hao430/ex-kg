@@ -26,10 +26,11 @@
    - 具备 GIN 全文检索索引，毫秒级检索海量节点知识。
 
 6. **全链路商业化体系与安全审计**
-   - **多租户 RBAC 权限**：普通用户 (User)、VIP 深度会员 (VIP)、系统管理员 (Admin)。
-   - **算力消费平账账本**：精确记录每次推理 Token 扣减与消费流水 (`credit_transactions`)。
-   - **订单审计系统 (`orders`)**：VIP 体验周卡、深度月卡、尊享年卡订单生命周期管理与对账。
+   - **强制登录 + 多租户 RBAC 权限**：体验版 (User)、VIP 会员 (VIP)、系统管理员 (Admin)。
+   - **服务端强制配额**：体验版最多 3 个画板、每画板 10 个 AI 推理节点；VIP 画板与节点无限，独享高优先级队列与 `is_vip_only` 高级模型。四类权益限制全部由后端中间件校验，直连 API 无法绕过。
+   - **订阅与订单审计 (`orders`)**：周度 Pro 会员（周卡）¥9.9 / 月度 Pro 会员（月卡）¥24.9 / 年度 Pro 会员（年卡）¥199。一期不接真实支付，通过 `PaymentProvider` 抽象 + `MockProvider` 跑通订单全生命周期，VIP 由 Admin 后台赠送。
    - **模型推演审计 (`ai_request_logs`)**：审计端到端推演延迟 (ms)、Token 明细、联网 Grounding 引用与异常错误栈。
+   - **安全审计**：角色阶梯限流（体验版 25 / VIP 60 / Admin 120 次每分钟）、登录防爆破锁定、`user_audit_logs` 操作留痕。
 
 ---
 
@@ -37,8 +38,8 @@
 
 - **前端架构**：React 19 + TypeScript + Tailwind CSS v4 + @xyflow/react (React Flow)
 - **后端架构**：Node.js + Express (Port 3000) + Vite Middleware + Server-Sent Events (SSE)
-- **AI 推演代理**：`@google/genai` (Gemini 3.8 Flash / Gemini 2.5 Pro) + 多源 OpenAI 协议模型热备容灾 + Google Search Grounding 联网检索
-- **数据与安全**：PostgreSQL (pg) + Node Crypto (scrypt / bcrypt) + IP/UserAgent 会话风控
+- **AI 推演代理**：`@google/genai` (`gemini-3.8-flash`，容灾链 `gemini-3.1-flash-lite` → `gemini-flash-latest`) + OpenAI 协议模型热备容灾 + Google Search Grounding 联网检索
+- **数据与安全**：PostgreSQL (pg) + Node Crypto (scrypt，16 字节盐) + IP/UserAgent 会话风控 + 角色阶梯限流
 
 ---
 
@@ -49,18 +50,24 @@
 ├── docs/
 │   ├── 需求说明文档.md               # 业务需求、产品定位与交互规格 (PRD)
 │   ├── 技术架构文档.md               # 架构选型、数据表模型与核心算法设计
-│   └── 数据库建表脚本.sql            # PostgreSQL 14 张表完整建表与高性能索引 DDL
+│   ├── 数据库建表脚本.sql            # PostgreSQL 20 张表完整建表与高性能索引 DDL
+│   └── 里程碑与分期规划.md           # 锁定的产品决策、一期/二期分期与验收标准
 ├── server/
-│   ├── db.ts                       # 数据库连接池、双模持久化、自动迁移与业务逻辑
-│   ├── middlewares.ts              # 鉴权中间件、阶梯限流、防爆破保护
+│   ├── core/                       # 基础设施：连接池(pool)、建表迁移(schema)、内存兜底存储(memory-store)、记录类型(records)、状态诊断(db-status)
+│   ├── repositories/               # 数据访问层：PG 优先 + 内存兜底的双模读写（user/session/billing/ai/feedback/canvas/admin）
+│   ├── services/                   # 业务编排层：注册登录、订阅充值、画布规则、Admin 掩码与调账、反馈
+│   ├── middleware/                 # 鉴权中间件、阶梯限流、防爆破保护、统一错误处理
+│   ├── lib/                        # 纯工具：scrypt 密码散列、统一错误类型、asyncHandler、zod 校验
 │   └── routes/
 │       ├── auth.ts                 # 登录、注册、会话与风控路由
-│       ├── canvas.ts               # 画布全字段 CRUD、分享与快照
-│       ├── chat.ts                 # SSE 流式模型推演与延迟日志审计
-│       ├── user.ts                 # 用户资料、充值订阅与订单历史
-│       └── admin.ts                # 管理员大盘、用户管理与全局配置
+│       ├── canvases.ts             # 画布全字段 CRUD、批量保存与服务端持久化
+│       ├── chat.ts                 # SSE 流式模型推演、多模型容灾与延迟日志审计
+│       └── admin.ts                # 管理员大盘、用户管理、VIP 赠送与全局配置
 ├── src/
 │   ├── components/                 # 画布视口、节点卡片、工具栏、导航小地图等组件
+│   ├── context/                    # 全局状态 Context（鉴权等）
+│   ├── hooks/                      # 画布与节点相关自定义 Hooks
+│   ├── lib/                        # 前端工具与 API 客户端
 │   ├── types.ts                    # 核心 TypeScript 类型契约
 │   ├── App.tsx                     # 根应用主视图
 │   └── main.tsx                    # React 19 应用入口
@@ -105,4 +112,5 @@ npm start
 
 - [📖 业务需求说明书 (PRD)](./docs/需求说明文档.md)
 - [🏗 系统技术架构文档](./docs/技术架构文档.md)
+- [🗺 里程碑与分期规划](./docs/里程碑与分期规划.md)
 - [💾 数据库初始化 SQL 脚本](./docs/数据库建表脚本.sql)
