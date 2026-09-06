@@ -5,6 +5,7 @@
 
 import { Node, Edge } from '@xyflow/react';
 import { DeepDiveBoardMeta, ChatNodeData } from '../types';
+import { enqueue, setSyncExecutor } from './sync-queue';
 
 const STORAGE_BOARDS_INDEX_KEY = 'deepdive_boards_index_v1';
 const LEGACY_STORAGE_BOARDS_INDEX_KEY = 'rabbithole_boards_index_v1';
@@ -104,21 +105,19 @@ export function saveBoard(board: StoredBoard): void {
     }
     saveBoardList(list);
 
-    // Asynchronously sync to backend (PostgreSQL)
-    syncBoardToBackend(cleanedBoard).catch((err) => {
-      console.warn('Background backend sync skipped or failed:', err?.message || err);
-    });
+    // Asynchronously sync to backend (PostgreSQL) via retry queue (Spec A5)
+    enqueueBoardSync(cleanedBoard.id);
   } catch (e) {
     console.error(`Failed to save board ${board.id}:`, e);
   }
 }
 
 /**
- * Sync board to backend API
+ * Sync board to backend API（三态：ok / conflict / fail，供重试队列判定）
  * - 携带 serverUpdatedAt 作为乐观锁版本（Spec A4）
  * - 409 冲突：派发 deepdive:canvas-save-conflict 事件（App 层 toast 提示），不静默覆盖
  */
-export async function syncBoardToBackend(board: StoredBoard): Promise<boolean> {
+export async function syncBoardToBackend(board: StoredBoard): Promise<'ok' | 'conflict' | 'fail'> {
   try {
     const res = await fetch(`/api/canvases/${encodeURIComponent(board.id)}/save`, {
       method: 'POST',
@@ -144,20 +143,54 @@ export async function syncBoardToBackend(board: StoredBoard): Promise<boolean> {
           },
         })
       );
-      return false;
+      return 'conflict';
     }
 
     if (res.ok) {
       const body = await res.json().catch(() => null) as any;
       if (body?.canvas?.updatedAt) {
         board.serverUpdatedAt = body.canvas.updatedAt;
+        persistServerUpdatedAt(board.id, body.canvas.updatedAt);
       }
-      return true;
+      return 'ok';
     }
-    return false;
+    return 'fail';
   } catch (e) {
-    return false;
+    return 'fail';
   }
+}
+
+/** 仅更新本地记录的 serverUpdatedAt（不触发再次入队） */
+function persistServerUpdatedAt(boardId: string, serverUpdatedAt: string): void {
+  try {
+    const board = loadBoard(boardId);
+    if (!board) return;
+    board.serverUpdatedAt = serverUpdatedAt;
+    localStorage.setItem(`${STORAGE_BOARD_PREFIX}${boardId}`, JSON.stringify(board));
+  } catch (e) {
+    console.error('Failed to persist serverUpdatedAt:', e);
+  }
+}
+
+// ---- 重试队列接线（Spec A5）----
+setSyncExecutor(async (boardId) => {
+  const board = loadBoard(boardId);
+  if (!board) return 'ok'; // 本地已无该画布，视为完成
+  const localVersion = board.updatedAt;
+  const outcome = await syncBoardToBackend(board);
+  // 同步期间本地又被编辑过：以新数据重新入队，避免"标记已同步但云端是旧数据"
+  if (outcome === 'ok') {
+    const latest = loadBoard(boardId);
+    if (latest && latest.updatedAt !== localVersion) {
+      enqueue(boardId);
+    }
+  }
+  return outcome;
+});
+
+/** 画布保存入队：断网/失败自动退避重试，恢复网络立即补传 */
+export function enqueueBoardSync(boardId: string): void {
+  enqueue(boardId);
 }
 
 /**

@@ -54,6 +54,8 @@ interface TopbarProps {
   theme?: 'light' | 'dark';
   onToggleTheme?: () => void;
   nodeCount?: number;
+  /** 服务端同步状态指示（Spec A5） */
+  syncState?: 'idle' | 'saved' | 'pending' | 'error' | 'conflict';
 }
 
 export const Topbar: React.FC<TopbarProps> = ({
@@ -74,6 +76,7 @@ export const Topbar: React.FC<TopbarProps> = ({
   theme = 'light',
   onToggleTheme,
   nodeCount,
+  syncState = 'idle',
 }) => {
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(boardName);
@@ -123,6 +126,50 @@ export const Topbar: React.FC<TopbarProps> = ({
         </Tooltip>
 
         <div className="h-4 w-[1px] bg-slate-200 dark:bg-slate-800" />
+
+        {/* Sync Status Indicator (Spec A5) */}
+        {syncState !== 'idle' && (
+          <Tooltip
+            content={
+              syncState === 'saved' ? '已同步到云端' :
+              syncState === 'pending' ? '待同步（离线或稍后自动补传）' :
+              syncState === 'error' ? '同步失败，已停止自动重试' :
+              '版本冲突：画板已在其他窗口被修改'
+            }
+            side="bottom"
+          >
+            <span
+              data-testid="sync-indicator"
+              aria-label={`同步状态：${syncState}`}
+              className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium cursor-default ${
+                syncState === 'saved'
+                  ? 'text-emerald-600 bg-emerald-50 dark:bg-emerald-500/10 dark:text-emerald-400'
+                  : syncState === 'pending'
+                  ? 'text-slate-500 bg-slate-100 dark:bg-slate-800 dark:text-slate-400'
+                  : syncState === 'error'
+                  ? 'text-red-600 bg-red-50 dark:bg-red-500/10 dark:text-red-400'
+                  : 'text-amber-600 bg-amber-50 dark:bg-amber-500/10 dark:text-amber-400'
+              }`}
+            >
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${
+                  syncState === 'saved'
+                    ? 'bg-emerald-500'
+                    : syncState === 'pending'
+                    ? 'bg-slate-400 animate-pulse'
+                    : syncState === 'error'
+                    ? 'bg-red-500'
+                    : 'bg-amber-500'
+                }`}
+              />
+              <span className="hidden md:inline">
+                {syncState === 'saved' ? '已同步' :
+                 syncState === 'pending' ? '待同步' :
+                 syncState === 'error' ? '同步失败' : '版本冲突'}
+              </span>
+            </span>
+          </Tooltip>
+        )}
 
         {/* Board Switcher & Quick Rename */}
         <div className="relative flex items-center">

@@ -17,6 +17,7 @@ import {
   StoredBoard,
 } from './lib/storage';
 import { DeepDiveBoardMeta } from './types';
+import { onSyncState } from './lib/sync-queue';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { AuthModal } from './components/auth/AuthModal';
 import { RechargeModal } from './components/ui/RechargeModal';
@@ -98,14 +99,35 @@ function MainApp() {
     }, 2500);
   };
 
-  // 保存冲突提示（Spec A4 乐观锁）
+  // 保存冲突提示（Spec A4 乐观锁）+ 同步状态订阅（Spec A5，仅指示当前画板）
+  const [syncState, setSyncState] = useState<'idle' | 'saved' | 'pending' | 'error' | 'conflict'>('idle');
+  const currentBoardIdRef = useRef(currentBoardId);
+  useEffect(() => {
+    currentBoardIdRef.current = currentBoardId;
+  }, [currentBoardId]);
+  const syncIdleTimerRef = useRef<number | null>(null);
   useEffect(() => {
     const onConflict = (e: Event) => {
       const detail = (e as CustomEvent).detail as { message?: string };
       showToast(detail?.message || '画板已在其他窗口被修改，请刷新后重试');
     };
+    const offSync = onSyncState((state, boardId) => {
+      if (boardId !== currentBoardIdRef.current) return;
+      if (syncIdleTimerRef.current !== null) {
+        clearTimeout(syncIdleTimerRef.current);
+        syncIdleTimerRef.current = null;
+      }
+      setSyncState(state);
+      if (state === 'saved') {
+        syncIdleTimerRef.current = window.setTimeout(() => setSyncState('idle'), 3000);
+      }
+    });
     window.addEventListener('deepdive:canvas-save-conflict', onConflict);
-    return () => window.removeEventListener('deepdive:canvas-save-conflict', onConflict);
+    return () => {
+      window.removeEventListener('deepdive:canvas-save-conflict', onConflict);
+      offSync();
+      if (syncIdleTimerRef.current !== null) clearTimeout(syncIdleTimerRef.current);
+    };
   }, []);
 
   // Load boards on startup
@@ -343,6 +365,7 @@ function MainApp() {
         onResetBoard={handleResetBoard}
         onGoToLanding={handleGoToLanding}
         theme={theme}
+        syncState={syncState}
         onToggleTheme={toggleTheme}
         nodeCount={nodeCount}
       />
