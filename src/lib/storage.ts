@@ -150,6 +150,20 @@ export async function syncBoardToBackend(board: StoredBoard): Promise<'ok' | 'co
       return 'conflict';
     }
 
+    // 配额/权限类 403 为永久失败，重试无意义——直接提示（Spec B1/B4）
+    if (res.status === 403) {
+      const body = await res.json().catch(() => null) as any;
+      window.dispatchEvent(
+        new CustomEvent('deepdive:canvas-save-conflict', {
+          detail: {
+            boardId: board.id,
+            message: body?.error || '画板保存被拒绝',
+          },
+        })
+      );
+      return 'conflict';
+    }
+
     if (res.ok) {
       const body = await res.json().catch(() => null) as any;
       if (body?.canvas?.updatedAt) {

@@ -27,7 +27,7 @@ function chunkRows<T>(rows: T[], size: number): T[][] {
   return out;
 }
 
-function isClaimableCanvas(
+export function isClaimableCanvas(
   canvasId: string,
   ownerId: string | null | undefined,
   requesterId: string | undefined,
@@ -462,6 +462,49 @@ export async function deleteCanvas(canvasId: string, userId: string, isAdmin = f
     throw new ForbiddenError('无权删除此画板', 'CANVAS_FORBIDDEN');
   }
   return inMemoryStore.canvases.delete(canvasId);
+}
+
+/** 画布是否存在（供配额判定区分新建/更新） */
+export async function canvasExists(canvasId: string): Promise<boolean> {
+  const info = await getCanvasOwnerInfo(canvasId);
+  return info.exists;
+}
+
+/** 轻量读取画布归属：exists + ownerId（不加载 nodes/edges） */
+export async function getCanvasOwnerInfo(
+  canvasId: string
+): Promise<{ exists: boolean; ownerId: string | null }> {
+  const p = getPool();
+  if (p) {
+    try {
+      await initDbSchema();
+      const res = await p.query('SELECT user_id FROM canvases WHERE id = $1', [canvasId]);
+      return { exists: res.rows.length > 0, ownerId: res.rows[0]?.user_id ?? null };
+    } catch (e) {
+      console.warn('PG getCanvasOwnerInfo fallback to in-memory:', e);
+    }
+  }
+  const canvas = inMemoryStore.canvases.get(canvasId);
+  return { exists: Boolean(canvas), ownerId: canvas?.user_id ?? null };
+}
+
+/** 画布内 AI 推理节点（chat 类型）数量 */
+export async function countCanvasNodes(canvasId: string): Promise<number> {
+  const p = getPool();
+  if (p) {
+    try {
+      await initDbSchema();
+      const res = await p.query('SELECT COUNT(*)::int as count FROM nodes WHERE canvas_id = $1 AND type = $2', [
+        canvasId,
+        'chat',
+      ]);
+      return res.rows[0].count;
+    } catch (e) {
+      console.warn('PG countCanvasNodes fallback to in-memory:', e);
+    }
+  }
+  const canvas = inMemoryStore.canvases.get(canvasId);
+  return (canvas?.nodes || []).filter((n: any) => (n.type || 'chat') === 'chat').length;
 }
 
 export async function searchNodes(queryText: string, canvasId?: string, userId?: string): Promise<any[]> {

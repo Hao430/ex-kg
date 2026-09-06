@@ -94,27 +94,6 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction): v
 }
 
 /**
- * AI Quota pre-check: credits_balance >= 100 points
- */
-export function quotaMiddleware(req: Request, res: Response, next: NextFunction): void {
-  if (!req.user) {
-    res.status(401).json({ error: '未登录', code: 'UNAUTHORIZED' });
-    return;
-  }
-
-  const balance = Number(req.user.credits_balance);
-  if (balance < 100) {
-    res.status(402).json({
-      error: 'AI 算力点数不足（当前余额为 0 点），请充值后再继续提问',
-      code: 'INSUFFICIENT_CREDITS',
-      balance,
-    });
-    return;
-  }
-  next();
-}
-
-/**
  * Input limits validator for malicious payload defense
  * - Single question <= 4,000 characters
  * - Total context history <= 16,000 characters

@@ -32,10 +32,11 @@ async function startServerAndSignIn(): Promise<void> {
   base = `http://127.0.0.1:${port}`;
   await waitSeeds();
 
+  // B1 配额生效后，体验版限 3 画板——本套件专注批量保存回归，改用不受限的 admin
   const res = await fetch(`${base}/api/auth/sign-in`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: 'user@deepdive.ai', password: 'User123456!' }),
+    body: JSON.stringify({ email: 'admin@deepdive.ai', password: 'Admin123456!' }),
   });
   assert.equal(res.status, 200);
   cookie = (res.headers.get('set-cookie') || '').split(';')[0];
@@ -137,6 +138,7 @@ describe('A3 批量保存事务化（功能回归保护）', () => {
       },
     ];
     const res = await saveCanvas('a3-tricky', tricky, []);
+    if (res.status !== 200) console.log('DEBUG body=', JSON.stringify(await res.json()));
     assert.equal(res.status, 200);
 
     const canvas = await getCanvas('a3-tricky');

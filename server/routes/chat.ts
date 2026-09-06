@@ -2,7 +2,8 @@ import { Router, Request, Response } from 'express';
 import { GoogleGenAI } from '@google/genai';
 import { deductCredits } from '../services/billing.service.js';
 import { getAiModelConfig, recordAiRequestLog } from '../services/ai.service.js';
-import { authMiddleware, quotaMiddleware, validateInputLimits, roleBasedRateLimiter } from '../middleware/auth.js';
+import { authMiddleware, validateInputLimits, roleBasedRateLimiter } from '../middleware/auth.js';
+import { chatQuotaMiddleware } from '../middleware/quota.js';
 
 export const chatRouter = Router();
 
@@ -95,10 +96,10 @@ function generateFallbackResponse(userPrompt: string): string {
  */
 chatRouter.post(
   '/',
-  authMiddleware,
-  roleBasedRateLimiter,
-  validateInputLimits,
-  quotaMiddleware,
+    authMiddleware,
+    roleBasedRateLimiter,
+    validateInputLimits,
+    chatQuotaMiddleware,
   async (req: Request, res: Response) => {
     const { messages, model, systemInstruction, canvasId, nodeId } = req.body;
     const user = req.user!;

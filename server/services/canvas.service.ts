@@ -4,8 +4,12 @@ import {
   saveCanvas,
   deleteCanvas,
   searchNodes,
+  getCanvasOwnerInfo,
+  isClaimableCanvas,
 } from '../repositories/canvas.repository.js';
 import { NotFoundError } from '../lib/errors.js';
+import { assertCanCreateBoard } from './quota.service.js';
+import { findUserById } from '../repositories/user.repository.js';
 import type { CanvasRecord } from '../core/records.js';
 
 export async function listUserCanvases(userId: string | undefined, isAdmin: boolean): Promise<CanvasRecord[]> {
@@ -25,6 +29,23 @@ export async function saveUserCanvas(
   userId: string,
   isAdmin: boolean
 ): Promise<CanvasRecord> {
+  // Spec B1：新建或**认领**画板都计入画板数配额（认领会把归属转移给请求者，审计修复）；
+  // 更新自己的画板不受限
+  if (!isAdmin) {
+    const info = await getCanvasOwnerInfo(data.id);
+    const adopts =
+      !info.exists ||
+      (info.ownerId !== userId &&
+        isClaimableCanvas(data.id, info.ownerId, userId, {
+          includeBoardPrefix: true,
+          includeNoOwner: true,
+          includeRequesterGuest: true,
+        }));
+    if (!info.exists || adopts) {
+      const user = await findUserById(userId);
+      if (user) await assertCanCreateBoard(user);
+    }
+  }
   return saveCanvas(data, userId, isAdmin);
 }
 

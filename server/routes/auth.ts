@@ -6,6 +6,7 @@ import { subscribeUserPlan, recharge } from '../services/billing.service.js';
 import { submitFeedback } from '../services/feedback.service.js';
 import { asyncHandler } from '../lib/async-handler.js';
 import { validate } from '../lib/validate.js';
+import { effectiveEntitlements } from '../services/quota.service.js';
 import type { Response as ExpressResponse } from 'express';
 import { authMiddleware, loginRateLimiter } from '../middleware/auth.js';
 
@@ -148,6 +149,7 @@ authRouter.post('/sign-out', asyncHandler(async (req: Request, res: Response) =>
  */
 authRouter.get('/me', authMiddleware, (req: Request, res: Response) => {
   const user = req.user!;
+  const entitlements = effectiveEntitlements(user);
   res.json({
     user: {
       id: user.id,
@@ -160,6 +162,7 @@ authRouter.get('/me', authMiddleware, (req: Request, res: Response) => {
       is_active: user.is_active,
       created_at: user.created_at,
       last_login_at: user.last_login_at,
+      entitlements,
     },
   });
 });
