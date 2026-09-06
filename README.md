@@ -37,9 +37,9 @@
 ## 🛠 技术栈与架构全景
 
 - **前端架构**：React 19 + TypeScript + Tailwind CSS v4 + @xyflow/react (React Flow)
-- **后端架构**：Node.js + Express (Port 3000) + Vite Middleware + Server-Sent Events (SSE)
+- **后端架构**：Node.js + Express (Port 3000) + Vite Middleware + Server-Sent Events (SSE) + Nodemailer（邮箱验证/找回密码事务邮件，开发环境对接 Mailpit）
 - **AI 推演代理**：`@google/genai` (`gemini-3.8-flash`，容灾链 `gemini-3.1-flash-lite` → `gemini-flash-latest`) + OpenAI 协议模型热备容灾 + Google Search Grounding 联网检索
-- **数据与安全**：PostgreSQL (pg) + Node Crypto (scrypt，16 字节盐) + IP/UserAgent 会话风控 + 角色阶梯限流
+- **数据与安全**：PostgreSQL (pg) + Node Crypto (scrypt N=2^16/r=8/p=1，版本头哈希格式) + IP/UserAgent 会话风控 + 角色阶梯限流
 
 ---
 
@@ -50,19 +50,24 @@
 ├── docs/
 │   ├── 需求说明文档.md               # 业务需求、产品定位与交互规格 (PRD)
 │   ├── 技术架构文档.md               # 架构选型、数据表模型与核心算法设计
-│   ├── 数据库建表脚本.sql            # PostgreSQL 20 张表完整建表与高性能索引 DDL
+│   ├── 数据库建表脚本.sql            # PostgreSQL 19 张表完整建表与高性能索引 DDL
+│   ├── 开发规范.md                   # 分层架构与编码约定
+│   ├── specs/                        # 各轮变更 Spec（历史变更记录，A1-F6/G）
 │   └── 里程碑与分期规划.md           # 锁定的产品决策、一期/二期分期与验收标准
 ├── server/
 │   ├── core/                       # 基础设施：连接池(pool)、建表迁移(schema)、内存兜底存储(memory-store)、记录类型(records)、状态诊断(db-status)
 │   ├── repositories/               # 数据访问层：PG 优先 + 内存兜底的双模读写（user/session/billing/ai/feedback/canvas/admin）
 │   ├── services/                   # 业务编排层：注册登录、订阅充值、画布规则、Admin 掩码与调账、反馈
-│   ├── middleware/                 # 鉴权中间件、阶梯限流、防爆破保护、统一错误处理
-│   ├── lib/                        # 纯工具：scrypt 密码散列、统一错误类型、asyncHandler、zod 校验
+│   │   └── payment/                # PaymentProvider 抽象 + MockProvider（一期不接真实支付）
+│   ├── middleware/                 # 鉴权中间件、阶梯限流、防爆破保护、配额校验(quota)、统一错误处理
+│   ├── jobs/                       # 后台任务：日志留存清理（ai_request_logs 90 天 / user_audit_logs 180 天）
+│   ├── lib/                        # 纯工具：scrypt 密码散列(crypto)、统一错误类型(errors)、asyncHandler、zod 校验(validate)、邮件发送(mailer)
 │   └── routes/
-│       ├── auth.ts                 # 登录、注册、会话与风控路由
+│       ├── auth.ts                 # 注册、登录、邮箱验证/重发、找回密码、账号注销、会话与风控路由
 │       ├── canvases.ts             # 画布全字段 CRUD、批量保存与服务端持久化
 │       ├── chat.ts                 # SSE 流式模型推演、多模型容灾与延迟日志审计
-│       └── admin.ts                # 管理员大盘、用户管理、VIP 赠送与全局配置
+│       ├── subscriptions.ts        # 订单创建、模拟支付回调与订单列表（Mock 全生命周期）
+│       └── admin.ts                # 管理员大盘、用户管理、VIP 赠送、订单管理、审计日志查询与全局配置
 ├── src/
 │   ├── components/                 # 画布视口、节点卡片、工具栏、导航小地图等组件
 │   ├── context/                    # 全局状态 Context（鉴权等）
@@ -71,8 +76,9 @@
 │   ├── types.ts                    # 核心 TypeScript 类型契约
 │   ├── App.tsx                     # 根应用主视图
 │   └── main.tsx                    # React 19 应用入口
+├── tests/                          # 各 Spec 回归测试（a1-guest-removal 等）
 ├── index.html                      # HTML5 网页主入口与 SEO 元信息
-├── server.ts                       # 全栈后端启动入口 (Express + Vite)
+├── server.ts                       # 全栈后端启动入口 (Express + Vite，含日志清理任务启动)
 ├── package.json
 └── README.md                       # 本说明文档
 ```
@@ -113,4 +119,6 @@ npm start
 - [📖 业务需求说明书 (PRD)](./docs/需求说明文档.md)
 - [🏗 系统技术架构文档](./docs/技术架构文档.md)
 - [🗺 里程碑与分期规划](./docs/里程碑与分期规划.md)
+- [📏 开发规范](./docs/开发规范.md)
+- [📋 变更 Spec 清单（历史变更记录）](./docs/specs/)
 - [💾 数据库初始化 SQL 脚本](./docs/数据库建表脚本.sql)

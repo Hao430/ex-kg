@@ -1,8 +1,9 @@
 -- ==============================================================================
 -- DeepDive.ai 企业级生产数据库全量建表与索引脚本 (PostgreSQL 14+)
--- 架构版本: v2.5.0-production
--- 支持特性: 混合多租户、多轮推演画布、节点级版本控制、BYOK 自带密钥加密、
---          多模态附件存储、动态模型路由配置、全链路审计与向量/GIN全文检索
+-- 架构版本: v3.0.0-production (一期收官)
+-- 表总数: 19 张 (其中 8 张为一期预留空壳，二期激活；算力点数体系已废弃移除)
+-- 支持特性: 强制登录多租户、多轮推演画布、服务端配额校验、订阅订单 (Mock 支付)、
+--          邮箱验证与找回密码、注销软删除 30 天冷却、全链路审计与 GIN 全文检索
 -- ==============================================================================
 
 -- 1. 基础扩展初始化
@@ -26,22 +27,22 @@ $$ LANGUAGE plpgsql;
 -- 1.1 核心用户与权限表 (Users)
 CREATE TABLE IF NOT EXISTS users (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  email VARCHAR(255) UNIQUE NOT NULL,
+  email VARCHAR(255) NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
   name VARCHAR(100) DEFAULT '' NOT NULL,
   avatar TEXT DEFAULT '',
-  phone VARCHAR(32) DEFAULT '',
   role VARCHAR(20) DEFAULT 'user' NOT NULL CHECK (role IN ('user', 'vip', 'admin')),
-  credits_balance BIGINT DEFAULT 50000 NOT NULL CHECK (credits_balance >= 0),
   vip_expires_at TIMESTAMPTZ,
-  invite_code VARCHAR(32) UNIQUE,
-  referred_by UUID REFERENCES users(id) ON DELETE SET NULL,
   is_active BOOLEAN DEFAULT TRUE NOT NULL,
   failed_attempts INT DEFAULT 0 NOT NULL,
   locked_until TIMESTAMPTZ,
   last_login_at TIMESTAMPTZ,
-  last_login_ip VARCHAR(45) DEFAULT '',
-  deleted_at TIMESTAMPTZ, -- 软删除标识 (GDPR合规与注销冷却期)
+  email_verified BOOLEAN DEFAULT FALSE NOT NULL, -- 邮箱验证状态（未验证禁 AI 推理）
+  verify_token VARCHAR(64),      -- 邮箱验证一次性令牌（24h 有效）
+  verify_expires_at TIMESTAMPTZ,
+  reset_token VARCHAR(64),       -- 找回密码一次性令牌（1h 有效）
+  reset_expires_at TIMESTAMPTZ,
+  deleted_at TIMESTAMPTZ, -- 软删除标识 (注销 30 天冷却期，期内可恢复)
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
   updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
@@ -230,43 +231,24 @@ CREATE TABLE IF NOT EXISTS canvas_tags (
 );
 
 -- ==============================================================================
--- 模块三：计费、订单与算力流水体系 (Billing, Orders & Credit Ledger)
+-- 模块三：订阅订单体系 (Billing & Orders)
 -- ==============================================================================
 
--- 3.1 算力消费流水平账表 (Credit Transactions - 保证不可变双向对账)
-CREATE TABLE IF NOT EXISTS credit_transactions (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  canvas_id VARCHAR(64) REFERENCES canvases(id) ON DELETE SET NULL,
-  node_id VARCHAR(64) REFERENCES nodes(id) ON DELETE SET NULL,
-  model_name VARCHAR(64) NOT NULL,
-  tokens_consumed INT NOT NULL,
-  amount_credits BIGINT NOT NULL, -- 负数为消耗，正数为充值/赠送
-  balance_after BIGINT NOT NULL,
-  action_type VARCHAR(32) DEFAULT 'ai_chat' NOT NULL, -- 'ai_chat', 'recharge', 'vip_gift', 'admin_adjust', 'refund'
-  remark TEXT DEFAULT '',
-  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
-);
-
--- 3.2 充值与订阅订单表 (Orders)
+-- 3.1 充值与订阅订单表 (Orders)
+-- 一期不接真实支付：PaymentProvider 抽象 + MockProvider 跑通订单全生命周期
 CREATE TABLE IF NOT EXISTS orders (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   order_no VARCHAR(64) UNIQUE NOT NULL,
-  external_trade_no VARCHAR(128) DEFAULT '', -- 第三方支付流水号 (微信/支付宝/Stripe)
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  plan_id VARCHAR(32) NOT NULL, -- 'starter', 'pro_monthly', 'pro_annual', 'credits_pack'
+  plan_id VARCHAR(32) NOT NULL, -- 'weekly', 'monthly', 'yearly'
   plan_name VARCHAR(64) NOT NULL,
   amount_cents INT NOT NULL,
   currency VARCHAR(10) DEFAULT 'CNY' NOT NULL,
-  status VARCHAR(32) DEFAULT 'pending' NOT NULL CHECK (status IN ('pending', 'paid', 'failed', 'refunded', 'closed')),
-  duration_days INT DEFAULT 0 NOT NULL,
-  credits_awarded BIGINT DEFAULT 0 NOT NULL,
+  status VARCHAR(32) DEFAULT 'pending' NOT NULL CHECK (status IN ('pending', 'paid', 'failed', 'refunded')),
+  duration_days INT NOT NULL,
   payment_method VARCHAR(32) DEFAULT 'online_pay' NOT NULL,
-  payment_channel VARCHAR(32) DEFAULT 'mock_gateway',
-  receipt_url TEXT DEFAULT '',
   paid_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
-  updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
 -- ==============================================================================
@@ -299,12 +281,10 @@ CREATE TABLE IF NOT EXISTS ai_request_logs (
   prompt_tokens INT DEFAULT 0 NOT NULL,
   completion_tokens INT DEFAULT 0 NOT NULL,
   total_tokens INT DEFAULT 0 NOT NULL,
-  credits_deducted INT DEFAULT 0 NOT NULL,
   latency_ms INT DEFAULT 0 NOT NULL,
   status VARCHAR(32) DEFAULT 'success' NOT NULL, -- 'success', 'error', 'timeout'
   error_message TEXT,
   grounding_chunks_count INT DEFAULT 0 NOT NULL,
-  ip_address VARCHAR(45) DEFAULT '',
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
@@ -333,7 +313,7 @@ CREATE TABLE IF NOT EXISTS feedbacks (
 CREATE TABLE IF NOT EXISTS notifications (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES users(id) ON DELETE CASCADE, -- NULL 表示全员系统广播
-  type VARCHAR(32) DEFAULT 'system' NOT NULL, -- 'system', 'vip_renewal', 'credit_grant', 'feedback_reply'
+  type VARCHAR(32) DEFAULT 'system' NOT NULL, -- 'system', 'vip_renewal', 'feedback_reply'
   title VARCHAR(255) NOT NULL,
   content TEXT NOT NULL,
   link_url TEXT DEFAULT '',
@@ -356,6 +336,8 @@ CREATE TABLE IF NOT EXISTS system_settings (
 -- 用户与鉴权索引
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+CREATE INDEX IF NOT EXISTS idx_users_verify_token ON users(verify_token);
+CREATE INDEX IF NOT EXISTS idx_users_reset_token ON users(reset_token);
 CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);
 CREATE INDEX IF NOT EXISTS idx_sessions_user_expire ON sessions(user_id, expires_at);
 CREATE INDEX IF NOT EXISTS idx_user_audit_user_action ON user_audit_logs(user_id, action, created_at DESC);
@@ -376,7 +358,6 @@ CREATE INDEX IF NOT EXISTS idx_canvas_snapshots_canvas ON canvas_snapshots(canva
 CREATE INDEX IF NOT EXISTS idx_canvas_templates_category ON canvas_templates(category, usage_count DESC);
 
 -- 财务与审计索引
-CREATE INDEX IF NOT EXISTS idx_transactions_user_created ON credit_transactions(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_orders_user_created ON orders(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_orders_order_no ON orders(order_no);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
