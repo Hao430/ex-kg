@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { deleteSession, findSession } from '../repositories/session.repository.js';
 import { recordAuditLog } from '../repositories/audit.repository.js';
-import { signUp, signIn, updateProfile, resendVerification, requestPasswordReset, resetPassword } from '../services/auth.service.js';
+import { signUp, signIn, updateProfile, resendVerification, requestPasswordReset, resetPassword, deleteOwnAccount } from '../services/auth.service.js';
 import { markEmailVerifiedByToken } from '../repositories/user.repository.js';
 import { ValidationError } from '../lib/errors.js';
 import { subscribeUserPlan } from '../services/billing.service.js';
@@ -156,6 +156,16 @@ authRouter.post('/sign-out', asyncHandler(async (req: Request, res: Response) =>
   }
   res.clearCookie('session_token', { path: '/' });
   res.json({ success: true, message: '已安全登出' });
+}));
+
+/**
+ * DELETE /api/auth/account
+ * Spec F4：用户自助注销（软删除 + 30 天冷却期内可由管理员恢复）
+ */
+authRouter.delete('/account', authMiddleware, asyncHandler(async (req: Request, res: Response) => {
+  await deleteOwnAccount(req.user!.id);
+  res.clearCookie('session_token', { path: '/' });
+  res.json({ success: true, message: '账号已注销，30 天内可联系管理员恢复' });
 }));
 
 /**

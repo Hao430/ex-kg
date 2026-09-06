@@ -13,6 +13,7 @@ import {
   setPasswordResetToken,
   markPasswordResetByToken,
   updateUserPassword,
+  deleteAccount,
 } from '../repositories/user.repository.js';
 import { createSession, deleteUserSessions } from '../repositories/session.repository.js';
 import { recordAuditLog } from '../repositories/audit.repository.js';
@@ -143,6 +144,26 @@ export async function signIn(data: {
   });
 
   return { user, token };
+}
+
+/**
+ * Spec F4：用户自助注销账号。
+ * 软删除（deleted_at + is_active=false）+ 踢下线全部会话 + 审计 account_deletion。
+ */
+export async function deleteOwnAccount(userId: string): Promise<void> {
+  const user = await findUserById(userId);
+  if (!user) {
+    throw new NotFoundError('未找到该用户');
+  }
+
+  await deleteAccount(user.id);
+
+  await recordAuditLog({
+    userId,
+    action: 'account_deletion',
+    targetType: 'user',
+    targetId: userId,
+  });
 }
 
 /**

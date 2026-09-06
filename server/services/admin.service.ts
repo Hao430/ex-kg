@@ -1,4 +1,5 @@
-import { findUserById, updateVipMembership, updateUserStatus as repoUpdateUserStatus } from '../repositories/user.repository.js';
+import { findUserById, updateVipMembership, updateUserStatus as repoUpdateUserStatus, restoreAccount as repoRestoreAccount } from '../repositories/user.repository.js';
+import { ConflictError } from '../lib/errors.js';
 import {
   listAdminUsers,
   getAdminOverview,
@@ -46,6 +47,36 @@ export async function updateUserStatus(
 }
 
 export type AdminOverview = Awaited<ReturnType<typeof getAdminOverview>>;
+
+/**
+ * Spec F4：Admin 恢复已注销账号（30 天冷却期内）。
+ * 未注销或不存在 → 404；成功 → 审计 account_restore。
+ */
+export async function restoreAccount(
+  actorId: string,
+  targetUserId: string
+): Promise<UserRecord> {
+  let restored: UserRecord;
+  try {
+    restored = await repoRestoreAccount(targetUserId);
+  } catch (e: any) {
+    // 冷却期内同邮箱已被重新注册占用 → 409（唯一索引冲突）
+    if (e?.code === '23505') {
+      throw new ConflictError('该邮箱已被新注册账号占用，无法恢复原账号', 'EMAIL_TAKEN_BY_NEW_ACCOUNT');
+    }
+    throw e;
+  }
+  if (!restored) throw new NotFoundError('用户不存在或未注销');
+
+  await recordAuditLog({
+    userId: actorId,
+    action: 'account_restore',
+    targetType: 'user',
+    targetId: targetUserId,
+  });
+
+  return restored;
+}
 
 /**
  * Grant or extend VIP days for a user by admin

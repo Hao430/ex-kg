@@ -54,7 +54,7 @@ export async function findSession(token: string): Promise<{ session: SessionReco
                 u.id as u_id, u.email, u.password_hash, u.name, u.avatar, u.role, u.vip_expires_at, u.email_verified, u.is_active, u.failed_attempts, u.locked_until, u.last_login_at, u.created_at as user_created_at, u.updated_at as user_updated_at
          FROM sessions s
          JOIN users u ON u.id = s.user_id
-         WHERE s.token = $1 AND s.expires_at > NOW()`,
+         WHERE s.token = $1 AND s.expires_at > NOW() AND u.deleted_at IS NULL`,
         [token]
       );
       if (res.rows.length > 0) {
@@ -98,7 +98,7 @@ export async function findSession(token: string): Promise<{ session: SessionReco
     return null;
   }
   const u = inMemoryStore.users.get(s.user_id);
-  if (!u) return null;
+  if (!u || u.deleted_at) return null; // Spec F4：已注销用户会话失效
   return { session: s, user: u };
 }
 

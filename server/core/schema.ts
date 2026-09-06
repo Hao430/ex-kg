@@ -48,6 +48,8 @@ export async function initDbSchema(): Promise<boolean> {
       -- Spec F1：找回密码一次性令牌（1h 有效）
       ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token VARCHAR(64);
       ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_expires_at TIMESTAMPTZ;
+      -- Spec F4：注销软删除时间戳（30 天冷却恢复）
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
     `);
 
     // 2. Safe Sessions table
@@ -373,7 +375,10 @@ export async function initDbSchema(): Promise<boolean> {
     // 8. Indices
 
     // 新增 PM 视角优化索引
-      await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email);`);
+      // Spec F4：邮箱唯一约束改为 partial——仅约束未注销用户，
+      // 同邮箱可在注销（deleted_at 非空）后以新账号新 id 重新注册（数据所有权隔离）
+      await client.query(`DROP INDEX IF EXISTS idx_users_email;`);
+      await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE deleted_at IS NULL;`);
       await client.query(`CREATE INDEX IF NOT EXISTS idx_users_verify_token ON users(verify_token);`);
       await client.query(`CREATE INDEX IF NOT EXISTS idx_users_reset_token ON users(reset_token);`);
       await client.query(`CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);`);

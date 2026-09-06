@@ -18,7 +18,7 @@ export async function listAdminUsers(params: {
   if (p) {
     try {
       await initDbSchema();
-      let whereClause = '1=1';
+      let whereClause = 'u.deleted_at IS NULL'; // Spec F4：Admin 列表默认排除已注销
       const values: any[] = [];
 
       if (params.search?.trim()) {
@@ -62,7 +62,7 @@ export async function listAdminUsers(params: {
   }
 
   // In-memory fallback
-  let list = Array.from(inMemoryStore.users.values());
+  let list = Array.from(inMemoryStore.users.values()).filter((u) => !u.deleted_at); // Spec F4：排除已注销
   if (params.search?.trim()) {
     const q = params.search.trim().toLowerCase();
     list = list.filter((u) => u.email.toLowerCase().includes(q) || u.name.toLowerCase().includes(q));

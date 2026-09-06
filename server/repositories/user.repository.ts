@@ -3,6 +3,7 @@ import { getPool } from '../core/pool.js';
 import { initDbSchema } from '../core/schema.js';
 import { inMemoryStore } from '../core/memory-store.js';
 import type { UserRecord } from '../core/records.js';
+import { deleteUserSessions } from './session.repository.js';
 
 /** 将 PG 行映射为 UserRecord（数值/时间戳规范化） */
 export function mapRowToUser(row: any): UserRecord {
@@ -17,6 +18,9 @@ export function mapRowToUser(row: any): UserRecord {
     email_verified: row.email_verified ?? false,
     verify_token: row.verify_token,
     verify_expires_at: row.verify_expires_at ? new Date(row.verify_expires_at).toISOString() : null,
+    reset_token: row.reset_token,
+    reset_expires_at: row.reset_expires_at ? new Date(row.reset_expires_at).toISOString() : null,
+    deleted_at: row.deleted_at ? new Date(row.deleted_at).toISOString() : null,
     is_active: row.is_active,
     failed_attempts: row.failed_attempts,
     locked_until: row.locked_until,
@@ -32,7 +36,7 @@ export async function findUserByEmail(email: string): Promise<UserRecord | null>
   if (p) {
     try {
       await initDbSchema();
-      const res = await p.query('SELECT * FROM users WHERE email = $1', [normalizedEmail]);
+      const res = await p.query('SELECT * FROM users WHERE email = $1 AND deleted_at IS NULL', [normalizedEmail]);
       if (res.rows.length > 0) return res.rows[0];
     } catch (e) {
       console.warn('PG findUserByEmail fallback to in-memory:', e);
@@ -40,6 +44,7 @@ export async function findUserByEmail(email: string): Promise<UserRecord | null>
   }
 
   for (const u of inMemoryStore.users.values()) {
+    if (u.deleted_at) continue; // Spec F4：已注销用户语义上不存在
     if (u.email.toLowerCase() === normalizedEmail) return u;
   }
   return null;
@@ -50,14 +55,16 @@ export async function findUserById(id: string): Promise<UserRecord | null> {
   if (p) {
     try {
       await initDbSchema();
-      const res = await p.query('SELECT * FROM users WHERE id = $1', [id]);
+      const res = await p.query('SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL', [id]);
       if (res.rows.length > 0) return res.rows[0];
     } catch (e) {
       console.warn('PG findUserById fallback to in-memory:', e);
     }
   }
 
-  return inMemoryStore.users.get(id) || null;
+  const u = inMemoryStore.users.get(id);
+  if (!u || u.deleted_at) return null; // Spec F4：已注销用户语义上不存在
+  return u;
 }
 
 export async function createUser(data: {
@@ -80,6 +87,9 @@ export async function createUser(data: {
   if (p) {
     try {
       await initDbSchema();
+      // Spec F4：email 查重（sign-up 链路 findUserByEmail）已排除 deleted，
+      // partial 唯一索引（WHERE deleted_at IS NULL）允许同邮箱注销后以新 id 重新注册，
+      // 因此这里恢复纯新建——新注册者不继承已注销账号的旧数据
       const res = await p.query(
         `INSERT INTO users (id, email, password_hash, name, role, is_active, failed_attempts, email_verified, verify_token, verify_expires_at, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, TRUE, 0, $6, $7, $8, NOW(), NOW())
@@ -211,7 +221,7 @@ export async function markPasswordResetByToken(token: string): Promise<UserRecor
     try {
       await initDbSchema();
       const res = await p.query(
-        `SELECT * FROM users WHERE reset_token = $1 AND reset_expires_at > NOW()`,
+        `SELECT * FROM users WHERE reset_token = $1 AND reset_expires_at > NOW() AND deleted_at IS NULL`,
         [token]
       );
       if (res.rows.length > 0) return mapRowToUser(res.rows[0]);
@@ -225,7 +235,8 @@ export async function markPasswordResetByToken(token: string): Promise<UserRecor
     if (
       u.reset_token === token &&
       u.reset_expires_at &&
-      new Date(u.reset_expires_at).getTime() > Date.now()
+      new Date(u.reset_expires_at).getTime() > Date.now() &&
+      !u.deleted_at
     ) {
       return u;
     }
@@ -414,4 +425,113 @@ export async function updateVipMembership(data: {
   memUser.vip_expires_at = data.vipExpiresAt;
   memUser.updated_at = new Date().toISOString();
   return memUser;
+}
+
+/**
+ * Spec F4：软删除账号（注销）——置 deleted_at + is_active=false。
+ * 踢下线为逻辑失效：findSession 排除 deleted_at 非空用户的会话（/me → 401）；
+ * 会话记录的物理清理随 30 天硬删外键级联完成。
+ * 双模：PG UPDATE / 内存置 deleted_at。用户不存在返回 false。
+ */
+export async function deleteAccount(userId: string): Promise<boolean> {
+  const p = getPool();
+  if (p) {
+    try {
+      const res = await p.query(
+        `UPDATE users SET deleted_at = NOW(), is_active = FALSE, updated_at = NOW() WHERE id = $1`,
+        [userId]
+      );
+      return (res.rowCount || 0) > 0;
+    } catch (e) {
+      console.warn('PG deleteAccount failed, fallback to memory:', e);
+    }
+  }
+
+  const user = inMemoryStore.users.get(userId);
+  if (!user) return false;
+  user.deleted_at = new Date().toISOString();
+  user.is_active = false;
+  user.updated_at = new Date().toISOString();
+  return true;
+}
+
+/**
+ * Spec F4：硬删除超过冷却期（retentionDays 天）的已注销用户（外键级联清数据）。
+ * retentionDays <= 0 表示全清（与 cleanupOldAuditLogs(0) 的全清语义一致，测试用），
+ * 管理员账号不属业务清理范围、始终保留（保留 admin 账号以免破坏种子/运维登录）。返回删除条数。双模。
+ */
+export async function cleanupDeletedUsers(retentionDays: number): Promise<number> {
+  const p = getPool();
+  if (p) {
+    try {
+      const res = retentionDays <= 0
+        ? await p.query(`DELETE FROM users WHERE role <> 'admin' RETURNING id`)
+        : await p.query(
+            `DELETE FROM users WHERE deleted_at IS NOT NULL AND deleted_at <= NOW() - make_interval(days => $1) RETURNING id`,
+            [retentionDays]
+          );
+      return res.rowCount || 0;
+    } catch (e) {
+      console.warn('PG cleanupDeletedUsers failed, falling back to memory only:', e);
+    }
+  }
+
+  if (retentionDays <= 0) {
+    const removedIds: string[] = [];
+    for (const [id, u] of inMemoryStore.users.entries()) {
+      if (u.role === 'admin') continue;
+      inMemoryStore.users.delete(id);
+      removedIds.push(id);
+    }
+    for (const id of removedIds) {
+      await deleteUserSessions(id);
+    }
+    return removedIds.length;
+  }
+
+  const cutoff = Date.now() - retentionDays * 24 * 3600 * 1000;
+  const removedIds: string[] = [];
+  for (const [id, u] of inMemoryStore.users.entries()) {
+    if (!u.deleted_at) continue;
+    if (new Date(u.deleted_at).getTime() <= cutoff) {
+      inMemoryStore.users.delete(id);
+      removedIds.push(id);
+    }
+  }
+  // 级联清理残留会话（对应 PG 外键 ON DELETE CASCADE）
+  for (const id of removedIds) {
+    await deleteUserSessions(id);
+  }
+  return removedIds.length;
+}
+
+/**
+ * Spec F4：恢复已注销账号——清 deleted_at + is_active=true。
+ * 未注销或不存在返回 null。双模。
+ */
+export async function restoreAccount(userId: string): Promise<UserRecord | null> {
+  const p = getPool();
+  if (p) {
+    try {
+      const res = await p.query(
+        `UPDATE users SET deleted_at = NULL, is_active = TRUE, updated_at = NOW()
+         WHERE id = $1 AND deleted_at IS NOT NULL
+         RETURNING *`,
+        [userId]
+      );
+      if (res.rows.length > 0) return mapRowToUser(res.rows[0]);
+      return null;
+    } catch (e: any) {
+      // 邮箱唯一冲突（冷却期内同邮箱已重新注册）向上抛，由 service 转 409
+      if (e?.code === '23505') throw e;
+      console.warn('PG restoreAccount failed, fallback to memory:', e);
+    }
+  }
+
+  const user = inMemoryStore.users.get(userId);
+  if (!user || !user.deleted_at) return null;
+  user.deleted_at = null;
+  user.is_active = true;
+  user.updated_at = new Date().toISOString();
+  return user;
 }

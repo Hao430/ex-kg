@@ -6,6 +6,7 @@ import {
   updateUserStatus,
   grantUserVipDays,
   getUserOrFail,
+  restoreAccount,
   getMaskedModelConfig,
   resolveConfigForSave,
   saveModelConfigWithAudit,
@@ -119,6 +120,19 @@ adminRouter.put('/users/:id/status', asyncHandler(async (req: Request, res: Resp
     success: true,
     message: is_active ? '账号已成功解封' : '账号已被冻结并强制踢下线',
     user: updated,
+  });
+}));
+
+/**
+ * PUT /api/admin/users/:id/restore
+ * Spec F4：恢复已注销账号（30 天冷却期内）。未注销/不存在 → 404。
+ */
+adminRouter.put('/users/:id/restore', asyncHandler(async (req: Request, res: Response) => {
+  const restored = await restoreAccount(req.user!.id, req.params.id);
+  res.json({
+    success: true,
+    message: '账号已恢复',
+    user: restored,
   });
 }));
 

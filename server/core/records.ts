@@ -17,6 +17,8 @@ export interface UserRecord {
   /** Spec F1：找回密码一次性令牌（1h 有效） */
   reset_token?: string | null;
   reset_expires_at?: string | null;
+  /** Spec F4：注销软删除时间戳（非空 = 已注销，30 天冷却期内可恢复） */
+  deleted_at?: string | null;
   is_active: boolean;
   failed_attempts: number;
   locked_until: string | null;

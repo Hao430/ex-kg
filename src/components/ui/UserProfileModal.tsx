@@ -11,6 +11,7 @@ import {
   Sparkles,
   Loader2,
   Camera,
+  Trash2,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -31,12 +32,13 @@ const PRESET_AVATARS = [
 ];
 
 export const UserProfileModal: React.FC = () => {
-  const { user, isVip, userProfileModalOpen, closeUserProfileModal, updateProfile, openRechargeModal } = useAuth();
+  const { user, isVip, userProfileModalOpen, closeUserProfileModal, updateProfile, openRechargeModal, logout } = useAuth();
 
   const [name, setName] = useState('');
   const [selectedAvatar, setSelectedAvatar] = useState('🧠');
   const [customAvatarUrl, setCustomAvatarUrl] = useState('');
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [statusMsg, setStatusMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   useEffect(() => {
@@ -93,6 +95,31 @@ export const UserProfileModal: React.FC = () => {
       setSelectedAvatar(base64);
     };
     reader.readAsDataURL(file);
+  };
+
+  // Spec F4：自助注销账号（软删除，30 天内可联系管理员恢复）
+  const handleDeleteAccount = async () => {
+    if (!confirm('注销后 30 天内可联系管理员恢复，确认注销？')) return;
+
+    setDeleting(true);
+    setStatusMsg(null);
+    try {
+      const res = await fetch('/api/auth/account', {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (res.ok) {
+        closeUserProfileModal();
+        await logout();
+      } else {
+        const body = await res.json().catch(() => null);
+        setStatusMsg({ type: 'error', text: body?.message || '注销失败，请稍后重试' });
+      }
+    } catch {
+      setStatusMsg({ type: 'error', text: '注销失败，请检查网络后重试' });
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const remainingVipDays = user.role === 'admin'
@@ -322,6 +349,33 @@ export const UserProfileModal: React.FC = () => {
                 <span>{statusMsg.text}</span>
               </div>
             )}
+
+            {/* Danger Zone */}
+            <div className="flex items-center justify-between bg-rose-950/30 border border-rose-900/50 rounded-xl px-4 py-3">
+              <div className="text-xs text-rose-300/80">
+                <span className="font-semibold text-rose-300">危险操作</span>
+                <span className="block text-[11px] mt-0.5">注销后账号将被停用，30 天内可联系管理员恢复</span>
+              </div>
+              <button
+                type="button"
+                id="user-profile-delete-btn"
+                onClick={handleDeleteAccount}
+                disabled={deleting}
+                className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-500 active:bg-rose-700 disabled:opacity-50 rounded-lg shadow-md shadow-rose-950/40 transition"
+              >
+                {deleting ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    注销中...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    注销账号
+                  </>
+                )}
+              </button>
+            </div>
 
             {/* Action Buttons */}
             <div className="flex items-center justify-end gap-3 pt-2">
