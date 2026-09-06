@@ -1,7 +1,8 @@
+import pg from 'pg';
 import { getPool } from '../core/pool.js';
 import { initDbSchema } from '../core/schema.js';
 import { inMemoryStore } from '../core/memory-store.js';
-import { ForbiddenError } from '../lib/errors.js';
+import { ConflictError, ForbiddenError } from '../lib/errors.js';
 import type { CanvasRecord } from '../core/records.js';
 
 /**
@@ -189,6 +190,7 @@ export async function saveCanvas(
     enableWebSearch?: boolean;
     nodes: any[];
     edges: any[];
+    expectedUpdatedAt?: string;
   },
   userId: string,
   isAdmin = false
@@ -197,14 +199,28 @@ export async function saveCanvas(
   const now = new Date().toISOString();
   const vp = data.viewport || { x: 0, y: 0, zoom: 1 };
 
+  /** 乐观锁：画布已存在且调用方声明了其已知版本时校验，防止并发静默覆盖 */
+  const assertNoConflict = (serverUpdatedAt: string | null | undefined): void => {
+    if (!data.expectedUpdatedAt || !serverUpdatedAt) return;
+    const known = new Date(data.expectedUpdatedAt).getTime();
+    if (Number.isNaN(known)) return; // 非法时间串视为未携带，避免恒等比较误报
+    const current = new Date(serverUpdatedAt).getTime();
+    if (known !== current) {
+      throw new ConflictError('画板已被其他窗口修改，请刷新获取最新内容后再保存', 'CANVAS_SAVE_CONFLICT', {
+        latest_updated_at: new Date(serverUpdatedAt).toISOString(),
+      });
+    }
+  };
+
   if (p) {
     const client = await p.connect();
+    let upsertRes: pg.QueryResult;
     try {
       await initDbSchema();
       await client.query('BEGIN');
 
       // Check ownership if canvas exists
-      const existing = await client.query('SELECT user_id FROM canvases WHERE id = $1', [data.id]);
+      const existing = await client.query('SELECT user_id, updated_at FROM canvases WHERE id = $1', [data.id]);
       const existingUserId = existing.rows.length > 0 ? existing.rows[0].user_id : null;
       const isAdoptable = isClaimableCanvas(data.id, existingUserId, userId, {
         includeBoardPrefix: true,
@@ -216,9 +232,13 @@ export async function saveCanvas(
         throw new ForbiddenError('无权修改其他用户的画板', 'CANVAS_FORBIDDEN');
       }
 
+      if (existing.rows.length > 0) {
+        assertNoConflict(existing.rows[0].updated_at);
+      }
+
       const assignedUserId = (isAdoptable || existing.rows.length === 0) ? userId : (existingUserId || userId);
 
-      await client.query(
+      upsertRes = await client.query(
         `INSERT INTO canvases (id, user_id, title, description, viewport_x, viewport_y, viewport_zoom, default_model, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
          ON CONFLICT (id) DO UPDATE SET
@@ -228,7 +248,8 @@ export async function saveCanvas(
            viewport_y = EXCLUDED.viewport_y,
            viewport_zoom = EXCLUDED.viewport_zoom,
            default_model = EXCLUDED.default_model,
-           updated_at = NOW()`,
+           updated_at = NOW()
+         RETURNING created_at, updated_at`,
         [
           data.id,
           assignedUserId,
@@ -347,6 +368,23 @@ export async function saveCanvas(
       }
 
       await client.query('COMMIT');
+
+      // 以 DB 时间戳为准返回（乐观锁版本必须与下次 GET 一致），不再落穿到内存分支
+      return {
+        id: data.id,
+        user_id: assignedUserId,
+        title: data.title,
+        description: data.description,
+        viewport: vp,
+        defaultModel: data.defaultModel || 'gemini-3.8-flash',
+        enableWebSearch: data.enableWebSearch ?? true,
+        createdAt: new Date(upsertRes.rows[0].created_at).toISOString(),
+        updatedAt: new Date(upsertRes.rows[0].updated_at).toISOString(),
+        nodes: data.nodes,
+        edges: data.edges,
+        nodeCount: (data.nodes || []).length,
+        edgeCount: (data.edges || []).length,
+      };
     } catch (e) {
       await client.query('ROLLBACK');
       console.error('PG saveCanvas transaction failed:', e);
@@ -367,6 +405,9 @@ export async function saveCanvas(
 
   if (existing && !isAdmin && existingUserId !== userId && !isAdoptable) {
     throw new ForbiddenError('无权修改其他用户的画板', 'CANVAS_FORBIDDEN');
+  }
+  if (existing) {
+    assertNoConflict(existing.updatedAt);
   }
 
   const record: CanvasRecord = {

@@ -98,6 +98,16 @@ function MainApp() {
     }, 2500);
   };
 
+  // 保存冲突提示（Spec A4 乐观锁）
+  useEffect(() => {
+    const onConflict = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { message?: string };
+      showToast(detail?.message || '画板已在其他窗口被修改，请刷新后重试');
+    };
+    window.addEventListener('deepdive:canvas-save-conflict', onConflict);
+    return () => window.removeEventListener('deepdive:canvas-save-conflict', onConflict);
+  }, []);
+
   // Load boards on startup
   useEffect(() => {
     const list = loadBoardList();

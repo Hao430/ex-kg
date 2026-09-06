@@ -18,6 +18,8 @@ export interface StoredBoard {
   nodes: Node[];
   edges: Edge[];
   viewport?: { x: number; y: number; zoom: number };
+  /** 服务端最近一次保存的 updatedAt，用作乐观锁的 expectedUpdatedAt（Spec A4） */
+  serverUpdatedAt?: string;
 }
 
 export function loadBoardList(): DeepDiveBoardMeta[] {
@@ -113,6 +115,8 @@ export function saveBoard(board: StoredBoard): void {
 
 /**
  * Sync board to backend API
+ * - 携带 serverUpdatedAt 作为乐观锁版本（Spec A4）
+ * - 409 冲突：派发 deepdive:canvas-save-conflict 事件（App 层 toast 提示），不静默覆盖
  */
 export async function syncBoardToBackend(board: StoredBoard): Promise<boolean> {
   try {
@@ -125,9 +129,32 @@ export async function syncBoardToBackend(board: StoredBoard): Promise<boolean> {
         viewport: board.viewport,
         nodes: board.nodes,
         edges: board.edges,
+        expectedUpdatedAt: board.serverUpdatedAt,
       }),
     });
-    return res.ok;
+
+    if (res.status === 409) {
+      const body = await res.json().catch(() => null) as any;
+      window.dispatchEvent(
+        new CustomEvent('deepdive:canvas-save-conflict', {
+          detail: {
+            boardId: board.id,
+            message: body?.error || '画板已在其他窗口被修改',
+            latestUpdatedAt: body?.latest_updated_at,
+          },
+        })
+      );
+      return false;
+    }
+
+    if (res.ok) {
+      const body = await res.json().catch(() => null) as any;
+      if (body?.canvas?.updatedAt) {
+        board.serverUpdatedAt = body.canvas.updatedAt;
+      }
+      return true;
+    }
+    return false;
   } catch (e) {
     return false;
   }

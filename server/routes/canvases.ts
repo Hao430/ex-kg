@@ -43,7 +43,7 @@ canvasesRouter.get('/:id', asyncHandler(async (req: Request, res: Response) => {
 canvasesRouter.post('/:id/save', asyncHandler(async (req: Request, res: Response) => {
   const user = req.user!;
   const isAdmin = user.role === 'admin';
-  const { title, description, viewport, defaultModel, enableWebSearch, nodes, edges } = req.body;
+  const { title, description, viewport, defaultModel, enableWebSearch, nodes, edges, expectedUpdatedAt } = req.body;
 
   const saved = await saveUserCanvas(
     {
@@ -55,6 +55,7 @@ canvasesRouter.post('/:id/save', asyncHandler(async (req: Request, res: Response
       enableWebSearch,
       nodes: nodes || [],
       edges: edges || [],
+      expectedUpdatedAt,
     },
     user.id,
     isAdmin
