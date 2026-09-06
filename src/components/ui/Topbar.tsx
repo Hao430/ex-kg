@@ -104,7 +104,7 @@ export const Topbar: React.FC<TopbarProps> = ({
   const isDark = theme === 'dark';
 
   return (
-    <header className="absolute top-0 left-0 right-0 h-14 bg-white/95 dark:bg-[#0c1220]/95 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800/80 px-3 sm:px-4 flex items-center justify-between z-40 shadow-xs transition-colors duration-200 select-none">
+    <header className="absolute top-0 left-0 right-0 h-14 bg-white/80 dark:bg-[#070b14]/85 backdrop-blur-xl border-b border-slate-200/70 dark:border-slate-800/70 px-3 sm:px-4 flex items-center justify-between z-40 shadow-[0_4px_20px_rgba(0,0,0,0.03)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.4)] transition-colors duration-200 select-none">
       {/* ================= ZONE 1: Left - Brand & Board Identity ================= */}
       <div className="flex items-center gap-2 sm:gap-3 shrink-0">
         {/* Brand Logo */}
@@ -113,11 +113,11 @@ export const Topbar: React.FC<TopbarProps> = ({
             onClick={onGoToLanding}
             className="flex items-center gap-2 group cursor-pointer focus:outline-none"
           >
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-cyan-500 flex items-center justify-center text-white shadow-md shadow-blue-500/20 group-hover:scale-105 transition-transform">
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-sky-500 flex items-center justify-center text-white shadow-md shadow-indigo-500/25 group-hover:scale-105 transition-transform">
               <Compass className="w-4 h-4 text-white" />
             </div>
-            <span className="font-bold text-slate-800 dark:text-slate-100 text-sm tracking-tight hidden sm:inline group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-              DeepDive<span className="text-blue-600 dark:text-blue-400 font-medium">.ai</span>
+            <span className="font-bold text-slate-850 dark:text-slate-100 text-sm tracking-tight hidden sm:inline group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+              DeepDive<span className="text-indigo-600 dark:text-indigo-400 font-semibold">.ai</span>
             </span>
           </button>
         </Tooltip>
@@ -134,7 +134,7 @@ export const Topbar: React.FC<TopbarProps> = ({
               onBlur={handleNameSubmit}
               onKeyDown={(e) => e.key === 'Enter' && handleNameSubmit()}
               autoFocus
-              className="px-2.5 py-1 text-xs font-medium border border-blue-500 rounded-lg outline-none bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 max-w-[140px] sm:max-w-[200px]"
+              className="px-2.5 py-1 text-xs font-medium border border-indigo-500 rounded-lg outline-none bg-white dark:bg-slate-900 text-slate-850 dark:text-slate-100 max-w-[140px] sm:max-w-[200px]"
             />
           ) : (
             <div className="flex items-center gap-1 bg-slate-100/70 dark:bg-slate-800/60 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl p-0.5 pl-2 transition-colors border border-slate-200/50 dark:border-slate-700/50">
@@ -143,7 +143,7 @@ export const Topbar: React.FC<TopbarProps> = ({
                   onClick={() => setShowBoardMenu(!showBoardMenu)}
                   className="flex items-center gap-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 py-1 pr-1 cursor-pointer focus:outline-none"
                 >
-                  <FolderOpen className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
+                  <FolderOpen className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />
                   <span className="max-w-[90px] sm:max-w-[150px] truncate">{boardName}</span>
                   <ChevronDown className="w-3 h-3 text-slate-400 shrink-0" />
                 </button>
@@ -165,7 +165,7 @@ export const Topbar: React.FC<TopbarProps> = ({
 
           {/* Board Dropdown Menu */}
           {showBoardMenu && (
-            <div className="absolute top-full left-0 mt-2 w-64 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl py-2 z-50 animate-in fade-in zoom-in-95">
+            <div className="absolute top-full left-0 mt-2 w-64 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-[0_16px_40px_rgba(0,0,0,0.12)] dark:shadow-[0_20px_50px_rgba(0,0,0,0.6)] py-2 z-50 animate-in fade-in zoom-in-95">
               <div className="px-3 py-1 text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
                 思考画板列表
               </div>
@@ -179,12 +179,12 @@ export const Topbar: React.FC<TopbarProps> = ({
                     }}
                     className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-colors ${
                       b.id === currentBoardId
-                        ? 'text-blue-600 dark:text-blue-400 font-semibold bg-blue-50/60 dark:bg-blue-950/40'
+                        ? 'text-indigo-600 dark:text-indigo-400 font-semibold bg-indigo-50/60 dark:bg-indigo-950/40'
                         : 'text-slate-700 dark:text-slate-300'
                     }`}
                   >
                     <span className="truncate flex-1 mr-2">{b.name}</span>
-                    {b.id === currentBoardId && <Check className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />}
+                    {b.id === currentBoardId && <Check className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />}
                   </button>
                 ))}
               </div>
@@ -194,7 +194,7 @@ export const Topbar: React.FC<TopbarProps> = ({
                     onNewBoard();
                     setShowBoardMenu(false);
                   }}
-                  className="w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 text-xs text-blue-600 dark:text-blue-400 font-medium hover:bg-blue-50 dark:hover:bg-blue-950/40 rounded-xl transition-colors"
+                  className="w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 text-xs text-indigo-600 dark:text-indigo-400 font-medium hover:bg-indigo-50 dark:hover:bg-indigo-950/40 rounded-xl transition-colors"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   新建思考画板
@@ -237,12 +237,12 @@ export const Topbar: React.FC<TopbarProps> = ({
       </div>
 
       {/* ================= ZONE 2: Center - Unified Canvas Action Pill ================= */}
-      <div className="flex items-center bg-slate-100/90 dark:bg-slate-900/90 p-1 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-2xs backdrop-blur-md">
+      <div className="flex items-center bg-slate-100/80 dark:bg-slate-900/80 p-1 rounded-2xl border border-slate-200/70 dark:border-slate-800 shadow-2xs backdrop-blur-md">
         {/* Primary Action: Add Root Topic */}
         <Tooltip content="新建核心主题探索节点" shortcut="Alt+N" side="bottom">
           <button
             onClick={onAddRootNode}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-all cursor-pointer hover:shadow-blue-500/20"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-xs shadow-indigo-500/25 transition-all cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">新建主题</span>
@@ -296,7 +296,7 @@ export const Topbar: React.FC<TopbarProps> = ({
           </Tooltip>
 
           {showCanvasMoreMenu && (
-            <div className="absolute top-full right-0 mt-2 w-52 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl p-1.5 z-50 animate-in fade-in zoom-in-95">
+            <div className="absolute top-full right-0 mt-2 w-52 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-[0_16px_40px_rgba(0,0,0,0.12)] dark:shadow-[0_20px_50px_rgba(0,0,0,0.6)] p-1.5 z-50 animate-in fade-in zoom-in-95">
               <div className="px-2.5 py-1 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
                 画布与导出
               </div>
@@ -332,7 +332,7 @@ export const Topbar: React.FC<TopbarProps> = ({
                 }}
                 className="w-full text-left px-2.5 py-2 text-xs flex items-center gap-2.5 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl transition-colors"
               >
-                <FileText className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
+                <FileText className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
                 <div>
                   <div className="font-medium">导出 Markdown</div>
                   <div className="text-[10px] text-slate-400">结构化研报与思维大纲</div>
@@ -467,7 +467,7 @@ export const Topbar: React.FC<TopbarProps> = ({
             {showUserMenu && (
               <div
                 id="topbar-user-dropdown-menu"
-                className="absolute top-full right-0 mt-2 w-60 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl p-2 z-50 animate-in fade-in zoom-in-95"
+                className="absolute top-full right-0 mt-2 w-60 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-[0_16px_40px_rgba(0,0,0,0.12)] dark:shadow-[0_20px_50px_rgba(0,0,0,0.6)] p-2 z-50 animate-in fade-in zoom-in-95"
               >
                 {/* Header Card */}
                 <div className="p-3 bg-slate-50 dark:bg-slate-950/60 rounded-xl border border-slate-100 dark:border-slate-800/80 mb-1.5">

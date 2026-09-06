@@ -54,6 +54,38 @@ export interface CreditTransactionRecord {
   user_email?: string;
 }
 
+export interface OrderRecord {
+  id: string;
+  order_no: string;
+  user_id: string;
+  plan_id: string;
+  plan_name: string;
+  amount_cents: number;
+  currency: string;
+  status: 'pending' | 'paid' | 'failed' | 'refunded';
+  duration_days: number;
+  payment_method: string;
+  created_at: string;
+  paid_at?: string | null;
+  user_email?: string;
+}
+
+export interface AiRequestLogRecord {
+  id: string;
+  user_id?: string | null;
+  canvas_id?: string | null;
+  node_id?: string | null;
+  model_name: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  latency_ms: number;
+  status: 'success' | 'error';
+  error_message?: string | null;
+  grounding_chunks_count: number;
+  created_at: string;
+}
+
 export interface CanvasRecord {
   id: string;
   user_id: string;
@@ -121,6 +153,8 @@ export const inMemoryStore = {
   sessions: new Map<string, SessionRecord>(),
   canvases: new Map<string, CanvasRecord>(),
   creditTransactions: [] as CreditTransactionRecord[],
+  orders: [] as OrderRecord[],
+  aiRequestLogs: [] as AiRequestLogRecord[],
   snapshots: new Map<string, any[]>(),
   systemSettings: new Map<string, any>(),
   feedbacks: [] as FeedbackRecord[],
@@ -252,9 +286,21 @@ export async function initDbSchema(): Promise<boolean> {
         viewport_x DOUBLE PRECISION DEFAULT 0.0 NOT NULL,
         viewport_y DOUBLE PRECISION DEFAULT 0.0 NOT NULL,
         viewport_zoom DOUBLE PRECISION DEFAULT 1.0 NOT NULL,
+        is_favorite BOOLEAN DEFAULT FALSE,
+        is_archived BOOLEAN DEFAULT FALSE,
+        cover_image TEXT DEFAULT '',
+        view_count INT DEFAULT 0,
+        export_count INT DEFAULT 0,
+        deleted_at TIMESTAMPTZ,
         created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
         updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
       );
+      ALTER TABLE canvases ADD COLUMN IF NOT EXISTS is_favorite BOOLEAN DEFAULT FALSE;
+      ALTER TABLE canvases ADD COLUMN IF NOT EXISTS is_archived BOOLEAN DEFAULT FALSE;
+      ALTER TABLE canvases ADD COLUMN IF NOT EXISTS cover_image TEXT DEFAULT '';
+      ALTER TABLE canvases ADD COLUMN IF NOT EXISTS view_count INT DEFAULT 0;
+      ALTER TABLE canvases ADD COLUMN IF NOT EXISTS export_count INT DEFAULT 0;
+      ALTER TABLE canvases ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
     `);
 
     // 4. Nodes table
@@ -262,19 +308,47 @@ export async function initDbSchema(): Promise<boolean> {
       CREATE TABLE IF NOT EXISTS nodes (
         id VARCHAR(64) PRIMARY KEY,
         canvas_id VARCHAR(64) NOT NULL REFERENCES canvases(id) ON DELETE CASCADE,
-        type VARCHAR(32) DEFAULT 'question' NOT NULL,
+        type VARCHAR(32) DEFAULT 'chat' NOT NULL,
+        title VARCHAR(255) DEFAULT '' NOT NULL,
         question TEXT DEFAULT '' NOT NULL,
         answer TEXT DEFAULT '' NOT NULL,
         note TEXT DEFAULT '' NOT NULL,
+        content TEXT DEFAULT '' NOT NULL,
+        messages JSONB DEFAULT '[]'::jsonb NOT NULL,
+        status VARCHAR(32) DEFAULT 'idle' NOT NULL,
         pos_x DOUBLE PRECISION DEFAULT 0.0 NOT NULL,
         pos_y DOUBLE PRECISION DEFAULT 0.0 NOT NULL,
+        width INT DEFAULT 380 NOT NULL,
+        height INT DEFAULT 320 NOT NULL,
         depth INT DEFAULT 0 NOT NULL,
         parent_id VARCHAR(64) REFERENCES nodes(id) ON DELETE SET NULL,
         model_used VARCHAR(64) DEFAULT 'gemini-3.8-flash',
         grounding JSONB DEFAULT '[]'::jsonb,
+        is_collapsed BOOLEAN DEFAULT FALSE NOT NULL,
+        is_pinned BOOLEAN DEFAULT FALSE NOT NULL,
+        branch_trigger_phrase TEXT DEFAULT '',
+        enable_web_search BOOLEAN DEFAULT TRUE NOT NULL,
+        color VARCHAR(32) DEFAULT '',
+        tokens_used INT DEFAULT 0 NOT NULL,
+        custom_data JSONB DEFAULT '{}'::jsonb,
+        deleted_at TIMESTAMPTZ,
         created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
         updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
       );
+      ALTER TABLE nodes ADD COLUMN IF NOT EXISTS title VARCHAR(255) DEFAULT '';
+      ALTER TABLE nodes ADD COLUMN IF NOT EXISTS content TEXT DEFAULT '';
+      ALTER TABLE nodes ADD COLUMN IF NOT EXISTS messages JSONB DEFAULT '[]'::jsonb;
+      ALTER TABLE nodes ADD COLUMN IF NOT EXISTS status VARCHAR(32) DEFAULT 'idle';
+      ALTER TABLE nodes ADD COLUMN IF NOT EXISTS width INT DEFAULT 380;
+      ALTER TABLE nodes ADD COLUMN IF NOT EXISTS height INT DEFAULT 320;
+      ALTER TABLE nodes ADD COLUMN IF NOT EXISTS is_collapsed BOOLEAN DEFAULT FALSE;
+      ALTER TABLE nodes ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN DEFAULT FALSE;
+      ALTER TABLE nodes ADD COLUMN IF NOT EXISTS branch_trigger_phrase TEXT DEFAULT '';
+      ALTER TABLE nodes ADD COLUMN IF NOT EXISTS enable_web_search BOOLEAN DEFAULT TRUE;
+      ALTER TABLE nodes ADD COLUMN IF NOT EXISTS color VARCHAR(32) DEFAULT '';
+      ALTER TABLE nodes ADD COLUMN IF NOT EXISTS tokens_used INT DEFAULT 0;
+      ALTER TABLE nodes ADD COLUMN IF NOT EXISTS custom_data JSONB DEFAULT '{}'::jsonb;
+      ALTER TABLE nodes ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
     `);
 
     // 5. Edges table
@@ -284,9 +358,17 @@ export async function initDbSchema(): Promise<boolean> {
         canvas_id VARCHAR(64) NOT NULL REFERENCES canvases(id) ON DELETE CASCADE,
         source_id VARCHAR(64) NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
         target_id VARCHAR(64) NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+        source_handle VARCHAR(64),
+        target_handle VARCHAR(64),
+        label VARCHAR(255) DEFAULT '',
+        animated BOOLEAN DEFAULT FALSE,
         type VARCHAR(32) DEFAULT 'smoothstep',
         created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
       );
+      ALTER TABLE edges ADD COLUMN IF NOT EXISTS source_handle VARCHAR(64);
+      ALTER TABLE edges ADD COLUMN IF NOT EXISTS target_handle VARCHAR(64);
+      ALTER TABLE edges ADD COLUMN IF NOT EXISTS label VARCHAR(255) DEFAULT '';
+      ALTER TABLE edges ADD COLUMN IF NOT EXISTS animated BOOLEAN DEFAULT FALSE;
     `);
 
     // 6. Credit transactions table
@@ -299,6 +381,43 @@ export async function initDbSchema(): Promise<boolean> {
         tokens_consumed INT NOT NULL,
         balance_after BIGINT NOT NULL,
         action_type VARCHAR(32) DEFAULT 'ai_chat',
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+    `);
+
+    // 6.1 Orders (充值与会员订阅订单表)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS orders (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        order_no VARCHAR(64) UNIQUE NOT NULL,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        plan_id VARCHAR(32) NOT NULL,
+        plan_name VARCHAR(64) NOT NULL,
+        amount_cents INT NOT NULL,
+        currency VARCHAR(10) DEFAULT 'CNY' NOT NULL,
+        status VARCHAR(32) DEFAULT 'paid' NOT NULL CHECK (status IN ('pending', 'paid', 'failed', 'refunded')),
+        duration_days INT NOT NULL,
+        payment_method VARCHAR(32) DEFAULT 'online_pay' NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        paid_at TIMESTAMPTZ
+      );
+    `);
+
+    // 6.2 AI Request Logs (模型推演调用审计日志表)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS ai_request_logs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        canvas_id VARCHAR(64) REFERENCES canvases(id) ON DELETE SET NULL,
+        node_id VARCHAR(64) REFERENCES nodes(id) ON DELETE SET NULL,
+        model_name VARCHAR(64) NOT NULL,
+        prompt_tokens INT DEFAULT 0 NOT NULL,
+        completion_tokens INT DEFAULT 0 NOT NULL,
+        total_tokens INT DEFAULT 0 NOT NULL,
+        latency_ms INT DEFAULT 0 NOT NULL,
+        status VARCHAR(32) DEFAULT 'success' NOT NULL,
+        error_message TEXT,
+        grounding_chunks_count INT DEFAULT 0 NOT NULL,
         created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
       );
     `);
@@ -382,6 +501,97 @@ export async function initDbSchema(): Promise<boolean> {
         rating INT DEFAULT 5 NOT NULL,
         content TEXT NOT NULL,
         contact_info VARCHAR(255),
+        status VARCHAR(32) DEFAULT 'pending' NOT NULL,
+        admin_reply TEXT DEFAULT '',
+        resolved_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        resolved_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      ALTER TABLE feedbacks ADD COLUMN IF NOT EXISTS status VARCHAR(32) DEFAULT 'pending';
+      ALTER TABLE feedbacks ADD COLUMN IF NOT EXISTS admin_reply TEXT DEFAULT '';
+      ALTER TABLE feedbacks ADD COLUMN IF NOT EXISTS resolved_by UUID;
+      ALTER TABLE feedbacks ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ;
+      ALTER TABLE feedbacks ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
+    `);
+
+    // 7.7 Node Attachments (节点参考资料与多模态附件)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS node_attachments (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        node_id VARCHAR(64) NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+        canvas_id VARCHAR(64) NOT NULL REFERENCES canvases(id) ON DELETE CASCADE,
+        file_name VARCHAR(255) NOT NULL,
+        file_size BIGINT NOT NULL,
+        mime_type VARCHAR(128) NOT NULL,
+        storage_url TEXT NOT NULL,
+        parsed_text TEXT DEFAULT '',
+        summary TEXT DEFAULT '',
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+    `);
+
+    // 7.8 Canvas Templates (官方思维模板库)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS canvas_templates (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        category VARCHAR(64) DEFAULT 'business' NOT NULL,
+        title VARCHAR(128) NOT NULL,
+        description TEXT NOT NULL,
+        cover_image TEXT DEFAULT '',
+        initial_data JSONB NOT NULL,
+        tags TEXT[] DEFAULT ARRAY[]::TEXT[],
+        usage_count INT DEFAULT 0 NOT NULL,
+        is_official BOOLEAN DEFAULT TRUE NOT NULL,
+        is_active BOOLEAN DEFAULT TRUE NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+    `);
+
+    // 7.9 AI Models Config (动态模型配置与路由)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS ai_models_config (
+        id VARCHAR(64) PRIMARY KEY,
+        display_name VARCHAR(128) NOT NULL,
+        provider VARCHAR(32) DEFAULT 'google' NOT NULL,
+        description TEXT DEFAULT '',
+        context_window INT DEFAULT 128000 NOT NULL,
+        max_output_tokens INT DEFAULT 8192 NOT NULL,
+        credit_cost_per_1k_tokens INT DEFAULT 10 NOT NULL,
+        is_vip_only BOOLEAN DEFAULT FALSE NOT NULL,
+        is_active BOOLEAN DEFAULT TRUE NOT NULL,
+        sort_order INT DEFAULT 0 NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+    `);
+
+    // 7.10 Notifications (站内消息与系统公告)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS notifications (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        type VARCHAR(32) DEFAULT 'system' NOT NULL,
+        title VARCHAR(255) NOT NULL,
+        content TEXT NOT NULL,
+        link_url TEXT DEFAULT '',
+        is_read BOOLEAN DEFAULT FALSE NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+    `);
+
+    // 7.11 User Audit Logs (安全审计日志)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS user_audit_logs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        action VARCHAR(64) NOT NULL,
+        target_type VARCHAR(32),
+        target_id VARCHAR(64),
+        ip_address VARCHAR(45) DEFAULT '',
+        user_agent TEXT DEFAULT '',
+        details JSONB DEFAULT '{}'::jsonb,
         created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
       );
     `);
@@ -400,6 +610,12 @@ export async function initDbSchema(): Promise<boolean> {
       CREATE INDEX IF NOT EXISTS idx_nodes_canvas_id ON nodes(canvas_id);
       CREATE INDEX IF NOT EXISTS idx_edges_canvas_id ON edges(canvas_id);
       CREATE INDEX IF NOT EXISTS idx_transactions_user ON credit_transactions(user_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_orders_user_created ON orders(user_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_orders_order_no ON orders(order_no);
+      CREATE INDEX IF NOT EXISTS idx_ai_logs_user ON ai_request_logs(user_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_ai_logs_canvas ON ai_request_logs(canvas_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_nodes_fulltext ON nodes 
+        USING GIN (to_tsvector('simple', COALESCE(title, '') || ' ' || COALESCE(question, '') || ' ' || COALESCE(answer, '') || ' ' || COALESCE(content, '') || ' ' || COALESCE(note, '')));
     `);
 
     // Seed default admin in PG if table is empty
@@ -984,12 +1200,13 @@ export async function subscribeUserPlan(data: {
   userId: string;
   plan: 'weekly' | 'monthly' | 'yearly';
 }): Promise<{ role: 'vip'; vip_expires_at: string; user: UserRecord }> {
-  const daysMap = {
-    weekly: 7,
-    monthly: 30,
-    yearly: 365,
+  const planInfoMap = {
+    weekly: { days: 7, name: 'VIP 体验周卡', amountCents: 1990 },
+    monthly: { days: 30, name: 'VIP 深度月卡', amountCents: 5900 },
+    yearly: { days: 365, name: 'VIP 尊享年卡', amountCents: 39900 },
   };
-  const addDays = daysMap[data.plan] || 30;
+  const planInfo = planInfoMap[data.plan] || planInfoMap.monthly;
+  const addDays = planInfo.days;
 
   let baseTime = Date.now();
   const currentUser = await findUserById(data.userId);
@@ -999,6 +1216,17 @@ export async function subscribeUserPlan(data: {
 
   const newExpiresAt = new Date(baseTime + addDays * 24 * 3600 * 1000).toISOString();
   const p = getPool();
+
+  // Create order log
+  await createOrder({
+    userId: data.userId,
+    planId: data.plan,
+    planName: planInfo.name,
+    amountCents: planInfo.amountCents,
+    durationDays: addDays,
+    paymentMethod: 'online_pay',
+    status: 'paid',
+  });
 
   if (p) {
     try {
@@ -1046,6 +1274,173 @@ export async function subscribeUserPlan(data: {
   memUser.updated_at = new Date().toISOString();
 
   return { role: 'vip', vip_expires_at: newExpiresAt, user: memUser };
+}
+
+/**
+ * Create an order for recharge or VIP subscription
+ */
+export async function createOrder(data: {
+  userId: string;
+  planId: string;
+  planName: string;
+  amountCents: number;
+  durationDays: number;
+  paymentMethod?: string;
+  status?: 'pending' | 'paid' | 'failed' | 'refunded';
+}): Promise<OrderRecord> {
+  const p = getPool();
+  const orderNo = `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+  const now = new Date().toISOString();
+  const status = data.status || 'paid';
+  const paymentMethod = data.paymentMethod || 'online_pay';
+
+  const orderRecord: OrderRecord = {
+    id: `ord_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    order_no: orderNo,
+    user_id: data.userId,
+    plan_id: data.planId,
+    plan_name: data.planName,
+    amount_cents: data.amountCents,
+    currency: 'CNY',
+    status,
+    duration_days: data.durationDays,
+    payment_method: paymentMethod,
+    created_at: now,
+    paid_at: status === 'paid' ? now : null,
+  };
+
+  if (p) {
+    try {
+      await initDbSchema();
+      const res = await p.query(
+        `INSERT INTO orders (order_no, user_id, plan_id, plan_name, amount_cents, currency, status, duration_days, payment_method, created_at, paid_at)
+         VALUES ($1, $2, $3, $4, $5, 'CNY', $6, $7, $8, NOW(), NOW())
+         RETURNING *`,
+        [
+          orderNo,
+          data.userId,
+          data.planId,
+          data.planName,
+          data.amountCents,
+          status,
+          data.durationDays,
+          paymentMethod,
+        ]
+      );
+      if (res.rows.length > 0) {
+        orderRecord.id = res.rows[0].id;
+        orderRecord.created_at = res.rows[0].created_at;
+        orderRecord.paid_at = res.rows[0].paid_at;
+      }
+    } catch (e) {
+      console.warn('PG createOrder failed, fallback to memory:', e);
+    }
+  }
+
+  inMemoryStore.orders = inMemoryStore.orders || [];
+  inMemoryStore.orders.unshift(orderRecord);
+  return orderRecord;
+}
+
+/**
+ * List orders for a user
+ */
+export async function listUserOrders(userId: string): Promise<OrderRecord[]> {
+  const p = getPool();
+  if (p) {
+    try {
+      await initDbSchema();
+      const res = await p.query('SELECT * FROM orders WHERE user_id = $1 ORDER BY created_at DESC', [userId]);
+      return res.rows.map((r) => ({
+        id: r.id,
+        order_no: r.order_no,
+        user_id: r.user_id,
+        plan_id: r.plan_id,
+        plan_name: r.plan_name,
+        amount_cents: r.amount_cents,
+        currency: r.currency,
+        status: r.status,
+        duration_days: r.duration_days,
+        payment_method: r.payment_method,
+        created_at: r.created_at,
+        paid_at: r.paid_at,
+      }));
+    } catch (e) {
+      console.warn('PG listUserOrders failed, using memory:', e);
+    }
+  }
+
+  return (inMemoryStore.orders || []).filter((o) => o.user_id === userId);
+}
+
+/**
+ * Record AI Request Log for auditing & engineering metrics
+ */
+export async function recordAiRequestLog(data: {
+  userId?: string | null;
+  canvasId?: string | null;
+  nodeId?: string | null;
+  modelName: string;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens: number;
+  latencyMs: number;
+  status: 'success' | 'error';
+  errorMessage?: string | null;
+  groundingChunksCount?: number;
+}): Promise<AiRequestLogRecord> {
+  const p = getPool();
+  const now = new Date().toISOString();
+  const log: AiRequestLogRecord = {
+    id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    user_id: data.userId || null,
+    canvas_id: data.canvasId || null,
+    node_id: data.nodeId || null,
+    model_name: data.modelName,
+    prompt_tokens: data.promptTokens || 0,
+    completion_tokens: data.completionTokens || 0,
+    total_tokens: data.totalTokens,
+    latency_ms: data.latencyMs,
+    status: data.status,
+    error_message: data.errorMessage || null,
+    grounding_chunks_count: data.groundingChunksCount || 0,
+    created_at: now,
+  };
+
+  if (p) {
+    try {
+      await p.query(
+        `INSERT INTO ai_request_logs (
+           user_id, canvas_id, node_id, model_name, prompt_tokens,
+           completion_tokens, total_tokens, latency_ms, status, error_message,
+           grounding_chunks_count, created_at
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())`,
+        [
+          data.userId || null,
+          data.canvasId || null,
+          data.nodeId || null,
+          data.modelName,
+          data.promptTokens || 0,
+          data.completionTokens || 0,
+          data.totalTokens,
+          data.latencyMs,
+          data.status,
+          data.errorMessage || null,
+          data.groundingChunksCount || 0,
+        ]
+      );
+    } catch (e) {
+      console.warn('PG recordAiRequestLog failed:', e);
+    }
+  }
+
+  inMemoryStore.aiRequestLogs = inMemoryStore.aiRequestLogs || [];
+  inMemoryStore.aiRequestLogs.unshift(log);
+  if (inMemoryStore.aiRequestLogs.length > 500) {
+    inMemoryStore.aiRequestLogs.pop();
+  }
+  return log;
 }
 
 /**
@@ -1477,18 +1872,25 @@ export async function getCanvas(canvasId: string, userId?: string, isAdmin = fal
 
       const nodes = nRes.rows.map((nr) => ({
         id: nr.id,
-        type: nr.type,
+        type: nr.type || 'chat',
         position: { x: nr.pos_x, y: nr.pos_y },
         data: {
-          title: nr.question || '思考节点',
+          title: nr.title || nr.question || (nr.type === 'note' ? '便签' : '思考节点'),
           depth: nr.depth,
           question: nr.question || '',
           answer: nr.answer || '',
-          noteContent: nr.note || '',
-          status: 'idle',
+          content: nr.content || nr.note || '',
+          noteContent: nr.content || nr.note || '',
+          messages: nr.messages || [],
+          status: nr.status || (nr.answer ? 'idle' : 'suggested'),
           model: nr.model_used || c.default_model,
           parentId: nr.parent_id,
           grounding: nr.grounding,
+          isCollapsed: nr.is_collapsed ?? false,
+          branchTriggerPhrase: nr.branch_trigger_phrase || '',
+          enableWebSearch: nr.enable_web_search ?? true,
+          color: nr.color || '',
+          ...(nr.custom_data || {}),
         },
       }));
 
@@ -1496,7 +1898,11 @@ export async function getCanvas(canvasId: string, userId?: string, isAdmin = fal
         id: er.id,
         source: er.source_id,
         target: er.target_id,
-        type: er.type,
+        sourceHandle: er.source_handle || undefined,
+        targetHandle: er.target_handle || undefined,
+        label: er.label || undefined,
+        animated: er.animated ?? false,
+        type: er.type || 'smoothstep',
       }));
 
       return {
@@ -1598,25 +2004,61 @@ export async function saveCanvas(
       for (const node of data.nodes || []) {
         const d = node.data || {};
         const pos = node.position || { x: 0, y: 0 };
+        const nodeType = node.type || 'chat';
+        const title = d.title || d.question || (nodeType === 'note' ? '便签' : '思考节点');
+        const question = d.question || '';
+        const answer = d.answer || '';
+        const noteText = d.content || d.noteContent || d.note || '';
+        const contentText = d.content || d.noteContent || '';
+        const messages = Array.isArray(d.messages) ? JSON.stringify(d.messages) : '[]';
+        const status = d.status || (answer ? 'idle' : 'suggested');
+        const isCollapsed = Boolean(d.isCollapsed);
+        const branchTriggerPhrase = d.branchTriggerPhrase || '';
+        const enableWebSearch = d.enableWebSearch !== false;
+        const color = d.color || '';
+        const depth = typeof d.depth === 'number' ? d.depth : 0;
+        const modelUsed = d.model || data.defaultModel || 'gemini-3.8-flash';
+        const grounding = d.grounding ? JSON.stringify(d.grounding) : '[]';
+
+        // Extract extra custom data
+        const {
+          title: _t, question: _q, answer: _a, content: _c, noteContent: _nc, note: _n,
+          messages: _m, status: _st, isCollapsed: _ic, branchTriggerPhrase: _btp,
+          enableWebSearch: _ews, color: _col, depth: _dep, model: _mod,
+          grounding: _gr, parentId: _pid,
+          ...customFields
+        } = d;
+
         await client.query(
           `INSERT INTO nodes (
-            id, canvas_id, parent_id, type, question, answer, note,
-            pos_x, pos_y, depth, model_used, grounding, updated_at
+            id, canvas_id, parent_id, type, title, question, answer, note, content,
+            messages, status, pos_x, pos_y, depth, model_used, grounding,
+            is_collapsed, branch_trigger_phrase, enable_web_search, color,
+            custom_data, updated_at
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())`,
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, NOW())`,
           [
             node.id,
             data.id,
             d.parentId || null,
-            node.type || 'question',
-            d.question || d.title || '',
-            d.answer || '',
-            d.noteContent || '',
+            nodeType,
+            title,
+            question,
+            answer,
+            noteText,
+            contentText,
+            messages,
+            status,
             pos.x,
             pos.y,
-            d.depth || 0,
-            d.model || data.defaultModel || 'gemini-3.8-flash',
-            d.grounding ? JSON.stringify(d.grounding) : '[]',
+            depth,
+            modelUsed,
+            grounding,
+            isCollapsed,
+            branchTriggerPhrase,
+            enableWebSearch,
+            color,
+            JSON.stringify(customFields || {}),
           ]
         );
       }
@@ -1625,10 +2067,23 @@ export async function saveCanvas(
       await client.query('DELETE FROM edges WHERE canvas_id = $1', [data.id]);
       for (const edge of data.edges || []) {
         await client.query(
-          `INSERT INTO edges (id, canvas_id, source_id, target_id, type)
-           VALUES ($1, $2, $3, $4, $5)
-           ON CONFLICT (id) DO NOTHING`,
-          [edge.id, data.id, edge.source, edge.target, edge.type || 'smoothstep']
+          `INSERT INTO edges (
+            id, canvas_id, source_id, target_id, source_handle, target_handle,
+            label, animated, type
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          ON CONFLICT (id) DO NOTHING`,
+          [
+            edge.id,
+            data.id,
+            edge.source,
+            edge.target,
+            edge.sourceHandle || null,
+            edge.targetHandle || null,
+            edge.label || null,
+            Boolean(edge.animated),
+            edge.type || 'smoothstep',
+          ]
         );
       }
 

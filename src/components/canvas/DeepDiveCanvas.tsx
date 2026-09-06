@@ -147,8 +147,8 @@ const INITIAL_RAW_EDGES: Edge[] = [
     target: 'sug-init-1',
     type: 'default',
     animated: true,
-    style: { stroke: '#818cf8', strokeWidth: 1.8, strokeDasharray: '4,4' },
-    markerEnd: { type: MarkerType.ArrowClosed, color: '#818cf8' },
+    style: { stroke: '#6366f1', strokeWidth: 1.8, strokeDasharray: '4,4' },
+    markerEnd: { type: MarkerType.ArrowClosed, color: '#6366f1' },
   },
   {
     id: 'e-root-note-1',
@@ -327,8 +327,8 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
           target: sugId,
           type: 'default',
           animated: true,
-          style: { stroke: '#818cf8', strokeWidth: 1.8, strokeDasharray: '4,4' },
-          markerEnd: { type: MarkerType.ArrowClosed, color: '#818cf8' },
+          style: { stroke: '#6366f1', strokeWidth: 1.8, strokeDasharray: '4,4' },
+          markerEnd: { type: MarkerType.ArrowClosed, color: '#6366f1' },
         };
 
         newNodes.push(sugNode);
@@ -664,10 +664,10 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
         source: sourceNodeId,
         target: newId,
         type: 'default',
-        style: { stroke: '#3b82f6', strokeWidth: 2 },
+        style: { stroke: '#6366f1', strokeWidth: 2 },
         markerEnd: {
           type: MarkerType.ArrowClosed,
-          color: '#3b82f6',
+          color: '#6366f1',
         },
       };
 
@@ -720,8 +720,8 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
             return {
               ...e,
               animated: false,
-              style: { stroke: '#3b82f6', strokeWidth: 2 },
-              markerEnd: { type: MarkerType.ArrowClosed, color: '#3b82f6' },
+              style: { stroke: '#6366f1', strokeWidth: 2 },
+              markerEnd: { type: MarkerType.ArrowClosed, color: '#6366f1' },
             };
           }
           return e;
@@ -775,10 +775,10 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
         source: sourceNodeId,
         target: newId,
         type: 'default',
-        style: { stroke: '#3b82f6', strokeWidth: 2 },
+        style: { stroke: '#6366f1', strokeWidth: 2 },
         markerEnd: {
           type: MarkerType.ArrowClosed,
-          color: '#3b82f6',
+          color: '#6366f1',
         },
       };
 
@@ -1335,7 +1335,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       const sourceNode = nodesRef.current.find((n) => n.id === params.source);
       const targetNode = nodesRef.current.find((n) => n.id === params.target);
       const isNoteInvolved = sourceNode?.type === 'note' || targetNode?.type === 'note';
-      const strokeColor = isNoteInvolved ? '#d97706' : '#3b82f6';
+      const strokeColor = isNoteInvolved ? '#d97706' : '#6366f1';
 
       setEdges((eds) =>
         deduplicateEdges(
@@ -1463,30 +1463,30 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
           maxZoom={2.0}
           fitView
           fitViewOptions={{ padding: 0.25 }}
-          className="bg-slate-50/50 dark:bg-[#070b14] transition-colors duration-200"
+          className="bg-[#f8fafc] dark:bg-[#070c18] transition-colors duration-200"
         >
           <Background
             variant={BackgroundVariant.Dots}
-            gap={24}
-            size={1.5}
-            color={theme === 'dark' ? '#334155' : '#cbd5e1'}
+            gap={22}
+            size={1.25}
+            color={theme === 'dark' ? '#1e293b' : '#cbd5e1'}
           />
           <Controls
             position="bottom-left"
             showInteractive={false}
-            className="!bg-white dark:!bg-slate-900 !border !border-slate-200 dark:!border-slate-800 !shadow-lg !rounded-xl overflow-hidden"
+            className="!bg-white/95 dark:!bg-[#0c1322]/95 !border !border-slate-200/90 dark:!border-white/10 !shadow-xl !rounded-2xl overflow-hidden backdrop-blur-md"
           />
           <MiniMap
             position="bottom-right"
             zoomable
             pannable
             nodeColor={(n) => {
-              if (n.type === 'note') return theme === 'dark' ? '#b45309' : '#fde68a';
-              if ((n.data as any)?.status === 'suggested') return theme === 'dark' ? '#4f46e5' : '#c7d2fe';
-              return theme === 'dark' ? '#2563eb' : '#93c5fd';
+              if (n.type === 'note') return theme === 'dark' ? '#d97706' : '#f59e0b';
+              if ((n.data as any)?.status === 'suggested') return theme === 'dark' ? '#6366f1' : '#a5b4fc';
+              return theme === 'dark' ? '#4f46e5' : '#6366f1';
             }}
-            maskColor={theme === 'dark' ? 'rgba(7, 11, 20, 0.75)' : 'rgba(240, 242, 245, 0.7)'}
-            className="!bg-white/90 dark:!bg-slate-900/90 !border !border-slate-200 dark:!border-slate-800 !shadow-lg !rounded-2xl !backdrop-blur-sm"
+            maskColor={theme === 'dark' ? 'rgba(7, 12, 24, 0.78)' : 'rgba(241, 245, 249, 0.75)'}
+            className="!bg-white/95 dark:!bg-[#0c1322]/95 !border !border-slate-200/90 dark:!border-white/10 !shadow-2xl !rounded-2xl !backdrop-blur-md"
           />
         </ReactFlow>
       </NodeActionsContext.Provider>

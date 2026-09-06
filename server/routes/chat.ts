@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { GoogleGenAI } from '@google/genai';
-import { deductCredits, getAiModelConfig } from '../db.js';
+import { deductCredits, getAiModelConfig, recordAiRequestLog } from '../db.js';
 import { authMiddleware, quotaMiddleware, validateInputLimits, roleBasedRateLimiter } from '../middlewares.js';
 
 export const chatRouter = Router();
@@ -99,8 +99,9 @@ chatRouter.post(
   validateInputLimits,
   quotaMiddleware,
   async (req: Request, res: Response) => {
-    const { messages, model, systemInstruction, canvasId } = req.body;
+    const { messages, model, systemInstruction, canvasId, nodeId } = req.body;
     const user = req.user!;
+    const startTime = Date.now();
 
     // Set SSE headers
     res.setHeader('Content-Type', 'text/event-stream');
@@ -224,6 +225,19 @@ chatRouter.post(
           modelName: actualModelUsed,
           tokensConsumed: totalTokensCount,
           actionType: 'ai_chat',
+        });
+
+        await recordAiRequestLog({
+          userId: user.id,
+          canvasId: canvasId || null,
+          nodeId: nodeId || null,
+          modelName: actualModelUsed,
+          promptTokens: promptTokens,
+          completionTokens: responseTokens,
+          totalTokens: totalTokensCount,
+          latencyMs: Date.now() - startTime,
+          status: 'success',
+          groundingChunksCount: 0,
         });
 
         // Send final done event
@@ -385,14 +399,17 @@ chatRouter.post(
             }
 
             // Accurate token calculation if not returned by usageMetadata
+            let promptTokens = 0;
+            let responseTokens = Math.ceil(accumulatedResponseText.length / 2.5);
             if (!totalTokensCount || totalTokensCount <= 0) {
               const promptChars = contents.reduce(
                 (acc: number, c: any) => acc + (c.parts?.[0]?.text?.length || 0),
                 0
               );
-              const promptTokens = Math.ceil(promptChars / 3.5);
-              const responseTokens = Math.ceil(accumulatedResponseText.length / 2.5);
+              promptTokens = Math.ceil(promptChars / 3.5);
               totalTokensCount = Math.max(120, promptTokens + responseTokens);
+            } else {
+              promptTokens = Math.max(0, totalTokensCount - responseTokens);
             }
 
             // Execute post-inference token deduction and audit logging
@@ -402,6 +419,19 @@ chatRouter.post(
               modelName: actualModelUsed,
               tokensConsumed: totalTokensCount,
               actionType: 'ai_chat',
+            });
+
+            await recordAiRequestLog({
+              userId: user.id,
+              canvasId: canvasId || null,
+              nodeId: nodeId || null,
+              modelName: actualModelUsed,
+              promptTokens: promptTokens,
+              completionTokens: responseTokens,
+              totalTokens: totalTokensCount,
+              latencyMs: Date.now() - startTime,
+              status: 'success',
+              groundingChunksCount: accumulatedSources.length,
             });
 
             // Send final done event with full grounding, token consumption and updated balance
@@ -489,6 +519,23 @@ chatRouter.post(
     } catch (error: unknown) {
       console.error('Chat API Error:', error);
       const friendlyMsg = cleanErrorMessage(error);
+      try {
+        await recordAiRequestLog({
+          userId: user?.id || null,
+          canvasId: canvasId || null,
+          nodeId: nodeId || null,
+          modelName: typeof model === 'string' ? model : 'gemini-3.8-flash',
+          promptTokens: 0,
+          completionTokens: 0,
+          totalTokens: 0,
+          latencyMs: Date.now() - startTime,
+          status: 'error',
+          errorMessage: friendlyMsg,
+          groundingChunksCount: 0,
+        });
+      } catch (logErr) {
+        // ignore log error
+      }
       res.write(
         `data: ${JSON.stringify({
           error: friendlyMsg,

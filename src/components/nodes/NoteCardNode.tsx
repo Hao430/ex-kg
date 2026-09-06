@@ -66,10 +66,10 @@ export const NoteCardNode: React.FC<NodeProps> = ({ id, data, selected }) => {
     <div
       onKeyDown={handleKeyDown}
       tabIndex={0}
-      className={`relative w-[320px] rounded-2xl border bg-amber-50/90 dark:bg-[#1a160d]/95 backdrop-blur-xs p-4 shadow-lg transition-all duration-200 cursor-grab active:cursor-grabbing focus:outline-none ${
+      className={`relative w-[320px] rounded-2xl border bg-amber-50/70 dark:bg-[#15110a]/90 backdrop-blur-xl p-4 shadow-[0_8px_30px_rgba(217,119,6,0.08)] dark:shadow-[0_12px_36px_rgba(0,0,0,0.55)] transition-all duration-200 cursor-grab active:cursor-grabbing focus:outline-none ${
         selected
-          ? 'border-amber-500 ring-4 ring-amber-400/30 dark:ring-amber-500/20 shadow-amber-500/20'
-          : 'border-amber-200/90 dark:border-amber-900/60 shadow-slate-200/50 dark:shadow-black/50 hover:border-amber-400 dark:hover:border-amber-600'
+          ? 'border-amber-500 ring-4 ring-amber-500/20 dark:ring-amber-500/30 shadow-[0_12px_36px_rgba(217,119,6,0.22)]'
+          : 'border-amber-200/80 dark:border-amber-900/40 hover:border-amber-300 dark:hover:border-amber-700/60'
       }`}
     >
       {renderWarning && (
@@ -84,14 +84,16 @@ export const NoteCardNode: React.FC<NodeProps> = ({ id, data, selected }) => {
         position={Position.Left}
         id="in"
         title="【结论下游】接收来自上游卡片的推导或结论连线"
-        className="!w-4 !h-4 !bg-amber-500 !border-2 !border-white dark:!border-slate-900 !-left-[8px] !z-20 transition-all hover:!scale-150 hover:!bg-amber-600 shadow-sm cursor-crosshair"
+        className="!w-3.5 !h-3.5 !bg-white dark:!bg-[#15110a] !border-2 !border-amber-500 dark:!border-amber-400 !-left-[7px] !z-20 transition-all hover:!scale-125 shadow-xs cursor-crosshair"
       />
 
       {/* Header with Grip & Drag indication */}
-      <div className="flex items-center justify-between pb-2 border-b border-amber-200/70 dark:border-amber-900/60 mb-2 select-none">
+      <div className="flex items-center justify-between pb-2.5 border-b border-amber-200/70 dark:border-amber-900/50 mb-2.5 select-none">
         <div className="flex items-center gap-1.5 flex-1 min-w-0 mr-2">
           <GripVertical className="w-3.5 h-3.5 text-amber-400/80 dark:text-amber-600 shrink-0" />
-          <StickyNote className="w-3.5 h-3.5 text-amber-700 dark:text-amber-400 shrink-0" />
+          <span className="flex items-center justify-center w-5 h-5 rounded-md bg-amber-500/15 text-amber-700 dark:text-amber-400 shrink-0">
+            <StickyNote className="w-3 h-3" />
+          </span>
           <input
             type="text"
             value={title}
@@ -109,7 +111,7 @@ export const NoteCardNode: React.FC<NodeProps> = ({ id, data, selected }) => {
                 e.stopPropagation();
                 handleAddNextNote();
               }}
-              className="nodrag p-1 text-amber-700 dark:text-amber-400 hover:text-amber-900 dark:hover:text-amber-200 hover:bg-amber-200/60 dark:hover:bg-amber-900/50 rounded transition-colors cursor-pointer"
+              className="nodrag p-1 text-amber-700 dark:text-amber-400 hover:text-amber-950 dark:hover:text-amber-200 hover:bg-amber-200/60 dark:hover:bg-amber-900/50 rounded-lg transition-colors cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5" />
             </button>
@@ -121,7 +123,7 @@ export const NoteCardNode: React.FC<NodeProps> = ({ id, data, selected }) => {
                 e.stopPropagation();
                 handleDelete();
               }}
-              className="nodrag p-1 text-amber-600 dark:text-amber-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-amber-200/60 dark:hover:bg-amber-900/50 rounded transition-colors cursor-pointer"
+              className="nodrag p-1 text-amber-600 dark:text-amber-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-amber-200/60 dark:hover:bg-amber-900/50 rounded-lg transition-colors cursor-pointer"
             >
               <Trash2 className="w-3.5 h-3.5" />
             </button>
@@ -142,7 +144,7 @@ export const NoteCardNode: React.FC<NodeProps> = ({ id, data, selected }) => {
       />
 
       {/* Bottom Guidance & Branch Action Bar */}
-      <div className="mt-2 pt-2 border-t border-amber-200/60 dark:border-amber-900/50 flex items-center justify-between text-[10px] text-amber-800/80 dark:text-amber-400/80 select-none">
+      <div className="mt-2.5 pt-2 border-t border-amber-200/60 dark:border-amber-900/50 flex items-center justify-between text-[10px] text-amber-800/80 dark:text-amber-400/80 select-none">
         <Tooltip content="左侧连线端点：作为上游结论的落脚点" side="bottom">
           <span className="flex items-center gap-1 text-[9px] text-amber-700/70 dark:text-amber-400/70 font-mono tracking-tight cursor-help">
             <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block" />
@@ -157,11 +159,11 @@ export const NoteCardNode: React.FC<NodeProps> = ({ id, data, selected }) => {
               e.stopPropagation();
               handleBranch();
             }}
-            className="nodrag flex items-center gap-1 px-2 py-1 rounded-md bg-amber-200/80 dark:bg-amber-900/60 hover:bg-amber-300/90 dark:hover:bg-amber-800/80 text-amber-900 dark:text-amber-200 font-medium transition-colors shadow-2xs group cursor-pointer"
+            className="nodrag flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/15 dark:bg-amber-500/20 hover:bg-amber-500/25 border border-amber-500/30 text-amber-900 dark:text-amber-200 font-semibold transition-all shadow-2xs group cursor-pointer"
           >
-            <Sparkles className="w-2.5 h-2.5 text-amber-700 dark:text-amber-300 group-hover:text-amber-900 dark:group-hover:text-amber-100" />
+            <Sparkles className="w-3 h-3 text-amber-700 dark:text-amber-300 group-hover:text-amber-900 dark:group-hover:text-amber-100" />
             <span>以此假设探索</span>
-            <ArrowRight className="w-2.5 h-2.5 text-amber-700 dark:text-amber-300 group-hover:translate-x-0.5 transition-transform" />
+            <ArrowRight className="w-3 h-3 text-amber-700 dark:text-amber-300 group-hover:translate-x-0.5 transition-transform" />
           </button>
         </Tooltip>
 
@@ -179,7 +181,7 @@ export const NoteCardNode: React.FC<NodeProps> = ({ id, data, selected }) => {
         position={Position.Right}
         id="out"
         title="【前置假设】按住拖拽连线至后续便签或 AI 探索卡片"
-        className="!w-4 !h-4 !bg-amber-500 !border-2 !border-white dark:!border-slate-900 !-right-[8px] !z-20 transition-all hover:!scale-150 hover:!bg-amber-600 shadow-sm cursor-crosshair"
+        className="!w-3.5 !h-3.5 !bg-white dark:!bg-[#15110a] !border-2 !border-amber-500 dark:!border-amber-400 !-right-[7px] !z-20 transition-all hover:!scale-125 shadow-xs cursor-crosshair"
       />
     </div>
   );
