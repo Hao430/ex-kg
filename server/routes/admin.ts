@@ -9,6 +9,7 @@ import {
   getMaskedModelConfig,
   resolveConfigForSave,
   saveAiModelConfig,
+  listAllOrders,
 } from '../services/admin.service.js';
 import { getAiModelConfig } from '../services/ai.service.js';
 import { asyncHandler } from '../lib/async-handler.js';
@@ -43,6 +44,26 @@ adminRouter.get('/users', asyncHandler(async (req: Request, res: Response) => {
   const status = typeof req.query.status === 'string' ? req.query.status : undefined;
 
   const result = await listAdminUsers({ page, limit, search, role, status });
+  res.json({
+    success: true,
+    ...result,
+    page,
+    limit,
+  });
+}));
+
+/**
+ * GET /api/admin/orders
+ * Paginated order list (Spec E3) with optional status filter
+ */
+adminRouter.get('/orders', asyncHandler(async (req: Request, res: Response) => {
+  const page = parseInt(req.query.page as string, 10) || 1;
+  const limit = parseInt(req.query.limit as string, 10) || 10;
+  // 'all'（前端默认视图）归一为不过滤（审计修复：High-2）
+  const rawStatus = typeof req.query.status === 'string' ? req.query.status : '';
+  const status = rawStatus && rawStatus !== 'all' ? rawStatus : undefined;
+
+  const result = await listAllOrders({ page, limit, status });
   res.json({
     success: true,
     ...result,
@@ -131,6 +152,7 @@ const ModelConfigSchema = z.object({
   temperature: z.number().min(0).max(2).optional().default(0.7),
   max_tokens: z.number().min(100).max(32000).optional().default(4096),
   custom_system_prompt: z.string().optional().default(''),
+  vip_only_models: z.array(z.string()).optional(),
 });
 
 adminRouter.put('/model-config', asyncHandler(async (req: Request, res: Response) => {

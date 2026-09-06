@@ -106,6 +106,8 @@ export interface AiModelConfig {
   temperature: number;
   max_tokens: number;
   custom_system_prompt?: string;
+  /** Spec E4：仅 VIP/Admin 可调用的模型白名单（体验版/过期 VIP 请求命中 → 403 MODEL_VIP_ONLY） */
+  vip_only_models?: string[];
   updated_at?: string;
   updated_by?: string;
 }

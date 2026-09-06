@@ -12,6 +12,7 @@ export {
   getAdminOverview,
 } from '../repositories/admin.repository.js';
 export { updateUserStatus } from '../repositories/user.repository.js';
+export { listAllOrders } from '../repositories/billing.repository.js';
 
 export type AdminOverview = Awaited<ReturnType<typeof getAdminOverview>>;
 

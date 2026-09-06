@@ -84,6 +84,7 @@ function mapRowToOrder(r: any): OrderRecord {
     payment_method: r.payment_method,
     created_at: r.created_at,
     paid_at: r.paid_at,
+    user_email: r.user_email || undefined,
   };
 }
 
@@ -103,6 +104,58 @@ export async function listUserOrders(userId: string): Promise<OrderRecord[]> {
   }
 
   return inMemoryStore.orders.filter((o) => o.user_id === userId);
+}
+
+/**
+ * List all orders (admin, Spec E3): paginated, optional status filter, user_email joined
+ */
+export async function listAllOrders(params: {
+  page?: number;
+  limit?: number;
+  status?: string;
+}): Promise<{ orders: OrderRecord[]; total: number }> {
+  const page = Math.max(1, Math.floor(params.page ?? 1));
+  const limit = Math.min(100, Math.max(1, Math.floor(params.limit ?? 10)));
+  const offset = (page - 1) * limit;
+  const p = getPool();
+  if (p) {
+    try {
+      await initDbSchema();
+      const where = params.status ? 'WHERE o.status = $1' : '';
+      const values = params.status ? [params.status] : [];
+      const countRes = await p.query(
+        `SELECT COUNT(*)::int AS count FROM orders o ${where}`,
+        values
+      );
+      const dataRes = await p.query(
+        `SELECT o.*, u.email AS user_email
+         FROM orders o
+         LEFT JOIN users u ON u.id = o.user_id
+         ${where}
+         ORDER BY o.created_at DESC
+         LIMIT ${limit} OFFSET ${offset}`,
+        values
+      );
+      return {
+        orders: dataRes.rows.map(mapRowToOrder),
+        total: countRes.rows[0]?.count ?? 0,
+      };
+    } catch (e) {
+      console.warn('PG listAllOrders failed, using memory:', e);
+    }
+  }
+
+  const filtered = params.status
+    ? inMemoryStore.orders.filter((o) => o.status === params.status)
+    : inMemoryStore.orders;
+  const sorted = [...filtered].sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  );
+  const orders = sorted.slice(offset, offset + limit).map((o) => ({
+    ...o,
+    user_email: inMemoryStore.users.get(o.user_id)?.email,
+  }));
+  return { orders, total: filtered.length };
 }
 
 /**
