@@ -8,7 +8,7 @@ import { asyncHandler } from '../lib/async-handler.js';
 import { validate } from '../lib/validate.js';
 import { effectiveEntitlements } from '../services/quota.service.js';
 import type { Response as ExpressResponse } from 'express';
-import { authMiddleware, loginRateLimiter } from '../middleware/auth.js';
+import { authMiddleware, loginRateLimiter, signupRateLimiter } from '../middleware/auth.js';
 
 export const authRouter = Router();
 
@@ -78,7 +78,7 @@ function publicUser(user: {
  * POST /api/auth/sign-up
  * Register a new user & auto session cookie
  */
-authRouter.post('/sign-up', asyncHandler(async (req: Request, res: Response) => {
+authRouter.post('/sign-up', signupRateLimiter, asyncHandler(async (req: Request, res: Response) => {
   const { email, password, name } = validate(SignUpSchema, req.body);
   const { user, token } = await signUp({
     email,

@@ -29,6 +29,21 @@ export const loginRateLimiter = rateLimit({
 });
 
 /**
+ * Rate limiter for sign-up: 5 req/hour per IP（Spec D1，防批量注册刷取体验额度）
+ */
+export const signupRateLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => ipKeyGenerator(req.ip || 'anonymous'),
+  message: {
+    error: '注册过于频繁，请 1 小时后重试',
+    code: 'RATE_LIMIT_EXCEEDED',
+  },
+});
+
+/**
  * Extract token from Cookie or Bearer header
  */
 export function extractToken(req: Request): string | null {
