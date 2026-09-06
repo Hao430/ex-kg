@@ -106,7 +106,7 @@ authRouter.post('/sign-up', signupRateLimiter, asyncHandler(async (req: Request,
 
   res.status(201).json({
     success: true,
-    message: '注册成功，欢迎加入 DeepDive！',
+    message: '注册成功，欢迎加入 枝想！',
     user: publicUser(user),
     token,
   });

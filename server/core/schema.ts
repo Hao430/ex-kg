@@ -26,7 +26,7 @@ export async function initDbSchema(): Promise<boolean> {
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        email VARCHAR(255) UNIQUE NOT NULL,
+        email VARCHAR(255) NOT NULL, -- 唯一性由下方 partial 索引保证（仅约束未注销用户，Spec F4）
         password_hash VARCHAR(255) NOT NULL,
         name VARCHAR(100) DEFAULT '' NOT NULL,
         avatar TEXT,
@@ -72,7 +72,7 @@ export async function initDbSchema(): Promise<boolean> {
         user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         title VARCHAR(255) DEFAULT '新建思维画布' NOT NULL,
         description TEXT DEFAULT '',
-        default_model VARCHAR(64) DEFAULT 'gemini-3.8-flash' NOT NULL,
+        default_model VARCHAR(64) DEFAULT '' NOT NULL, -- 默认模型由管理后台配置（ai_model_config），存列仅作画布级元数据
         viewport_x DOUBLE PRECISION DEFAULT 0.0 NOT NULL,
         viewport_y DOUBLE PRECISION DEFAULT 0.0 NOT NULL,
         viewport_zoom DOUBLE PRECISION DEFAULT 1.0 NOT NULL,
@@ -112,7 +112,7 @@ export async function initDbSchema(): Promise<boolean> {
         height INT DEFAULT 320 NOT NULL,
         depth INT DEFAULT 0 NOT NULL,
         parent_id VARCHAR(64) REFERENCES nodes(id) ON DELETE SET NULL,
-        model_used VARCHAR(64) DEFAULT 'gemini-3.8-flash',
+        model_used VARCHAR(64) DEFAULT '', -- 默认模型由管理后台配置（ai_model_config），存列仅作节点级元数据
         grounding JSONB DEFAULT '[]'::jsonb,
         is_collapsed BOOLEAN DEFAULT FALSE NOT NULL,
         is_pinned BOOLEAN DEFAULT FALSE NOT NULL,
@@ -379,28 +379,54 @@ export async function initDbSchema(): Promise<boolean> {
       // 同邮箱可在注销（deleted_at 非空）后以新账号新 id 重新注册（数据所有权隔离）
       await client.query(`DROP INDEX IF EXISTS idx_users_email;`);
       await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE deleted_at IS NULL;`);
-      await client.query(`CREATE INDEX IF NOT EXISTS idx_users_verify_token ON users(verify_token);`);
-      await client.query(`CREATE INDEX IF NOT EXISTS idx_users_reset_token ON users(reset_token);`);
-      await client.query(`CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);`);
+      // 存量库迁移：删除旧版内联 UNIQUE 产生的全行唯一约束（会无视 deleted_at 阻断同邮箱重注册）
+      await client.query(`ALTER TABLE users DROP CONSTRAINT IF EXISTS users_email_key;`);
+      // 令牌为稀疏列，partial 索引缩小体积（重建替换旧的全量索引）
+      await client.query(`DROP INDEX IF EXISTS idx_users_verify_token;`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_users_verify_token ON users(verify_token) WHERE verify_token IS NOT NULL;`);
+      await client.query(`DROP INDEX IF EXISTS idx_users_reset_token;`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_users_reset_token ON users(reset_token) WHERE reset_token IS NOT NULL;`);
+      // token/order_no/share_code 已有内联 UNIQUE 约束自带的唯一索引，去除冗余普通索引（纯写放大）
+      await client.query(`DROP INDEX IF EXISTS idx_sessions_token;`);
+      await client.query(`DROP INDEX IF EXISTS idx_orders_order_no;`);
+      await client.query(`DROP INDEX IF EXISTS idx_canvas_shares_code;`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_sessions_user_expire ON sessions(user_id, expires_at);`);
       await client.query(`CREATE INDEX IF NOT EXISTS idx_nodes_parent_id ON nodes(parent_id);`);
-      await client.query(`CREATE INDEX IF NOT EXISTS idx_canvas_shares_code ON canvas_shares(share_code);`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_nodes_depth ON nodes(canvas_id, depth);`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_edges_source_target ON edges(source_id, target_id);`);
       await client.query(`CREATE INDEX IF NOT EXISTS idx_canvas_snapshots_canvas ON canvas_snapshots(canvas_id, created_at DESC);`);
+      // 审计与通知高频查询路径（对齐 docs 建表脚本）
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_user_audit_user_action ON user_audit_logs(user_id, action, created_at DESC);`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications(user_id, is_read, created_at DESC);`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_feedbacks_status ON feedbacks(status, created_at DESC);`);
 
     await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_canvases_user_updated ON canvases(user_id, updated_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_nodes_canvas_id ON nodes(canvas_id);
+      -- 软删画布/节点高频查询改为 partial 索引（重建替换旧的全量索引）
+      DROP INDEX IF EXISTS idx_canvases_user_updated;
+      CREATE INDEX IF NOT EXISTS idx_canvases_user_updated ON canvases(user_id, updated_at DESC) WHERE deleted_at IS NULL;
+      DROP INDEX IF EXISTS idx_nodes_canvas_id;
+      CREATE INDEX IF NOT EXISTS idx_nodes_canvas_id ON nodes(canvas_id) WHERE deleted_at IS NULL;
       CREATE INDEX IF NOT EXISTS idx_edges_canvas_id ON edges(canvas_id);
       CREATE INDEX IF NOT EXISTS idx_orders_user_created ON orders(user_id, created_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_orders_order_no ON orders(order_no);
       CREATE INDEX IF NOT EXISTS idx_ai_logs_user ON ai_request_logs(user_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_ai_logs_canvas ON ai_request_logs(canvas_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_nodes_fulltext ON nodes
         USING GIN (to_tsvector('simple', COALESCE(title, '') || ' ' || COALESCE(question, '') || ' ' || COALESCE(answer, '') || ' ' || COALESCE(content, '') || ' ' || COALESCE(note, '')));
     `);
 
+    // BRIN 时间索引：日志表为追加型，供按 created_at 范围的清理任务使用，避免每 24h 全表扫描
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_ai_logs_created_brin ON ai_request_logs USING BRIN(created_at);`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_audit_created_brin ON user_audit_logs USING BRIN(created_at);`);
+
     // C 组清理迁移：点数体系已下线，删除历史遗留列与流水表
     await client.query(`ALTER TABLE users DROP COLUMN IF EXISTS credits_balance;`);
     await client.query(`DROP TABLE IF EXISTS credit_transactions;`);
+
+    // 模型默认值中性化迁移：默认模型唯一来源为管理后台配置（ai_model_config），
+    // 存量库同步将列默认值改为空串（写入路径始终显式赋值，此处仅口径对齐）
+    await client.query(`ALTER TABLE canvases ALTER COLUMN default_model SET DEFAULT '';`);
+    await client.query(`ALTER TABLE nodes ALTER COLUMN model_used SET DEFAULT '';`);
 
     // Seed default admin in PG if table is empty
     const usersCountRes = await client.query('SELECT COUNT(*) as count FROM users');

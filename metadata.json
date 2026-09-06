@@ -1,6 +1,6 @@
 {
-  "name": "DeepDive",
-  "description": "DeepDive - 无限画布式 AI 深度思维与分支探索认知平台",
+  "name": "枝想",
+  "description": "枝想 - 无限画布式 AI 深度思维与分支探索认知平台",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

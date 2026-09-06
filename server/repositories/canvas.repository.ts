@@ -258,7 +258,7 @@ export async function saveCanvas(
           vp.x,
           vp.y,
           vp.zoom,
-          data.defaultModel || 'gemini-3.8-flash',
+          data.defaultModel || '',
         ]
       );
 
@@ -281,7 +281,7 @@ export async function saveCanvas(
         const enableWebSearch = d.enableWebSearch !== false;
         const color = d.color || '';
         const depth = typeof d.depth === 'number' ? d.depth : 0;
-        const modelUsed = d.model || data.defaultModel || 'gemini-3.8-flash';
+        const modelUsed = d.model || data.defaultModel || '';
         const grounding = d.grounding ? JSON.stringify(d.grounding) : '[]';
 
         // Extract extra custom data
@@ -376,7 +376,7 @@ export async function saveCanvas(
         title: data.title,
         description: data.description,
         viewport: vp,
-        defaultModel: data.defaultModel || 'gemini-3.8-flash',
+        defaultModel: data.defaultModel || '',
         enableWebSearch: data.enableWebSearch ?? true,
         createdAt: new Date(upsertRes.rows[0].created_at).toISOString(),
         updatedAt: new Date(upsertRes.rows[0].updated_at).toISOString(),
@@ -416,7 +416,7 @@ export async function saveCanvas(
     title: data.title,
     description: data.description,
     viewport: vp,
-    defaultModel: data.defaultModel || 'gemini-3.8-flash',
+    defaultModel: data.defaultModel || '',
     enableWebSearch: data.enableWebSearch ?? true,
     createdAt: existing?.createdAt || now,
     updatedAt: now,

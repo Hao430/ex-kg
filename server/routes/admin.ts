@@ -192,7 +192,7 @@ const ModelConfigSchema = z.object({
   openai_base_url: z.string().optional().default('https://api.openai.com/v1'),
   openai_api_key: z.string().optional().default(''),
   openai_model: z.string().min(1, '请输入有效的模型名称'),
-  gemini_model: z.string().optional().default('gemini-3.8-flash'),
+  gemini_model: z.string().optional(), // 必须由管理员显式选择保存，不注入默认值（模型唯一来源是后台配置）
   temperature: z.number().min(0).max(2).optional().default(0.7),
   max_tokens: z.number().min(100).max(32000).optional().default(4096),
   custom_system_prompt: z.string().optional().default(''),
@@ -242,7 +242,7 @@ adminRouter.post('/model-config/test', async (req: Request, res: Response) => {
         return;
       }
 
-      const model = openai_model || currentConfig.openai_model || 'deepseek-chat';
+      const model = openai_model || currentConfig.openai_model;
       const endpoint = `${baseUrl}/chat/completions`;
 
       const response = await fetch(endpoint, {
@@ -255,7 +255,7 @@ adminRouter.post('/model-config/test', async (req: Request, res: Response) => {
           model,
           messages: [
             { role: 'system', content: 'You are a test assistant.' },
-            { role: 'user', content: 'Ping: Please reply with "DeepDive OpenAI Integration OK!" in 10 words.' },
+            { role: 'user', content: 'Ping: Please reply with "Arborize OpenAI Integration OK!" in 10 words.' },
           ],
           max_tokens: 50,
           temperature: 0.3,
@@ -300,10 +300,14 @@ adminRouter.post('/model-config/test', async (req: Request, res: Response) => {
         return;
       }
       const ai = new GoogleGenAI({ apiKey });
-      const model = gemini_model || 'gemini-3.8-flash';
+      const model = gemini_model || currentConfig.gemini_model;
+      if (!model || !model.trim()) {
+        res.status(400).json({ error: '请先选择要测试的 Gemini 模型并保存配置', code: 'MODEL_NOT_CONFIGURED' });
+        return;
+      }
       const result = await ai.models.generateContent({
         model,
-        contents: 'Ping: Please reply with "DeepDive Gemini Integration OK!" in 10 words.',
+        contents: 'Ping: Please reply with "Arborize Gemini Integration OK!" in 10 words.',
       });
       const latencyMs = Date.now() - startTime;
       res.json({

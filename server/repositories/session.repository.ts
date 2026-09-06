@@ -137,3 +137,30 @@ export async function deleteUserSessions(userId: string): Promise<number> {
   }
   return count;
 }
+
+/**
+ * 清理已过期会话（供 F6 清理任务调用）：过期的会话此前仅在登出/硬删级联时移除，
+ * 正常过期行会永久堆积。PG 与内存兜底都清理，返回清理条数。
+ */
+export async function cleanupExpiredSessions(): Promise<number> {
+  let count = 0;
+  const p = getPool();
+  if (p) {
+    try {
+      await initDbSchema();
+      const res = await p.query('DELETE FROM sessions WHERE expires_at < NOW()');
+      count = res.rowCount || 0;
+    } catch (e) {
+      console.warn('PG cleanupExpiredSessions failed, falling back to memory only:', e);
+    }
+  }
+
+  const now = Date.now();
+  for (const [token, s] of inMemoryStore.sessions.entries()) {
+    if (new Date(s.expires_at).getTime() < now) {
+      inMemoryStore.sessions.delete(token);
+      count++;
+    }
+  }
+  return count;
+}

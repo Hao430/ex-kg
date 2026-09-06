@@ -8,6 +8,7 @@
 import { cleanupOldAiLogs } from '../repositories/ai.repository.js';
 import { cleanupOldAuditLogs } from '../repositories/audit.repository.js';
 import { cleanupDeletedUsers } from '../repositories/user.repository.js';
+import { cleanupExpiredSessions } from '../repositories/session.repository.js';
 
 const DAY_MS = 24 * 3600 * 1000;
 
@@ -21,8 +22,9 @@ export function startLogCleanupJob(): void {
       const ai = await cleanupOldAiLogs(aiRetention);
       const audit = await cleanupOldAuditLogs(auditRetention);
       const deletedUsers = await cleanupDeletedUsers(deletedUserRetention);
-      if (ai > 0 || audit > 0 || deletedUsers > 0) {
-        console.log(`[log-cleanup] 清理完成：ai_request_logs ${ai} 条、user_audit_logs ${audit} 条、已注销用户硬删 ${deletedUsers} 个`);
+      const expiredSessions = await cleanupExpiredSessions();
+      if (ai > 0 || audit > 0 || deletedUsers > 0 || expiredSessions > 0) {
+        console.log(`[log-cleanup] 清理完成：ai_request_logs ${ai} 条、user_audit_logs ${audit} 条、已注销用户硬删 ${deletedUsers} 个、过期会话 ${expiredSessions} 条`);
       }
     } catch (e) {
       console.warn('[log-cleanup] 清理失败（下个周期重试）:', e);

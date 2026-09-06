@@ -4,9 +4,10 @@ import {
   listAdminUsers,
   getAdminOverview,
 } from '../repositories/admin.repository.js';
-import { getAiModelConfig, saveAiModelConfig as repoSaveAiModelConfig } from '../repositories/ai.repository.js';
+import { getAiModelConfig, getSavedAiModelConfig, saveAiModelConfig as repoSaveAiModelConfig } from '../repositories/ai.repository.js';
 import { recordAuditLog, listAuditLogs } from '../repositories/audit.repository.js';
 import { NotFoundError } from '../lib/errors.js';
+import { DEFAULT_AI_MODEL_CONFIG } from '../core/records.js';
 import type { AiModelConfig, UserRecord } from '../core/records.js';
 
 export {
@@ -131,7 +132,10 @@ export async function grantUserVipDays(data: {
  * GET /model-config 用的掩码视图（密钥脱敏）
  */
 export async function getMaskedModelConfig(): Promise<AiModelConfig & { has_openai_key: boolean }> {
-  const config = await getAiModelConfig();
+  // 基于管理员原始保存值构建掩码视图（而非合并内置默认）：
+  // gemini_model 未选择时为空串，前端显示「请选择模型」，保证模型唯一来源是后台配置
+  const saved = await getSavedAiModelConfig();
+  const config = { ...DEFAULT_AI_MODEL_CONFIG, gemini_model: '', ...saved } as AiModelConfig;
   const hasKey = Boolean(config.openai_api_key && config.openai_api_key.trim().length > 0);
   const maskedKey = hasKey
     ? config.openai_api_key.length > 8

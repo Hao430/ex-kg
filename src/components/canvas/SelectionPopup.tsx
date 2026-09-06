@@ -46,7 +46,7 @@ export const SelectionPopup: React.FC<SelectionPopupProps> = ({
           <span className="flex items-center justify-center w-4 h-4 rounded-full bg-blue-500/30 text-blue-400 group-hover:bg-white/20 group-hover:text-white transition-colors">
             <Sparkles className="w-2.5 h-2.5" />
           </span>
-          <span>深入探究 (DeepDive)</span>
+          <span>深入探究 (Arborize)</span>
           <GitBranch className="w-3 h-3 text-slate-400 group-hover:text-white" />
         </button>
       </div>

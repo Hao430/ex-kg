@@ -100,6 +100,28 @@ export async function getAiModelConfig(): Promise<AiModelConfig> {
 }
 
 /**
+ * 读取管理员保存的原始模型配置（不与 DEFAULT_AI_MODEL_CONFIG 合并）。
+ * 返回 null 表示管理员从未保存过配置——用于「模型未配置则拒绝推理」校验，
+ * 保证默认模型的唯一来源是管理后台，而非代码内硬编码兜底。
+ */
+export async function getSavedAiModelConfig(): Promise<Partial<AiModelConfig> | null> {
+  const pool = getPool();
+  if (pool) {
+    try {
+      await initDbSchema();
+      const res = await pool.query('SELECT value FROM system_settings WHERE key = $1', ['ai_model_config']);
+      if (res.rows.length > 0) {
+        return res.rows[0].value as Partial<AiModelConfig>;
+      }
+    } catch (err) {
+      console.error('Failed to get raw ai_model_config from DB:', err);
+    }
+  }
+  const cached = inMemoryStore.systemSettings.get('ai_model_config');
+  return cached ? { ...cached } as Partial<AiModelConfig> : null;
+}
+
+/**
  * Save or update system AI Model & API Provider configuration
  */
 export async function saveAiModelConfig(config: Partial<AiModelConfig>, operatorEmail?: string): Promise<AiModelConfig> {

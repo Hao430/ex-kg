@@ -120,7 +120,7 @@ export const Topbar: React.FC<TopbarProps> = ({
               <Compass className="w-4 h-4 text-white" />
             </div>
             <span className="font-bold text-slate-850 dark:text-slate-100 text-sm tracking-tight hidden sm:inline group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
-              DeepDive<span className="text-indigo-600 dark:text-indigo-400 font-semibold">.ai</span>
+              枝想<span className="text-indigo-600 dark:text-indigo-400 font-semibold">Arborize</span>
             </span>
           </button>
         </Tooltip>

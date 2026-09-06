@@ -46,9 +46,9 @@ const isDryRun = (transporter.options as { jsonTransport?: boolean }).jsonTransp
  * 发送邮箱验证邮件。发信失败仅 console.warn，不向上抛（不阻塞注册/重发主流程）。
  */
 export async function sendVerificationEmail(to: string, verifyUrl: string): Promise<void> {
-  const subject = 'DeepDive 邮箱验证';
-  const text = `欢迎加入 DeepDive！请点击以下链接完成邮箱验证（24 小时内有效）：\n${verifyUrl}`;
-  const html = `<p>欢迎加入 DeepDive！</p><p>请点击以下链接完成邮箱验证（24 小时内有效）：</p><p><a href="${verifyUrl}">${verifyUrl}</a></p>`;
+  const subject = '枝想 邮箱验证';
+  const text = `欢迎加入 枝想！请点击以下链接完成邮箱验证（24 小时内有效）：\n${verifyUrl}`;
+  const html = `<p>欢迎加入 枝想！</p><p>请点击以下链接完成邮箱验证（24 小时内有效）：</p><p><a href="${verifyUrl}">${verifyUrl}</a></p>`;
 
   try {
     if (isDryRun) {
@@ -75,9 +75,9 @@ export async function sendVerificationEmail(to: string, verifyUrl: string): Prom
  * Spec F1：发送找回密码邮件（链接 1h 有效）。干跑/发信失败处理同验证邮件。
  */
 export async function sendPasswordResetEmail(to: string, resetUrl: string): Promise<void> {
-  const subject = 'DeepDive 重置密码';
-  const text = `您正在重置 DeepDive 账号密码。请点击以下链接设置新密码（1 小时内有效）：\n${resetUrl}\n\n如非本人操作，请忽略此邮件。`;
-  const html = `<p>您正在重置 DeepDive 账号密码。</p><p>请点击以下链接设置新密码（1 小时内有效）：</p><p><a href="${resetUrl}">${resetUrl}</a></p><p>如非本人操作，请忽略此邮件。</p>`;
+  const subject = '枝想 重置密码';
+  const text = `您正在重置 枝想 账号密码。请点击以下链接设置新密码（1 小时内有效）：\n${resetUrl}\n\n如非本人操作，请忽略此邮件。`;
+  const html = `<p>您正在重置 枝想 账号密码。</p><p>请点击以下链接设置新密码（1 小时内有效）：</p><p><a href="${resetUrl}">${resetUrl}</a></p><p>如非本人操作，请忽略此邮件。</p>`;
 
   try {
     if (isDryRun) {

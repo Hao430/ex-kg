@@ -89,11 +89,11 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   const faqs = [
     {
       q: '为什么需要无限画布，而不是传统的单聊对话框？',
-      a: '传统的聊天机器人采用垂直流式单窗口，当探讨进入第 5 轮提问时，早期的核心假设已被长文顶出屏幕，容易发生上下文漂移或遗忘。DeepDive 采用无限 2D 画布，每一个问题和解答都是可自由展开的思维节点。你可以同时探讨 5 个平行子分支，所有思考脉络一览无余。',
+      a: '传统的聊天机器人采用垂直流式单窗口，当探讨进入第 5 轮提问时，早期的核心假设已被长文顶出屏幕，容易发生上下文漂移或遗忘。枝想采用无限 2D 画布，每一个问题和解答都是可自由展开的思维节点。你可以同时探讨 5 个平行子分支，所有思考脉络一览无余。',
     },
     {
       q: '我的研究数据和画板内容安全吗？',
-      a: '绝对安全。DeepDive 默认将所有画布、节点、连线与便签完整保存在您浏览器的本地存储（Local Storage）中，支持一键导出标准 JSON 备份或 Markdown 研报大纲，数据完全归您所有。',
+      a: '绝对安全。枝想默认将所有画布、节点、连线与便签完整保存在您浏览器的本地存储（Local Storage）中，支持一键导出标准 JSON 备份或 Markdown 研报大纲，数据完全归您所有。',
     },
     {
       q: '“划词追问”功能是如何工作的？',
@@ -135,7 +135,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             </div>
             <div className="flex items-center gap-2">
               <span className="text-base font-bold tracking-tight text-white">
-                DeepDive<span className="text-blue-400 font-medium">.ai</span>
+                枝想<span className="text-blue-400 font-medium">Arborize</span>
               </span>
               <span className="hidden sm:inline-block text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/25">
                 深度思维画布
@@ -245,7 +245,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
         {/* Subtitle */}
         <p className="mt-5 text-sm sm:text-base text-slate-300/90 max-w-3xl mx-auto leading-relaxed font-normal">
-          人类的深度思考从不是一条单行道。DeepDive 将传统垂直对话解构为具备拓扑关联的认知星图。
+          人类的深度思考从不是一条单行道。枝想将传统垂直对话解构为具备拓扑关联的认知星图。
           支持<b>划词深挖、递归分支推演、学术级 LaTeX 公式、便签双轨论证与全自动拓扑排版</b>。
         </p>
 
@@ -342,7 +342,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               <span className="w-3 h-3 rounded-full bg-amber-500/80" />
               <span className="w-3 h-3 rounded-full bg-emerald-500/80" />
               <span className="ml-3 text-xs font-mono text-slate-400">
-                演示画板: 量子计算机退相干与表面码纠错.deepdive
+                演示画板: 量子计算机退相干与表面码纠错.arborize
               </span>
             </div>
 
@@ -545,7 +545,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             专为复杂思考与学术严谨而生
           </h2>
           <p className="mt-4 text-slate-400 text-base max-w-2xl mx-auto">
-            DeepDive 不是一个简单包装的对话工具，而是一个释放深层心智模型的空间计算工作台。
+            枝想不是一个简单包装的对话工具，而是一个释放深层心智模型的空间计算工作台。
           </p>
         </div>
 
@@ -655,7 +655,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         </div>
       </section>
 
-      {/* Comparison Matrix: Linear Chat vs DeepDive Canvas */}
+      {/* Comparison Matrix: Linear Chat vs 枝想Canvas */}
       <section id="comparison" className="relative z-10 py-20 px-6 max-w-7xl mx-auto">
         <div className="text-center mb-16">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 text-xs font-medium mb-3">
@@ -663,7 +663,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             <span>范式变革</span>
           </div>
           <h2 className="text-3xl sm:text-5xl font-bold text-white tracking-tight">
-            传统 AI 对话 vs DeepDive 无限拓扑
+            传统 AI 对话 vs 枝想无限拓扑
           </h2>
           <p className="mt-4 text-slate-400 text-base max-w-2xl mx-auto">
             思考方式决定了认知的上限。看一看空间图谱如何彻底碾压传统线性垂直对话。
@@ -705,14 +705,14 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               </ul>
             </div>
 
-            {/* Right: DeepDive */}
+            {/* Right: 枝想*/}
             <div className="p-8 bg-blue-950/20">
               <div className="flex items-center gap-3 mb-6">
                 <div className="w-10 h-10 rounded-xl bg-blue-500/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
                   <CheckCircle2 className="w-5 h-5" />
                 </div>
                 <div>
-                  <h4 className="text-base font-bold text-white">DeepDive 空间思维画板</h4>
+                  <h4 className="text-base font-bold text-white">枝想空间思维画板</h4>
                   <span className="text-xs text-blue-400">无限图谱 · 递归分支 · 全景可控</span>
                 </div>
               </div>
@@ -751,7 +751,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             为追求极致认知的思考者打造
           </h2>
           <p className="mt-4 text-slate-400 text-base max-w-2xl mx-auto">
-            无论是科研论文推演、系统架构设计，还是投资研报撰写，DeepDive 都是你的第二大脑。
+            无论是科研论文推演、系统架构设计，还是投资研报撰写，枝想都是你的第二大脑。
           </p>
         </div>
 
@@ -830,7 +830,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             <span>常见疑问</span>
           </div>
           <h2 className="text-3xl sm:text-4xl font-bold text-white tracking-tight">
-            关于 DeepDive 的一切
+            关于 枝想的一切
           </h2>
         </div>
 
@@ -873,7 +873,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             准备好重构你的思考范式了吗？
           </h2>
           <p className="mt-4 text-slate-300 text-sm sm:text-base max-w-2xl mx-auto leading-relaxed">
-            告别被截断的思路与混乱的笔记。现在就进入 DeepDive，在无限二维画布上构建属于你的认知星图。
+            告别被截断的思路与混乱的笔记。现在就进入 枝想，在无限二维画布上构建属于你的认知星图。
           </p>
 
           <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
@@ -903,7 +903,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           <div className="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center text-white">
             <Compass className="w-4 h-4" />
           </div>
-          <span className="font-bold text-slate-200">DeepDive Cognitive Canvas</span>
+          <span className="font-bold text-slate-200">Arborize Cognitive Canvas</span>
           <span className="text-slate-600">|</span>
           <span>无限画布式 AI 深度思维与分支探索认知平台</span>
         </div>
@@ -927,7 +927,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           >
             探索方案
           </a>
-          <span className="text-slate-600">© 2026 DeepDive. All rights reserved.</span>
+          <span className="text-slate-600">© 2026 枝想Arborize. All rights reserved.</span>
         </div>
       </footer>
     </div>

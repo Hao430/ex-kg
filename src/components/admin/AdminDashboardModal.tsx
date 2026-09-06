@@ -71,7 +71,7 @@ export const AdminDashboardModal: React.FC = () => {
     openai_base_url: 'https://api.openai.com/v1',
     openai_api_key: '',
     openai_model: 'deepseek-chat',
-    gemini_model: 'gemini-3.8-flash',
+    gemini_model: '', // 默认模型由管理员显式选择，不预置任何模型
     temperature: 0.7,
     max_tokens: 4096,
     custom_system_prompt: '',
@@ -353,7 +353,7 @@ export const AdminDashboardModal: React.FC = () => {
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-semibold text-slate-800 dark:text-slate-100">
-                  DeepDive 运营管理与模型控制台
+                  枝想 运营管理与模型控制台
                 </h3>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-100 text-indigo-700 dark:bg-indigo-950/80 dark:text-indigo-300 dark:border dark:border-indigo-800/60">
                   商业级 RBAC
@@ -780,13 +780,14 @@ export const AdminDashboardModal: React.FC = () => {
                           Gemini 默认调用模型
                         </label>
                         <select
-                          value={modelConfig.gemini_model || 'gemini-3.8-flash'}
+                          value={modelConfig.gemini_model || ''}
                           onChange={(e) =>
                             setModelConfig((prev) => ({ ...prev, gemini_model: e.target.value }))
                           }
                           className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                         >
-                          <option value="gemini-3.8-flash">gemini-3.8-flash (极速推理 · 推荐)</option>
+                          <option value="">请选择模型（必选，保存后生效）</option>
+                          <option value="gemini-3.8-flash">gemini-3.8-flash (极速推理)</option>
                           <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite (轻量高并发)</option>
                           <option value="gemini-flash-latest">gemini-flash-latest (持续最新版本)</option>
                         </select>

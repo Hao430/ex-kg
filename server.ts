@@ -1,5 +1,4 @@
 import path from 'path';
-import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
@@ -10,8 +9,8 @@ import { createApp } from './server/app.js';
 
 dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// CJS 兼容：esbuild bundle 下 import.meta.url 为空，用 process.cwd() 代替
+const __dirname = process.cwd();
 
 const app = createApp();
 const PORT = Number(process.env.PORT) || 3000;
@@ -36,7 +35,7 @@ async function start() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`DeepDive enterprise server listening on http://0.0.0.0:${PORT}`);
+    console.log(`Arborize (枝想) enterprise server listening on http://0.0.0.0:${PORT}`);
   });
 }
 

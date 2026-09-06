@@ -70,7 +70,7 @@ const INITIAL_RAW_NODES: Node[] = [
 
 💡 *提示：你可以选择右侧的「探索建议」一键展开探讨，或在下方输入框继续追问衍生新分支！*`,
       status: 'idle',
-      model: 'gemini-3.8-flash',
+      model: '',
       enableWebSearch: true,
       grounding: {
         queries: ['量子叠加态 经典比特 本质区别 量子计算原理'],
@@ -199,7 +199,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
   triggerAddRootRef,
   triggerAddNoteRef,
   theme = 'light',
-  defaultModel = 'gemini-3.8-flash',
+  defaultModel = '',
   defaultEnableWebSearch = true,
 }) => {
   const [nodes, setNodes, onNodesChange] = useNodesState(
@@ -316,7 +316,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
             answer: '',
             status: 'suggested',
             parentId: parentNodeId,
-            model: defaultModel || 'gemini-3.8-flash',
+            model: defaultModel || '',
             enableWebSearch: defaultEnableWebSearch,
           },
         };
@@ -362,7 +362,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       const existingData = targetNode?.data as unknown as ChatNodeData | undefined;
 
       const activeModel =
-        options?.model || existingData?.model || defaultModel || 'gemini-3.8-flash';
+        options?.model || existingData?.model || defaultModel || '';
       const activeWebSearch =
         options?.enableWebSearch !== undefined
           ? options.enableWebSearch
@@ -435,7 +435,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
 
           if (response.status === 401) {
             openAuthModal('signin');
-            errDetail = '请先登录后再提问，欢迎加入 DeepDive 开启深度探索';
+            errDetail = '请先登录后再提问，欢迎加入枝想开启深度探索';
           }
 
           throw new Error(errDetail);
@@ -618,7 +618,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       const depth = (parentData?.depth ?? 0) + 1;
 
       const activeModel =
-        options?.model || parentData?.model || defaultModel || 'gemini-3.8-flash';
+        options?.model || parentData?.model || defaultModel || '';
       const activeWebSearch =
         options?.enableWebSearch !== undefined
           ? options.enableWebSearch
@@ -937,7 +937,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
         question: '',
         answer: '',
         status: 'idle',
-        model: defaultModel || 'gemini-3.8-flash',
+        model: defaultModel || '',
         enableWebSearch: defaultEnableWebSearch,
         onSendMessage: (nId: string, q: string, opts?: any) =>
           generateNodeAnswer(nId, q, opts),

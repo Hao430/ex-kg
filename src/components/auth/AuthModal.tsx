@@ -60,7 +60,7 @@ export const AuthModal: React.FC = () => {
             </div>
             <div>
               <h3 className="text-base font-semibold text-slate-800 dark:text-slate-100">
-                {isSignUp ? '注册 DeepDive AI 账户' : '登录 DeepDive AI 商业工作台'}
+                {isSignUp ? '注册 枝想 AI 账户' : '登录 枝想 AI 商业工作台'}
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
                 {isSignUp ? '注册即可开始无限画板深度探索' : '多租户沙箱隔离与商业级会话鉴权'}

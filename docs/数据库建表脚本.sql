@@ -1,9 +1,11 @@
 -- ==============================================================================
--- DeepDive.ai 企业级生产数据库全量建表与索引脚本 (PostgreSQL 14+)
--- 架构版本: v3.0.0-production (一期收官)
+-- 枝想 Arborize 企业级生产数据库全量建表与索引脚本 (PostgreSQL 14+)
+-- 架构版本: v3.0.1-production (一期收官)
 -- 表总数: 19 张 (其中 8 张为一期预留空壳，二期激活；算力点数体系已废弃移除)
 -- 支持特性: 强制登录多租户、多轮推演画布、服务端配额校验、订阅订单 (Mock 支付)、
 --          邮箱验证与找回密码、注销软删除 30 天冷却、全链路审计与 GIN 全文检索
+-- 事实源声明: 运行时建表以 server/core/schema.ts 为准（启动时自动执行含增量迁移），
+--          本文档为同源设计稿；两者如有出入以 schema.ts 为准。
 -- ==============================================================================
 
 -- 1. 基础扩展初始化
@@ -95,7 +97,7 @@ CREATE TABLE IF NOT EXISTS canvases (
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   title VARCHAR(255) DEFAULT '新建思维画布' NOT NULL,
   description TEXT DEFAULT '',
-  default_model VARCHAR(64) DEFAULT 'gemini-2.5-flash' NOT NULL,
+  default_model VARCHAR(64) DEFAULT '' NOT NULL, -- 默认模型由管理后台配置（ai_model_config），存列仅作画布级元数据
   enable_web_search BOOLEAN DEFAULT TRUE NOT NULL,
   cover_image TEXT DEFAULT '',
   viewport_x DOUBLE PRECISION DEFAULT 0.0 NOT NULL,
@@ -128,7 +130,7 @@ CREATE TABLE IF NOT EXISTS nodes (
   width INT DEFAULT 380 NOT NULL,
   height INT DEFAULT 320 NOT NULL,
   depth INT DEFAULT 0 NOT NULL,
-  model_used VARCHAR(64) DEFAULT 'gemini-2.5-flash',
+  model_used VARCHAR(64) DEFAULT '', -- 默认模型由管理后台配置（ai_model_config），存列仅作节点级元数据
   grounding JSONB DEFAULT '[]'::jsonb,
   is_collapsed BOOLEAN DEFAULT FALSE NOT NULL,
   is_pinned BOOLEAN DEFAULT FALSE NOT NULL,
@@ -335,10 +337,13 @@ CREATE TABLE IF NOT EXISTS system_settings (
 
 -- 用户与鉴权索引
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE deleted_at IS NULL;
+-- 存量库迁移：若旧版曾以 users.email 内联 UNIQUE 建表，需删除该全行唯一约束
+-- （它会无视 deleted_at 阻断同邮箱重注册，违背 Spec F4）：
+-- ALTER TABLE users DROP CONSTRAINT IF EXISTS users_email_key;
 CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
-CREATE INDEX IF NOT EXISTS idx_users_verify_token ON users(verify_token);
-CREATE INDEX IF NOT EXISTS idx_users_reset_token ON users(reset_token);
-CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);
+CREATE INDEX IF NOT EXISTS idx_users_verify_token ON users(verify_token) WHERE verify_token IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_users_reset_token ON users(reset_token) WHERE reset_token IS NOT NULL;
+-- sessions.token 已有 UNIQUE 约束自带的唯一索引，不再重复建普通索引
 CREATE INDEX IF NOT EXISTS idx_sessions_user_expire ON sessions(user_id, expires_at);
 CREATE INDEX IF NOT EXISTS idx_user_audit_user_action ON user_audit_logs(user_id, action, created_at DESC);
 
@@ -353,18 +358,22 @@ CREATE INDEX IF NOT EXISTS idx_edges_source_target ON edges(source_id, target_id
 CREATE INDEX IF NOT EXISTS idx_node_attachments_node ON node_attachments(node_id);
 
 -- 版本、模版与分享索引
-CREATE INDEX IF NOT EXISTS idx_canvas_shares_code ON canvas_shares(share_code);
+-- canvas_shares.share_code 已有 UNIQUE 约束自带的唯一索引，不再重复建普通索引
 CREATE INDEX IF NOT EXISTS idx_canvas_snapshots_canvas ON canvas_snapshots(canvas_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_canvas_templates_category ON canvas_templates(category, usage_count DESC);
 
 -- 财务与审计索引
 CREATE INDEX IF NOT EXISTS idx_orders_user_created ON orders(user_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_orders_order_no ON orders(order_no);
+-- orders.order_no 已有 UNIQUE 约束自带的唯一索引，不再重复建普通索引
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_ai_logs_user ON ai_request_logs(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_logs_canvas ON ai_request_logs(canvas_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications(user_id, is_read, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_feedbacks_status ON feedbacks(status, created_at DESC);
+
+-- BRIN 时间索引：日志表为追加型，供按 created_at 范围的留存清理任务使用，避免全表扫描
+CREATE INDEX IF NOT EXISTS idx_ai_logs_created_brin ON ai_request_logs USING BRIN(created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_created_brin ON user_audit_logs USING BRIN(created_at);
 
 -- GIN 全文检索索引 (支持中英文关键字在毫秒级内搜索节点标题、问题、回答与便签)
 CREATE INDEX IF NOT EXISTS idx_nodes_fulltext ON nodes 
@@ -385,9 +394,8 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'set_timestamp_nodes') THEN
     CREATE TRIGGER set_timestamp_nodes BEFORE UPDATE ON nodes FOR EACH ROW EXECUTE FUNCTION trigger_set_timestamp();
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'set_timestamp_orders') THEN
-    CREATE TRIGGER set_timestamp_orders BEFORE UPDATE ON orders FOR EACH ROW EXECUTE FUNCTION trigger_set_timestamp();
-  END IF;
+  -- 注意：orders 表无 updated_at 列（订单状态以 paid_at 记录），故不挂载时间戳触发器，
+  -- 否则触发器对不存在的 NEW.updated_at 赋值会导致订单更新报错。
   IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'set_timestamp_feedbacks') THEN
     CREATE TRIGGER set_timestamp_feedbacks BEFORE UPDATE ON feedbacks FOR EACH ROW EXECUTE FUNCTION trigger_set_timestamp();
   END IF;

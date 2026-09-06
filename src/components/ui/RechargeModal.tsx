@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { Crown, Check, Sparkles, X, ShieldCheck, Flame, Infinity, Layers, Network, Calendar, AlertCircle } from 'lucide-react';
+import { Crown, Check, Sparkles, X, ShieldCheck, Flame, Infinity, Layers, Network, Calendar, AlertCircle, MessageCircle } from 'lucide-react';
 import { SubscriptionPlan, SubscriptionPlanId } from '../../types';
+
+// 一期过渡支付：客服微信人工充值（微信号经 .env 的 VITE_SUPPORT_WECHAT_ID 配置，为空时公告不显示微信号）
+const SUPPORT_WECHAT_ID = import.meta.env.VITE_SUPPORT_WECHAT_ID?.trim() || '';
 
 const PLANS: SubscriptionPlan[] = [
   {
@@ -122,6 +125,20 @@ export const RechargeModal: React.FC = () => {
             </div>
           </div>
         )}
+
+        {/* WeChat manual recharge announcement (Phase 1 transitional payment) */}
+        <div className="mx-6 mt-4 p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 flex items-start gap-2.5 text-xs text-emerald-900 dark:text-emerald-200">
+          <MessageCircle className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+          <div>
+            <span className="font-semibold">充值公告：</span>
+            一期支持添加客服微信人工充值，微信转账时备注<strong>注册邮箱</strong>与所购档位，站长确认到账后 VIP 即刻开通。
+            {SUPPORT_WECHAT_ID && (
+              <span>
+                客服微信号：<span className="font-semibold">{SUPPORT_WECHAT_ID}</span>
+              </span>
+            )}
+          </div>
+        </div>
 
         {/* Body */}
         <div className="p-6">

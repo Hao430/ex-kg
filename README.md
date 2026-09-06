@@ -1,6 +1,6 @@
-# DeepDive - 无限画布式 AI 深度思维与分支探索工作台
+# 枝想 - 无限画布式 AI 深度思维与分支探索工作台
 
-> **DeepDive** 是一款面向研究员、架构师、深度自学者与创作者的**生产级二维拓扑 AI 思考工作台**。它打破了传统 AI 聊天单一线性滚屏的限制，让每一次思维发散、深度追问与多方案对比都能在无限画布上自由流淌与沉淀。
+> **枝想** 是一款面向研究员、架构师、深度自学者与创作者的**生产级二维拓扑 AI 思考工作台**。它打破了传统 AI 聊天单一线性滚屏的限制，让每一次思维发散、深度追问与多方案对比都能在无限画布上自由流淌与沉淀。
 
 ---
 
@@ -94,7 +94,7 @@
 GEMINI_API_KEY=your_gemini_api_key_here
 
 # 可选：PostgreSQL 数据库连接串（若未配置将自动平滑降级为内存持久化）
-DATABASE_URL=postgresql://postgres:password@localhost:5432/deepdive
+DATABASE_URL=postgresql://postgres:password@localhost:5432/arborize
 ```
 
 ### 2. 启动开发服务器

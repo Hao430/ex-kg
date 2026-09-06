@@ -1,1 +1,1 @@
-export { getAiModelConfig, saveAiModelConfig, recordAiRequestLog } from '../repositories/ai.repository.js';
+export { getAiModelConfig, getSavedAiModelConfig, saveAiModelConfig, recordAiRequestLog } from '../repositories/ai.repository.js';
