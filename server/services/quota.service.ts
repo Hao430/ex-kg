@@ -4,12 +4,16 @@ import type { UserRecord } from '../core/records.js';
 
 export const BOARD_LIMIT = 3;
 export const NODE_LIMIT = 10;
+/** VIP 到期宽限期（Spec B3）：宽限期内体验不中断，仅提醒；超期硬锁定 */
+export const GRACE_PERIOD_DAYS = 7;
 
 export type Plan = 'trial' | 'vip' | 'admin';
 
 export interface Entitlements {
   plan: Plan;
   vipExpired: boolean;
+  /** 宽限期内剩余天数（仅在已到期但未超出宽限期时返回） */
+  vipGraceDaysRemaining?: number;
   boardLimit: number | null;
   nodeLimit: number | null;
 }
@@ -26,16 +30,33 @@ export function effectiveEntitlements(user: Pick<UserRecord, 'role' | 'vip_expir
     return { plan: 'admin', vipExpired: false, boardLimit: null, nodeLimit: null };
   }
   if (user.role === 'vip') {
-    let expired = false;
     if (user.vip_expires_at) {
-      const t = new Date(user.vip_expires_at).getTime();
+      const expiredAt = new Date(user.vip_expires_at).getTime();
       // 非法日期串按已过期处理（fail-closed，审计建议）
-      expired = Number.isNaN(t) || t <= Date.now();
+      const expiredMs = Number.isNaN(expiredAt) ? -Infinity : expiredAt;
+      const graceEndMs = expiredMs + GRACE_PERIOD_DAYS * 24 * 3600 * 1000;
+      const now = Date.now();
+
+      if (now <= expiredMs) {
+        // 有效期内
+        return { plan: 'vip', vipExpired: false, boardLimit: null, nodeLimit: null };
+      }
+      if (now <= graceEndMs) {
+        // 宽限期：体验不中断，仅提醒
+        const graceDaysRemaining = Math.max(0, Math.ceil((graceEndMs - now) / (24 * 3600 * 1000)));
+        return {
+          plan: 'vip',
+          vipExpired: true,
+          vipGraceDaysRemaining: graceDaysRemaining,
+          boardLimit: null,
+          nodeLimit: null,
+        };
+      }
+      // 超过宽限期：硬锁定
+      return { plan: 'trial', vipExpired: true, boardLimit: BOARD_LIMIT, nodeLimit: NODE_LIMIT };
     }
-    if (!expired) {
-      return { plan: 'vip', vipExpired: false, boardLimit: null, nodeLimit: null };
-    }
-    return { plan: 'trial', vipExpired: true, boardLimit: BOARD_LIMIT, nodeLimit: NODE_LIMIT };
+    // vip_expires_at 为空视为永久有效
+    return { plan: 'vip', vipExpired: false, boardLimit: null, nodeLimit: null };
   }
   return { plan: 'trial', vipExpired: false, boardLimit: BOARD_LIMIT, nodeLimit: NODE_LIMIT };
 }

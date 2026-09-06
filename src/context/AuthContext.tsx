@@ -98,6 +98,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
       }
       setUser(data.user);
+      void refreshUser(); // 拉取 entitlements（Spec B3/B4）
       setAuthModalOpen(false);
       return { success: true };
     } catch (e: any) {
@@ -118,6 +119,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { success: false, error: data.error || '注册失败' };
       }
       setUser(data.user);
+      void refreshUser(); // 拉取 entitlements（Spec B3/B4）
       setAuthModalOpen(false);
       return { success: true };
     } catch (e: any) {

@@ -373,6 +373,34 @@ function MainApp() {
     }
   };
 
+  // Spec B3/B4：VIP 到期提醒横幅（即将到期 ≤3 天 / 宽限期内）；关闭后当天不再提示
+  const [vipBannerDismissed, setVipBannerDismissed] = useState(() => {
+    try {
+      return sessionStorage.getItem('deepdive_vip_banner_dismissed') === new Date().toDateString();
+    } catch {
+      return false;
+    }
+  });
+  const dismissVipBanner = () => {
+    setVipBannerDismissed(true);
+    try {
+      sessionStorage.setItem('deepdive_vip_banner_dismissed', new Date().toDateString());
+    } catch { /* ignore */ }
+  };
+  const ent = user?.entitlements;
+  let vipBanner: { type: 'expiring' | 'grace'; text: string } | null = null;
+  if (ent?.plan === 'vip' && ent.vipExpired) {
+    vipBanner = {
+      type: 'grace',
+      text: `VIP 会员已过期，宽限期剩余 ${ent.vipGraceDaysRemaining ?? 0} 天，到期后将无法使用 AI 推理与新建画板`,
+    };
+  } else if (ent?.plan === 'vip' && user?.vip_expires_at) {
+    const daysLeft = Math.ceil((new Date(user.vip_expires_at).getTime() - Date.now()) / 86400000);
+    if (daysLeft <= 3) {
+      vipBanner = { type: 'expiring', text: `VIP 会员将于 ${Math.max(0, daysLeft)} 天后到期，请及时续费以免影响使用` };
+    }
+  }
+
   if (viewMode === 'landing') {
     return (
       <LandingPage
@@ -397,6 +425,32 @@ function MainApp() {
 
   return (
     <div className="w-screen h-screen overflow-hidden bg-slate-100 dark:bg-[#070b14] text-slate-900 dark:text-slate-100 flex flex-col font-sans select-none transition-colors duration-200">
+      {/* VIP 到期提醒横幅（Spec B3/B4） */}
+      {vipBanner && !vipBannerDismissed && (
+        <div
+          data-testid="vip-banner"
+          className={`absolute top-14 left-0 right-0 z-30 flex items-center justify-center gap-3 px-4 py-2 text-sm ${
+            vipBanner.type === 'grace'
+              ? 'bg-amber-500/95 text-white'
+              : 'bg-yellow-400/95 text-slate-900'
+          }`}
+        >
+          <span>{vipBanner.text}</span>
+          <button
+            onClick={() => openRechargeModal('VIP 到期提醒')}
+            className="underline font-semibold hover:opacity-80"
+          >
+            立即续费
+          </button>
+          <button
+            onClick={dismissVipBanner}
+            aria-label="关闭提醒"
+            className="ml-1 hover:opacity-70"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       {/* Top Bar Navigation */}
       <Topbar
         boardName={boardName}

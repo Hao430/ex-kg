@@ -93,6 +93,14 @@ export interface AuthUser {
   created_at?: string;
   canvas_count?: number;
   total_tokens_used?: number;
+  /** 服务端权益（Spec B1/B3）：plan 区分体验版/VIP/Admin，vipExpired + 宽限剩余天数供横幅 */
+  entitlements?: {
+    plan: 'trial' | 'vip' | 'admin';
+    vipExpired: boolean;
+    vipGraceDaysRemaining?: number;
+    boardLimit: number | null;
+    nodeLimit: number | null;
+  };
 }
 
 export type FeedbackType = 'suggestion' | 'bug' | 'ux' | 'other';
