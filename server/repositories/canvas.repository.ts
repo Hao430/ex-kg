@@ -17,6 +17,15 @@ interface ClaimableOptions {
   includeRequesterGuest?: boolean;
 }
 
+/** 将行数组按 size 分块，供批量多值 INSERT 控制单条 SQL 参数数量 */
+function chunkRows<T>(rows: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < rows.length; i += size) {
+    out.push(rows.slice(i, i + size));
+  }
+  return out;
+}
+
 function isClaimableCanvas(
   canvasId: string,
   ownerId: string | null | undefined,
@@ -232,8 +241,9 @@ export async function saveCanvas(
         ]
       );
 
-      // Clean & Re-insert Nodes
+      // Clean & Re-insert Nodes（批量多值 INSERT，分块控制参数数量）
       await client.query('DELETE FROM nodes WHERE canvas_id = $1', [data.id]);
+      const nodeRows: any[][] = [];
       for (const node of data.nodes || []) {
         const d = node.data || {};
         const pos = node.position || { x: 0, y: 0 };
@@ -262,61 +272,77 @@ export async function saveCanvas(
           ...customFields
         } = d;
 
+        nodeRows.push([
+          node.id,
+          data.id,
+          d.parentId || null,
+          nodeType,
+          title,
+          question,
+          answer,
+          noteText,
+          contentText,
+          messages,
+          status,
+          pos.x,
+          pos.y,
+          depth,
+          modelUsed,
+          grounding,
+          isCollapsed,
+          branchTriggerPhrase,
+          enableWebSearch,
+          color,
+          JSON.stringify(customFields || {}),
+        ]);
+      }
+
+      const NODE_BATCH_SIZE = 200; // 200 × 21 参数 = 4200，远低于 PG 65535 上限
+      for (const batch of chunkRows(nodeRows, NODE_BATCH_SIZE)) {
+        const values: any[] = [];
+        const tuples = batch.map(
+          (row) => `(${row.map((v) => `$${values.push(v)}`).join(', ')})`
+        );
         await client.query(
           `INSERT INTO nodes (
             id, canvas_id, parent_id, type, title, question, answer, note, content,
             messages, status, pos_x, pos_y, depth, model_used, grounding,
             is_collapsed, branch_trigger_phrase, enable_web_search, color,
-            custom_data, updated_at
+            custom_data
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, NOW())`,
-          [
-            node.id,
-            data.id,
-            d.parentId || null,
-            nodeType,
-            title,
-            question,
-            answer,
-            noteText,
-            contentText,
-            messages,
-            status,
-            pos.x,
-            pos.y,
-            depth,
-            modelUsed,
-            grounding,
-            isCollapsed,
-            branchTriggerPhrase,
-            enableWebSearch,
-            color,
-            JSON.stringify(customFields || {}),
-          ]
+          VALUES ${tuples.join(', ')}`,
+          values
         );
       }
 
-      // Clean & Re-insert Edges
+      // Clean & Re-insert Edges（批量多值 INSERT）
       await client.query('DELETE FROM edges WHERE canvas_id = $1', [data.id]);
-      for (const edge of data.edges || []) {
+      const edgeRows: any[][] = (data.edges || []).map((edge: any) => [
+        edge.id,
+        data.id,
+        edge.source,
+        edge.target,
+        edge.sourceHandle || null,
+        edge.targetHandle || null,
+        edge.label || null,
+        Boolean(edge.animated),
+        edge.type || 'smoothstep',
+      ]);
+
+      const EDGE_BATCH_SIZE = 500;
+      for (const batch of chunkRows(edgeRows, EDGE_BATCH_SIZE)) {
+        const values: any[] = [];
+        const tuples = batch.map(
+          (row) => `(${row.map((v) => `$${values.push(v)}`).join(', ')})`
+        );
         await client.query(
           `INSERT INTO edges (
             id, canvas_id, source_id, target_id, source_handle, target_handle,
             label, animated, type
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          VALUES ${tuples.join(', ')}
           ON CONFLICT (id) DO NOTHING`,
-          [
-            edge.id,
-            data.id,
-            edge.source,
-            edge.target,
-            edge.sourceHandle || null,
-            edge.targetHandle || null,
-            edge.label || null,
-            Boolean(edge.animated),
-            edge.type || 'smoothstep',
-          ]
+          values
         );
       }
 
