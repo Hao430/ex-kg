@@ -45,6 +45,9 @@ export async function initDbSchema(): Promise<boolean> {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE NOT NULL;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS verify_token VARCHAR(64);
       ALTER TABLE users ADD COLUMN IF NOT EXISTS verify_expires_at TIMESTAMPTZ;
+      -- Spec F1：找回密码一次性令牌（1h 有效）
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token VARCHAR(64);
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_expires_at TIMESTAMPTZ;
     `);
 
     // 2. Safe Sessions table
@@ -372,6 +375,7 @@ export async function initDbSchema(): Promise<boolean> {
     // 新增 PM 视角优化索引
       await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email);`);
       await client.query(`CREATE INDEX IF NOT EXISTS idx_users_verify_token ON users(verify_token);`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_users_reset_token ON users(reset_token);`);
       await client.query(`CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);`);
       await client.query(`CREATE INDEX IF NOT EXISTS idx_nodes_parent_id ON nodes(parent_id);`);
       await client.query(`CREATE INDEX IF NOT EXISTS idx_canvas_shares_code ON canvas_shares(share_code);`);

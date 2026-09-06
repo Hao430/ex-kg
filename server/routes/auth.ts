@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { deleteSession, findSession } from '../repositories/session.repository.js';
 import { recordAuditLog } from '../repositories/audit.repository.js';
-import { signUp, signIn, updateProfile, resendVerification } from '../services/auth.service.js';
+import { signUp, signIn, updateProfile, resendVerification, requestPasswordReset, resetPassword } from '../services/auth.service.js';
 import { markEmailVerifiedByToken } from '../repositories/user.repository.js';
 import { ValidationError } from '../lib/errors.js';
 import { subscribeUserPlan } from '../services/billing.service.js';
@@ -11,7 +11,7 @@ import { asyncHandler } from '../lib/async-handler.js';
 import { validate } from '../lib/validate.js';
 import { effectiveEntitlements } from '../services/quota.service.js';
 import type { Response as ExpressResponse } from 'express';
-import { authMiddleware, loginRateLimiter, signupRateLimiter, resendVerificationRateLimiter } from '../middleware/auth.js';
+import { authMiddleware, loginRateLimiter, signupRateLimiter, resendVerificationRateLimiter, forgotPasswordRateLimiter } from '../middleware/auth.js';
 
 export const authRouter = Router();
 
@@ -41,6 +41,15 @@ const FeedbackSchema = z.object({
 
 const SubscribeSchema = z.object({
   plan: z.enum(['weekly', 'monthly', 'yearly']),
+});
+
+const ForgotPasswordSchema = z.object({
+  email: z.string().email('请输入有效的邮箱地址'),
+});
+
+const ResetPasswordSchema = z.object({
+  token: z.string().min(1, '缺少重置令牌'),
+  password: z.string().min(6, '密码长度至少为 6 位'),
 });
 
 /**
@@ -229,6 +238,32 @@ authRouter.get('/verify-email', asyncHandler(async (req: Request, res: Response)
 authRouter.post('/resend-verification', authMiddleware, resendVerificationRateLimiter, asyncHandler(async (req: Request, res: Response) => {
   await resendVerification(req.user!.id);
   res.json({ success: true, message: '验证邮件已重新发送，请查收' });
+}));
+
+/**
+ * POST /api/auth/forgot-password（公开）
+ * Spec F1：发起找回密码。无论邮箱是否存在恒 200（防账号枚举）。
+ */
+authRouter.post('/forgot-password', forgotPasswordRateLimiter, asyncHandler(async (req: Request, res: Response) => {
+  const { email } = validate(ForgotPasswordSchema, req.body);
+  const origin = `${req.protocol}://${req.get('host')}`;
+  await requestPasswordReset(email, origin);
+  res.json({ success: true, message: '若该邮箱已注册，重置链接已发送' });
+}));
+
+/**
+ * POST /api/auth/reset-password（公开）
+ * Spec F1：凭令牌重置密码，成功后踢下线全部会话。
+ */
+authRouter.post('/reset-password', asyncHandler(async (req: Request, res: Response) => {
+  const { token, password } = validate(ResetPasswordSchema, req.body);
+  await resetPassword({
+    token,
+    newPassword: password,
+    ip: req.ip,
+    userAgent: req.headers['user-agent'],
+  });
+  res.json({ success: true, message: '密码已重置，请使用新密码登录' });
 }));
 
 /**

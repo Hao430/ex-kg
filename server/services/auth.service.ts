@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { hashPassword, verifyPassword, generateSessionToken, isAccountLocked, getRemainingLockMinutes } from '../lib/crypto.js';
-import { ConflictError, ForbiddenError, LockedError, NotFoundError, UnauthorizedError, ValidationError } from '../lib/errors.js';
-import { sendVerificationEmail } from '../lib/mailer.js';
+import { AppError, ConflictError, ForbiddenError, LockedError, NotFoundError, UnauthorizedError, ValidationError } from '../lib/errors.js';
+import { sendVerificationEmail, sendPasswordResetEmail } from '../lib/mailer.js';
 import {
   findUserByEmail,
   findUserById,
@@ -10,8 +10,11 @@ import {
   resetFailedLogin,
   updateUserProfile,
   setVerificationToken,
+  setPasswordResetToken,
+  markPasswordResetByToken,
+  updateUserPassword,
 } from '../repositories/user.repository.js';
-import { createSession } from '../repositories/session.repository.js';
+import { createSession, deleteUserSessions } from '../repositories/session.repository.js';
 import { recordAuditLog } from '../repositories/audit.repository.js';
 import type { UserRecord } from '../core/records.js';
 
@@ -169,4 +172,47 @@ export async function resendVerification(userId: string): Promise<void> {
 
   const verifyUrl = `${process.env.APP_URL || 'http://localhost:3000'}/verify-email?token=${verifyToken}`;
   await sendVerificationEmail(user.email, verifyUrl);
+}
+
+/**
+ * Spec F1：发起找回密码。
+ * 邮箱不存在直接静默返回（防账号枚举）；存在则生成 1h token 并发送重置邮件。
+ */
+export async function requestPasswordReset(email: string, origin: string): Promise<void> {
+  const user = await findUserByEmail(email);
+  if (!user) return;
+
+  const resetToken = crypto.randomBytes(32).toString('hex');
+  const resetExpiresAt = new Date(Date.now() + 3600 * 1000).toISOString();
+  await setPasswordResetToken(user.id, resetToken, resetExpiresAt);
+
+  const resetUrl = `${process.env.APP_URL || origin}/reset-password?token=${resetToken}`;
+  await sendPasswordResetEmail(user.email, resetUrl);
+}
+
+/**
+ * Spec F1：重置密码。
+ * token 无效/过期 → 400 INVALID_TOKEN；成功 → 更新密码 + 清空 token + 删除全部会话（踢下线）+ 审计。
+ */
+export async function resetPassword(data: {
+  token: string;
+  newPassword: string;
+  ip?: string | null;
+  userAgent?: string | null;
+}): Promise<void> {
+  const user = await markPasswordResetByToken(data.token);
+  if (!user) {
+    throw new AppError(400, 'INVALID_TOKEN', '重置链接无效或已过期');
+  }
+
+  const passwordHash = await hashPassword(data.newPassword);
+  await updateUserPassword(user.id, passwordHash);
+  await deleteUserSessions(user.id);
+
+  await recordAuditLog({
+    userId: user.id,
+    action: 'password_reset',
+    ip: data.ip,
+    userAgent: data.userAgent,
+  });
 }

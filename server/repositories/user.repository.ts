@@ -176,6 +176,91 @@ export async function setVerificationToken(userId: string, token: string, expire
   }
 }
 
+/**
+ * Spec F1：写入/覆盖找回密码令牌（1h 有效）。双模。
+ */
+export async function setPasswordResetToken(userId: string, token: string, expiresAt: string): Promise<void> {
+  const p = getPool();
+  if (p) {
+    try {
+      await p.query(
+        `UPDATE users SET reset_token = $1, reset_expires_at = $2, updated_at = NOW() WHERE id = $3`,
+        [token, expiresAt, userId]
+      );
+      return;
+    } catch (e) {
+      console.warn('PG setPasswordResetToken failed, fallback to memory:', e);
+    }
+  }
+
+  const user = inMemoryStore.users.get(userId);
+  if (user) {
+    user.reset_token = token;
+    user.reset_expires_at = expiresAt;
+    user.updated_at = new Date().toISOString();
+  }
+}
+
+/**
+ * Spec F1：按找回密码令牌查找用户（仅供发起重置校验）。
+ * 仅命中未过期（reset_expires_at > NOW()）的令牌；不清令牌（由 updateUserPassword 清空）。双模。
+ */
+export async function markPasswordResetByToken(token: string): Promise<UserRecord | null> {
+  const p = getPool();
+  if (p) {
+    try {
+      await initDbSchema();
+      const res = await p.query(
+        `SELECT * FROM users WHERE reset_token = $1 AND reset_expires_at > NOW()`,
+        [token]
+      );
+      if (res.rows.length > 0) return mapRowToUser(res.rows[0]);
+      return null;
+    } catch (e) {
+      console.warn('PG markPasswordResetByToken failed, fallback to memory:', e);
+    }
+  }
+
+  for (const u of inMemoryStore.users.values()) {
+    if (
+      u.reset_token === token &&
+      u.reset_expires_at &&
+      new Date(u.reset_expires_at).getTime() > Date.now()
+    ) {
+      return u;
+    }
+  }
+  return null;
+}
+
+/**
+ * Spec F1：更新密码并清空找回密码令牌。双模。
+ */
+export async function updateUserPassword(userId: string, passwordHash: string): Promise<void> {
+  const p = getPool();
+  if (p) {
+    try {
+      await p.query(
+        `UPDATE users
+         SET password_hash = $1, reset_token = NULL, reset_expires_at = NULL, updated_at = NOW()
+         WHERE id = $2`,
+        [passwordHash, userId]
+      );
+      return;
+    } catch (e) {
+      console.warn('PG updateUserPassword failed, fallback to memory:', e);
+    }
+  }
+
+  const user = inMemoryStore.users.get(userId);
+  if (user) {
+    user.password_hash = passwordHash;
+    user.reset_token = null;
+    user.reset_expires_at = null;
+    user.updated_at = new Date().toISOString();
+  }
+}
+
 export async function recordFailedLogin(userId: string): Promise<{ failedAttempts: number; lockedUntil: string | null }> {
   const user = await findUserById(userId);
   if (!user) return { failedAttempts: 0, lockedUntil: null };

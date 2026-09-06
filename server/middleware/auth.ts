@@ -59,6 +59,21 @@ export const signupRateLimiter = rateLimit({
 });
 
 /**
+ * Rate limiter for forgot-password: 5 req/hour per IP（Spec F1，独立实例防邮件轰炸）
+ */
+export const forgotPasswordRateLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => ipKeyGenerator(req.ip || 'anonymous'),
+  message: {
+    error: '找回密码请求过于频繁，请 1 小时后重试',
+    code: 'RATE_LIMIT_EXCEEDED',
+  },
+});
+
+/**
  * Extract token from Cookie or Bearer header
  */
 export function extractToken(req: Request): string | null {

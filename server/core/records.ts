@@ -14,6 +14,9 @@ export interface UserRecord {
   email_verified: boolean;
   verify_token?: string | null;
   verify_expires_at?: string | null;
+  /** Spec F1：找回密码一次性令牌（1h 有效） */
+  reset_token?: string | null;
+  reset_expires_at?: string | null;
   is_active: boolean;
   failed_attempts: number;
   locked_until: string | null;
