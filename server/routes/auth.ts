@@ -2,14 +2,16 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { deleteSession, findSession } from '../repositories/session.repository.js';
 import { recordAuditLog } from '../repositories/audit.repository.js';
-import { signUp, signIn, updateProfile } from '../services/auth.service.js';
+import { signUp, signIn, updateProfile, resendVerification } from '../services/auth.service.js';
+import { markEmailVerifiedByToken } from '../repositories/user.repository.js';
+import { ValidationError } from '../lib/errors.js';
 import { subscribeUserPlan } from '../services/billing.service.js';
 import { submitFeedback } from '../services/feedback.service.js';
 import { asyncHandler } from '../lib/async-handler.js';
 import { validate } from '../lib/validate.js';
 import { effectiveEntitlements } from '../services/quota.service.js';
 import type { Response as ExpressResponse } from 'express';
-import { authMiddleware, loginRateLimiter, signupRateLimiter } from '../middleware/auth.js';
+import { authMiddleware, loginRateLimiter, signupRateLimiter, resendVerificationRateLimiter } from '../middleware/auth.js';
 
 export const authRouter = Router();
 
@@ -61,6 +63,7 @@ function publicUser(user: {
   avatar?: string;
   role: string;
   vip_expires_at?: string | null;
+  email_verified?: boolean;
   is_active?: boolean;
   created_at?: string;
   last_login_at?: string | null;
@@ -72,6 +75,7 @@ function publicUser(user: {
     avatar: user.avatar,
     role: user.role,
     vip_expires_at: user.vip_expires_at,
+    email_verified: user.email_verified,
   };
 }
 
@@ -160,6 +164,7 @@ authRouter.get('/me', authMiddleware, (req: Request, res: Response) => {
       avatar: user.avatar,
       role: user.role,
       vip_expires_at: user.vip_expires_at,
+      email_verified: user.email_verified,
       is_active: user.is_active,
       created_at: user.created_at,
       last_login_at: user.last_login_at,
@@ -197,6 +202,33 @@ authRouter.post('/profile', authMiddleware, asyncHandler(async (req: Request, re
       last_login_at: updated.last_login_at,
     },
   });
+}));
+
+/**
+ * GET /api/auth/verify-email（公开，无 auth）
+ * Spec D3：校验验证令牌并标记邮箱已验证
+ */
+authRouter.get('/verify-email', asyncHandler(async (req: Request, res: Response) => {
+  const token = typeof req.query.token === 'string' ? req.query.token.trim() : '';
+  if (!token) {
+    throw new ValidationError('缺少验证令牌', 'INVALID_TOKEN');
+  }
+
+  const verified = await markEmailVerifiedByToken(token);
+  if (!verified) {
+    throw new ValidationError('验证链接无效或已过期', 'INVALID_TOKEN');
+  }
+
+  res.json({ success: true, message: '邮箱验证成功' });
+}));
+
+/**
+ * POST /api/auth/resend-verification（authMiddleware）
+ * Spec D3：未验证账号重发验证邮件
+ */
+authRouter.post('/resend-verification', authMiddleware, resendVerificationRateLimiter, asyncHandler(async (req: Request, res: Response) => {
+  await resendVerification(req.user!.id);
+  res.json({ success: true, message: '验证邮件已重新发送，请查收' });
 }));
 
 /**

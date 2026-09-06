@@ -41,6 +41,10 @@ export async function initDbSchema(): Promise<boolean> {
       );
       ALTER TABLE users ADD COLUMN IF NOT EXISTS vip_expires_at TIMESTAMPTZ;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar TEXT;
+      -- Spec D3：邮箱验证状态与令牌（24h 有效）
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE NOT NULL;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS verify_token VARCHAR(64);
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS verify_expires_at TIMESTAMPTZ;
     `);
 
     // 2. Safe Sessions table
@@ -367,6 +371,7 @@ export async function initDbSchema(): Promise<boolean> {
 
     // 新增 PM 视角优化索引
       await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email);`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_users_verify_token ON users(verify_token);`);
       await client.query(`CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);`);
       await client.query(`CREATE INDEX IF NOT EXISTS idx_nodes_parent_id ON nodes(parent_id);`);
       await client.query(`CREATE INDEX IF NOT EXISTS idx_canvas_shares_code ON canvas_shares(share_code);`);
@@ -396,15 +401,21 @@ export async function initDbSchema(): Promise<boolean> {
       const vipHash = await hashPassword('Vip123456!');
 
       await client.query(
-        `INSERT INTO users (id, email, password_hash, name, role)
+        `INSERT INTO users (id, email, password_hash, name, role, email_verified)
          VALUES
-           ('00000000-0000-0000-0000-000000000001', 'admin@deepdive.ai', $1, '系统管理员', 'admin'),
-           ('00000000-0000-0000-0000-000000000002', 'user@deepdive.ai', $2, '探索先锋', 'user'),
-           ('00000000-0000-0000-0000-000000000003', 'vip@deepdive.ai', $3, '高级智囊', 'vip')
+           ('00000000-0000-0000-0000-000000000001', 'admin@deepdive.ai', $1, '系统管理员', 'admin', TRUE),
+           ('00000000-0000-0000-0000-000000000002', 'user@deepdive.ai', $2, '探索先锋', 'user', TRUE),
+           ('00000000-0000-0000-0000-000000000003', 'vip@deepdive.ai', $3, '高级智囊', 'vip', TRUE)
          ON CONFLICT (email) DO NOTHING`,
         [adminHash, userHash, vipHash]
       );
     }
+
+    // Spec D3：种子账号（存量豁免）始终视为已验证
+    await client.query(
+      `UPDATE users SET email_verified = TRUE
+       WHERE email IN ('admin@deepdive.ai', 'user@deepdive.ai', 'vip@deepdive.ai')`
+    );
 
     await client.query('COMMIT');
     schemaInitialized = true;

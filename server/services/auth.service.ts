@@ -1,5 +1,7 @@
+import crypto from 'node:crypto';
 import { hashPassword, verifyPassword, generateSessionToken, isAccountLocked, getRemainingLockMinutes } from '../lib/crypto.js';
-import { ConflictError, ForbiddenError, LockedError, NotFoundError, UnauthorizedError } from '../lib/errors.js';
+import { ConflictError, ForbiddenError, LockedError, NotFoundError, UnauthorizedError, ValidationError } from '../lib/errors.js';
+import { sendVerificationEmail } from '../lib/mailer.js';
 import {
   findUserByEmail,
   findUserById,
@@ -7,6 +9,7 @@ import {
   recordFailedLogin,
   resetFailedLogin,
   updateUserProfile,
+  setVerificationToken,
 } from '../repositories/user.repository.js';
 import { createSession } from '../repositories/session.repository.js';
 import { recordAuditLog } from '../repositories/audit.repository.js';
@@ -33,12 +36,21 @@ export async function signUp(data: {
   }
 
   const passwordHash = await hashPassword(data.password);
+  const verifyToken = crypto.randomBytes(32).toString('hex');
+  const verifyExpiresAt = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
   const newUser = await createUser({
     email: data.email,
     passwordHash,
     name: data.name,
     role: 'user',
+    emailVerified: false,
+    verifyToken,
+    verifyExpiresAt,
   });
+
+  // Spec D3：注册即发验证邮件；发信失败不影响注册
+  const verifyUrl = `${process.env.APP_URL || 'http://localhost:3000'}/verify-email?token=${verifyToken}`;
+  await sendVerificationEmail(newUser.email, verifyUrl);
 
   const token = generateSessionToken();
   await createSession({
@@ -136,4 +148,25 @@ export async function updateProfile(data: {
     throw new NotFoundError('未找到该用户');
   }
   return updated;
+}
+
+/**
+ * Spec D3：重发验证邮件（新 token 覆盖旧 token）。
+ * 已验证账号 → 400 EMAIL_ALREADY_VERIFIED（测试契约要求 400，而非 409）。
+ */
+export async function resendVerification(userId: string): Promise<void> {
+  const user = await findUserById(userId);
+  if (!user) {
+    throw new NotFoundError('未找到该用户');
+  }
+  if (user.email_verified) {
+    throw new ValidationError('邮箱已验证', 'EMAIL_ALREADY_VERIFIED');
+  }
+
+  const verifyToken = crypto.randomBytes(32).toString('hex');
+  const verifyExpiresAt = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+  await setVerificationToken(user.id, verifyToken, verifyExpiresAt);
+
+  const verifyUrl = `${process.env.APP_URL || 'http://localhost:3000'}/verify-email?token=${verifyToken}`;
+  await sendVerificationEmail(user.email, verifyUrl);
 }

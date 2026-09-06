@@ -10,6 +10,10 @@ export interface UserRecord {
   avatar?: string;
   role: 'user' | 'vip' | 'admin';
   vip_expires_at?: string | null;
+  /** Spec D3：邮箱验证状态与一次性验证令牌（24h 有效） */
+  email_verified: boolean;
+  verify_token?: string | null;
+  verify_expires_at?: string | null;
   is_active: boolean;
   failed_attempts: number;
   locked_until: string | null;

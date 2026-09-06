@@ -14,6 +14,9 @@ export function mapRowToUser(row: any): UserRecord {
     avatar: row.avatar,
     role: row.role,
     vip_expires_at: row.vip_expires_at ? new Date(row.vip_expires_at).toISOString() : null,
+    email_verified: row.email_verified ?? false,
+    verify_token: row.verify_token,
+    verify_expires_at: row.verify_expires_at ? new Date(row.verify_expires_at).toISOString() : null,
     is_active: row.is_active,
     failed_attempts: row.failed_attempts,
     locked_until: row.locked_until,
@@ -62,22 +65,26 @@ export async function createUser(data: {
   passwordHash: string;
   name?: string;
   role?: 'user' | 'vip' | 'admin';
+  emailVerified?: boolean;
+  verifyToken?: string;
+  verifyExpiresAt?: string;
 }): Promise<UserRecord> {
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
   const email = data.email.toLowerCase().trim();
   const name = data.name?.trim() || email.split('@')[0] || '思维探索者';
   const role = data.role || 'user';
+  const emailVerified = data.emailVerified ?? false;
 
   const p = getPool();
   if (p) {
     try {
       await initDbSchema();
       const res = await p.query(
-        `INSERT INTO users (id, email, password_hash, name, role, is_active, failed_attempts, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, TRUE, 0, NOW(), NOW())
+        `INSERT INTO users (id, email, password_hash, name, role, is_active, failed_attempts, email_verified, verify_token, verify_expires_at, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, TRUE, 0, $6, $7, $8, NOW(), NOW())
          RETURNING *`,
-        [id, email, data.passwordHash, name, role]
+        [id, email, data.passwordHash, name, role, emailVerified, data.verifyToken || null, data.verifyExpiresAt || null]
       );
       return res.rows[0];
     } catch (e) {
@@ -95,11 +102,78 @@ export async function createUser(data: {
     failed_attempts: 0,
     locked_until: null,
     last_login_at: null,
+    email_verified: emailVerified,
+    verify_token: data.verifyToken || null,
+    verify_expires_at: data.verifyExpiresAt || null,
     created_at: now,
     updated_at: now,
   };
   inMemoryStore.users.set(id, user);
   return user;
+}
+
+/**
+ * Spec D3：按验证令牌标记邮箱已验证。
+ * 仅命中未过期（verify_expires_at > NOW()）的令牌；成功置 email_verified=true 并清空令牌，返回用户，否则 null。双模。
+ */
+export async function markEmailVerifiedByToken(token: string): Promise<UserRecord | null> {
+  const p = getPool();
+  if (p) {
+    try {
+      await initDbSchema();
+      const res = await p.query(
+        `UPDATE users
+         SET email_verified = TRUE, verify_token = NULL, verify_expires_at = NULL, updated_at = NOW()
+         WHERE verify_token = $1 AND verify_expires_at > NOW()
+         RETURNING *`,
+        [token]
+      );
+      if (res.rows.length > 0) return mapRowToUser(res.rows[0]);
+      return null;
+    } catch (e) {
+      console.warn('PG markEmailVerifiedByToken failed, fallback to memory:', e);
+    }
+  }
+
+  for (const u of inMemoryStore.users.values()) {
+    if (
+      u.verify_token === token &&
+      u.verify_expires_at &&
+      new Date(u.verify_expires_at).getTime() > Date.now()
+    ) {
+      u.email_verified = true;
+      u.verify_token = null;
+      u.verify_expires_at = null;
+      u.updated_at = new Date().toISOString();
+      return u;
+    }
+  }
+  return null;
+}
+
+/**
+ * Spec D3：写入/覆盖验证令牌（注册与重发共用）。双模。
+ */
+export async function setVerificationToken(userId: string, token: string, expiresAt: string): Promise<void> {
+  const p = getPool();
+  if (p) {
+    try {
+      await p.query(
+        `UPDATE users SET verify_token = $1, verify_expires_at = $2, updated_at = NOW() WHERE id = $3`,
+        [token, expiresAt, userId]
+      );
+      return;
+    } catch (e) {
+      console.warn('PG setVerificationToken failed, fallback to memory:', e);
+    }
+  }
+
+  const user = inMemoryStore.users.get(userId);
+  if (user) {
+    user.verify_token = token;
+    user.verify_expires_at = expiresAt;
+    user.updated_at = new Date().toISOString();
+  }
 }
 
 export async function recordFailedLogin(userId: string): Promise<{ failedAttempts: number; lockedUntil: string | null }> {

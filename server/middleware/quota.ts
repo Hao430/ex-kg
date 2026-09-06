@@ -17,6 +17,11 @@ export async function chatQuotaMiddleware(req: Request, _res: Response, next: Ne
 
   const canvasId = typeof req.body?.canvasId === 'string' ? req.body.canvasId : undefined;
   try {
+    // Spec D3：未验证邮箱禁推理（admin 豁免；VIP 同受限于注册验证）
+    if (user.role !== 'admin' && user.email_verified === false) {
+      return next(new ForbiddenError('请先验证邮箱后再使用 AI 推理', 'EMAIL_NOT_VERIFIED'));
+    }
+
     // Spec E4：模型白名单校验（独立于 canvasId，先于节点数校验）。
     // 有效模型与 chat.ts 解析一致：请求体 model 缺省时回落到系统配置的 gemini_model，
     // 默认模型在白名单内同样拦截（审计修复：默认模型绕过）。

@@ -85,6 +85,8 @@ export interface AuthUser {
   avatar?: string;
   role: 'user' | 'vip' | 'admin';
   vip_expires_at?: string | null;
+  /** Spec D3：邮箱验证状态 */
+  email_verified?: boolean;
   is_active?: boolean;
   failed_attempts?: number;
   locked_until?: string | null;

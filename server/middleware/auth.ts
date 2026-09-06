@@ -29,6 +29,21 @@ export const loginRateLimiter = rateLimit({
 });
 
 /**
+ * Rate limiter for resend-verification: 3 req/10min per user（防邮件轰炸，Spec D3 审计）
+ */
+export const resendVerificationRateLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 3,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => (req.user ? `user_${req.user.id}` : ipKeyGenerator(req.ip || 'anonymous')),
+  message: {
+    error: '验证邮件发送过于频繁，请稍后再试',
+    code: 'RATE_LIMIT_EXCEEDED',
+  },
+});
+
+/**
  * Rate limiter for sign-up: 5 req/hour per IP（Spec D1，防批量注册刷取体验额度）
  */
 export const signupRateLimiter = rateLimit({
