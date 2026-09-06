@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { hashPassword, verifyPassword, generateSessionToken, isAccountLocked, getRemainingLockMinutes } from '../lib/crypto.js';
+import { hashPassword, verifyPassword, needsRehash, generateSessionToken, isAccountLocked, getRemainingLockMinutes } from '../lib/crypto.js';
 import { AppError, ConflictError, ForbiddenError, LockedError, NotFoundError, UnauthorizedError, ValidationError } from '../lib/errors.js';
 import { sendVerificationEmail, sendPasswordResetEmail } from '../lib/mailer.js';
 import {
@@ -119,6 +119,13 @@ export async function signIn(data: {
 
   // 登录成功：重置失败计数
   await resetFailedLogin(user.id);
+
+  // Spec F5：旧参数哈希透明升级到新 scrypt 参数
+  if (needsRehash(user.password_hash)) {
+    const upgraded = await hashPassword(data.password);
+    await updateUserPassword(user.id, upgraded);
+    user.password_hash = upgraded;
+  }
 
   const token = generateSessionToken();
   await createSession({

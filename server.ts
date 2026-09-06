@@ -5,6 +5,7 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 
 import { initDbSchema } from './server/core/schema.js';
+import { startLogCleanupJob } from './server/jobs/log-cleanup.js';
 import { createApp } from './server/app.js';
 
 dotenv.config();
@@ -17,6 +18,7 @@ const PORT = Number(process.env.PORT) || 3000;
 
 async function start() {
   // Initialize DB in background
+  startLogCleanupJob();
   initDbSchema().catch((err) => console.warn('Background initDbSchema warning:', err?.message || err));
 
   if (process.env.NODE_ENV !== 'production') {

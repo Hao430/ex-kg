@@ -131,3 +131,41 @@ export async function saveAiModelConfig(config: Partial<AiModelConfig>, operator
   inMemoryStore.systemSettings.set('ai_model_config', updated);
   return updated;
 }
+
+/**
+ * Spec F6：清理超过留存期的 AI 推演日志。retentionDays=0 表示全清（测试用）。
+ */
+export async function cleanupOldAiLogs(retentionDays: number): Promise<number> {
+  const p = getPool();
+  if (p) {
+    try {
+      await initDbSchema();
+      const res = retentionDays <= 0
+        ? await p.query(`DELETE FROM ai_request_logs RETURNING id`)
+        : await p.query(
+            `DELETE FROM ai_request_logs WHERE created_at < NOW() - make_interval(days => $1) RETURNING id`,
+            [retentionDays]
+          );
+      return res.rowCount || 0;
+    } catch (e) {
+      console.warn('PG cleanupOldAiLogs failed, falling back to memory only:', e);
+    }
+  }
+
+  if (retentionDays <= 0) {
+    const removed = inMemoryStore.aiRequestLogs.length;
+    inMemoryStore.aiRequestLogs = [];
+    return removed;
+  }
+  const cutoff = Date.now() - retentionDays * 24 * 3600 * 1000;
+  const before = inMemoryStore.aiRequestLogs.length;
+  inMemoryStore.aiRequestLogs = inMemoryStore.aiRequestLogs.filter(
+    (l) => new Date(l.created_at).getTime() > cutoff
+  );
+  return before - inMemoryStore.aiRequestLogs.length;
+}
+
+/** 测试辅助：读取内存日志 */
+export function getAiRequestLogsForTest(): AiRequestLogRecord[] {
+  return inMemoryStore.aiRequestLogs;
+}

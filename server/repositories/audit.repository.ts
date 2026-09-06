@@ -137,3 +137,40 @@ export async function listAuditLogs(params: {
     total: list.length,
   };
 }
+
+/**
+ * Spec F6：清理超过留存期的审计日志。retentionDays=0 表示全清（测试用）。
+ */
+export async function cleanupOldAuditLogs(retentionDays: number): Promise<number> {
+  const p = getPool();
+  if (p) {
+    try {
+      const res = retentionDays <= 0
+        ? await p.query(`DELETE FROM user_audit_logs RETURNING id`)
+        : await p.query(
+            `DELETE FROM user_audit_logs WHERE created_at < NOW() - make_interval(days => $1) RETURNING id`,
+            [retentionDays]
+          );
+      return res.rowCount || 0;
+    } catch (e) {
+      console.warn('PG cleanupOldAuditLogs failed, falling back to memory only:', e);
+    }
+  }
+
+  if (retentionDays <= 0) {
+    const removed = inMemoryStore.auditLogs.length;
+    inMemoryStore.auditLogs = [];
+    return removed;
+  }
+  const cutoff = Date.now() - retentionDays * 24 * 3600 * 1000;
+  const before = inMemoryStore.auditLogs.length;
+  inMemoryStore.auditLogs = inMemoryStore.auditLogs.filter(
+    (l) => new Date(l.created_at).getTime() > cutoff
+  );
+  return before - inMemoryStore.auditLogs.length;
+}
+
+/** 测试辅助：读取内存审计日志 */
+export function getAuditLogsForTest() {
+  return inMemoryStore.auditLogs;
+}
