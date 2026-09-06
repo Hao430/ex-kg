@@ -70,6 +70,23 @@ export async function createOrder(data: {
   return orderRecord;
 }
 
+function mapRowToOrder(r: any): OrderRecord {
+  return {
+    id: r.id,
+    order_no: r.order_no,
+    user_id: r.user_id,
+    plan_id: r.plan_id,
+    plan_name: r.plan_name,
+    amount_cents: r.amount_cents,
+    currency: r.currency,
+    status: r.status,
+    duration_days: r.duration_days,
+    payment_method: r.payment_method,
+    created_at: r.created_at,
+    paid_at: r.paid_at,
+  };
+}
+
 /**
  * List orders for a user
  */
@@ -79,24 +96,64 @@ export async function listUserOrders(userId: string): Promise<OrderRecord[]> {
     try {
       await initDbSchema();
       const res = await p.query('SELECT * FROM orders WHERE user_id = $1 ORDER BY created_at DESC', [userId]);
-      return res.rows.map((r) => ({
-        id: r.id,
-        order_no: r.order_no,
-        user_id: r.user_id,
-        plan_id: r.plan_id,
-        plan_name: r.plan_name,
-        amount_cents: r.amount_cents,
-        currency: r.currency,
-        status: r.status,
-        duration_days: r.duration_days,
-        payment_method: r.payment_method,
-        created_at: r.created_at,
-        paid_at: r.paid_at,
-      }));
+      return res.rows.map(mapRowToOrder);
     } catch (e) {
       console.warn('PG listUserOrders failed, using memory:', e);
     }
   }
 
   return inMemoryStore.orders.filter((o) => o.user_id === userId);
+}
+
+/**
+ * Find an order by its order number
+ */
+export async function findOrderByNo(orderNo: string): Promise<OrderRecord | null> {
+  const p = getPool();
+  if (p) {
+    try {
+      await initDbSchema();
+      const res = await p.query('SELECT * FROM orders WHERE order_no = $1', [orderNo]);
+      if (res.rows.length > 0) return mapRowToOrder(res.rows[0]);
+    } catch (e) {
+      console.warn('PG findOrderByNo failed, using memory:', e);
+    }
+  }
+
+  return inMemoryStore.orders.find((o) => o.order_no === orderNo) || null;
+}
+
+/**
+ * Update an order's status; stamps paid_at when transitioning to paid
+ */
+export async function updateOrderStatus(
+  orderNo: string,
+  status: OrderRecord['status'],
+  expectedStatus?: OrderRecord['status']
+): Promise<OrderRecord | null> {
+  const p = getPool();
+  if (p) {
+    try {
+      await initDbSchema();
+      const res = await p.query(
+        `UPDATE orders
+         SET status = $1,
+             paid_at = CASE WHEN $1 = 'paid' THEN NOW() ELSE paid_at END
+         WHERE order_no = $2 ${expectedStatus ? 'AND status = $3' : ''}
+         RETURNING *`,
+        expectedStatus ? [status, orderNo, expectedStatus] : [status, orderNo]
+      );
+      if (res.rows.length > 0) return mapRowToOrder(res.rows[0]);
+      return null;
+    } catch (e) {
+      console.warn('PG updateOrderStatus failed, updating memory:', e);
+    }
+  }
+
+  const order = inMemoryStore.orders.find((o) => o.order_no === orderNo);
+  if (!order) return null;
+  if (expectedStatus && order.status !== expectedStatus) return null; // 条件更新：状态不符返回 null（防并发双激活）
+  order.status = status;
+  if (status === 'paid') order.paid_at = new Date().toISOString();
+  return order;
 }
