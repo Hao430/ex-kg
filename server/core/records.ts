@@ -9,7 +9,6 @@ export interface UserRecord {
   name: string;
   avatar?: string;
   role: 'user' | 'vip' | 'admin';
-  credits_balance: number;
   vip_expires_at?: string | null;
   is_active: boolean;
   failed_attempts: number;
@@ -38,18 +37,6 @@ export interface SessionRecord {
   ip_address?: string;
   user_agent?: string;
   created_at: string;
-}
-
-export interface CreditTransactionRecord {
-  id: string;
-  user_id: string;
-  canvas_id: string | null;
-  model_name: string;
-  tokens_consumed: number;
-  balance_after: number;
-  action_type: string;
-  created_at: string;
-  user_email?: string;
 }
 
 export interface OrderRecord {

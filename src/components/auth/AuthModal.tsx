@@ -63,7 +63,7 @@ export const AuthModal: React.FC = () => {
                 {isSignUp ? '注册 DeepDive AI 账户' : '登录 DeepDive AI 商业工作台'}
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                {isSignUp ? '新用户赠送 50,000 点探索算力' : '多租户沙箱隔离与商业级会话鉴权'}
+                {isSignUp ? '注册即可开始无限画板深度探索' : '多租户沙箱隔离与商业级会话鉴权'}
               </p>
             </div>
           </div>
@@ -153,7 +153,7 @@ export const AuthModal: React.FC = () => {
               ) : isSignUp ? (
                 <>
                   <UserPlus className="w-4 h-4" />
-                  立即注册并领取 50,000 算力
+                  立即注册，开启探索之旅
                 </>
               ) : (
                 <>

@@ -13,7 +13,6 @@ export function mapRowToUser(row: any): UserRecord {
     name: row.name,
     avatar: row.avatar,
     role: row.role,
-    credits_balance: Number(row.credits_balance),
     vip_expires_at: row.vip_expires_at ? new Date(row.vip_expires_at).toISOString() : null,
     is_active: row.is_active,
     failed_attempts: row.failed_attempts,
@@ -63,24 +62,22 @@ export async function createUser(data: {
   passwordHash: string;
   name?: string;
   role?: 'user' | 'vip' | 'admin';
-  initialCredits?: number;
 }): Promise<UserRecord> {
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
   const email = data.email.toLowerCase().trim();
   const name = data.name?.trim() || email.split('@')[0] || '思维探索者';
   const role = data.role || 'user';
-  const credits = data.initialCredits ?? 50000;
 
   const p = getPool();
   if (p) {
     try {
       await initDbSchema();
       const res = await p.query(
-        `INSERT INTO users (id, email, password_hash, name, role, credits_balance, is_active, failed_attempts, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, TRUE, 0, NOW(), NOW())
+        `INSERT INTO users (id, email, password_hash, name, role, is_active, failed_attempts, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, TRUE, 0, NOW(), NOW())
          RETURNING *`,
-        [id, email, data.passwordHash, name, role, credits]
+        [id, email, data.passwordHash, name, role]
       );
       return res.rows[0];
     } catch (e) {
@@ -94,7 +91,6 @@ export async function createUser(data: {
     password_hash: data.passwordHash,
     name,
     role,
-    credits_balance: credits,
     is_active: true,
     failed_attempts: 0,
     locked_until: null,

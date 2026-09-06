@@ -100,7 +100,7 @@ export const RechargeModal: React.FC = () => {
                 )}
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                无需按点计费，畅享无限画板与无限节点多轮探索
+                订阅制畅享，开通后解锁无限画板与无限节点多轮探索
               </p>
             </div>
           </div>

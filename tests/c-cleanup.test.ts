@@ -1,0 +1,107 @@
+/**
+ * Spec C — 清理算力点数体系（C1–C6）
+ */
+import { test, describe, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { createApp } from '../server/app.js';
+
+let server: http.Server;
+let base = '';
+let userCookie = '';
+let adminCookie = '';
+
+async function waitSeeds(tries = 50): Promise<void> {
+  for (let i = 0; i < tries; i++) {
+    try {
+      const res = await fetch(`${base}/api/db/status`);
+      const body = await res.json() as any;
+      if (body.userCount >= 3) return;
+    } catch { /* not ready */ }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error('seed users not ready');
+}
+
+describe('C 清理算力点数体系', () => {
+  before(async () => {
+    const app = createApp();
+    server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address() as AddressInfo;
+    base = `http://127.0.0.1:${port}`;
+    await waitSeeds();
+
+    const user = await fetch(`${base}/api/auth/sign-in`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'user@deepdive.ai', password: 'User123456!' }),
+    });
+    userCookie = (user.headers.get('set-cookie') || '').split(';')[0];
+    const admin = await fetch(`${base}/api/auth/sign-in`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'admin@deepdive.ai', password: 'Admin123456!' }),
+    });
+    adminCookie = (admin.headers.get('set-cookie') || '').split(';')[0];
+  });
+  after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+
+  test('注册响应与 /me 均无 credits_balance', async () => {
+    const signUp = await fetch(`${base}/api/auth/sign-up`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'c-test@example.com', password: 'Pass123456', name: 'C用例' }),
+    });
+    assert.equal(signUp.status, 201);
+    const suBody = await signUp.json() as any;
+    assert.equal(suBody.user?.credits_balance, undefined);
+    assert.ok(!JSON.stringify(suBody).includes('credits_balance'));
+
+    const me = await (await fetch(`${base}/api/auth/me`, { headers: { cookie: userCookie } })).json() as any;
+    assert.equal(me.user.credits_balance, undefined);
+    assert.ok(!JSON.stringify(me).includes('credits_balance'));
+  });
+
+  test('POST /api/auth/recharge → 404', async () => {
+    const res = await fetch(`${base}/api/auth/recharge`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', cookie: userCookie },
+      body: JSON.stringify({ amount: 100 }),
+    });
+    assert.equal(res.status, 404);
+  });
+
+  test('POST /api/admin/users/:id/credits → 404', async () => {
+    const res = await fetch(`${base}/api/admin/users/00000000-0000-0000-0000-000000000002/credits`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', cookie: adminCookie },
+      body: JSON.stringify({ amount: 100, reason: 'test' }),
+    });
+    assert.equal(res.status, 404);
+  });
+
+  test('GET /api/admin/transactions → 404', async () => {
+    const res = await fetch(`${base}/api/admin/transactions`, { headers: { cookie: adminCookie } });
+    assert.equal(res.status, 404);
+  });
+
+  test('订阅链路不回归（orders 保留）', async () => {
+    const res = await fetch(`${base}/api/auth/subscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', cookie: userCookie },
+      body: JSON.stringify({ plan: 'weekly' }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json() as any;
+    assert.equal(body.role, 'vip');
+  });
+
+  test('admin overview 仍可用（token 统计已改源 ai_request_logs）', async () => {
+    const res = await fetch(`${base}/api/admin/overview`, { headers: { cookie: adminCookie } });
+    assert.equal(res.status, 200);
+    const body = await res.json() as any;
+    assert.ok('overview' in body);
+  });
+});

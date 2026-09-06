@@ -11,8 +11,6 @@ interface AuthContextType {
   updateProfile: (data: { name?: string; avatar?: string }) => Promise<{ success: boolean; error?: string }>;
   submitFeedback: (data: FeedbackPayload) => Promise<{ success: boolean; message?: string; error?: string }>;
   subscribe: (plan: 'weekly' | 'monthly' | 'yearly') => Promise<{ success: boolean; message?: string; error?: string }>;
-  recharge: (amount: number) => Promise<{ success: boolean; newBalance?: number; error?: string }>;
-  updateCredits: (newBalance: number) => void;
   // Modals state
   authModalOpen: boolean;
   authModalMode: 'signin' | 'signup';
@@ -197,31 +195,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const recharge = async (amount: number) => {
-    try {
-      const res = await fetch('/api/auth/recharge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ amount }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        return { success: false, error: data.error || '充值失败' };
-      }
-      if (typeof data.credits_balance === 'number') {
-        setUser((prev) => (prev ? { ...prev, credits_balance: data.credits_balance } : null));
-      }
-      return { success: true, newBalance: data.credits_balance };
-    } catch (e: any) {
-      return { success: false, error: e?.message || '充值异常' };
-    }
-  };
-
-  const updateCredits = useCallback((newBalance: number) => {
-    setUser((prev) => (prev ? { ...prev, credits_balance: newBalance } : null));
-  }, []);
-
   const openAuthModal = useCallback((mode: 'signin' | 'signup' = 'signin') => {
     setAuthModalMode(mode);
     setAuthModalOpen(true);
@@ -277,8 +250,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         updateProfile,
         submitFeedback,
         subscribe,
-        recharge,
-        updateCredits,
         authModalOpen,
         authModalMode,
         openAuthModal,

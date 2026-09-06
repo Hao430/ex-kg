@@ -1,6 +1,5 @@
 import { Router, Request, Response } from 'express';
 import { GoogleGenAI } from '@google/genai';
-import { deductCredits } from '../services/billing.service.js';
 import { getAiModelConfig, recordAiRequestLog } from '../services/ai.service.js';
 import { authMiddleware, validateInputLimits, roleBasedRateLimiter } from '../middleware/auth.js';
 import { chatQuotaMiddleware } from '../middleware/quota.js';
@@ -91,7 +90,7 @@ function generateFallbackResponse(userPrompt: string): string {
 
 /**
  * POST /api/chat
- * Secure AI chat with input limits, quota pre-check, SSE streaming, and post-inference token deduction
+ * Secure AI chat with input limits, quota pre-check, SSE streaming, and post-inference audit logging
  * Supports both Google Gemini native models and OpenAI-compatible models (DeepSeek, GPT-4o, etc.)
  */
 chatRouter.post(
@@ -220,15 +219,6 @@ chatRouter.post(
         const responseTokens = Math.ceil(accumulatedResponseText.length / 2.5);
         const totalTokensCount = Math.max(100, promptTokens + responseTokens);
 
-        // Deduct user credits
-        const { newBalance, transactionId } = await deductCredits({
-          userId: user.id,
-          canvasId: canvasId || null,
-          modelName: actualModelUsed,
-          tokensConsumed: totalTokensCount,
-          actionType: 'ai_chat',
-        });
-
         await recordAiRequestLog({
           userId: user.id,
           canvasId: canvasId || null,
@@ -248,8 +238,6 @@ chatRouter.post(
             done: true,
             modelUsed: actualModelUsed,
             tokensConsumed: totalTokensCount,
-            creditsBalance: newBalance,
-            transactionId,
             grounding: {
               sources: [],
               queries: [],
@@ -414,15 +402,7 @@ chatRouter.post(
               promptTokens = Math.max(0, totalTokensCount - responseTokens);
             }
 
-            // Execute post-inference token deduction and audit logging
-            const { newBalance, transactionId } = await deductCredits({
-              userId: user.id,
-              canvasId: canvasId || null,
-              modelName: actualModelUsed,
-              tokensConsumed: totalTokensCount,
-              actionType: 'ai_chat',
-            });
-
+            // Post-inference audit logging
             await recordAiRequestLog({
               userId: user.id,
               canvasId: canvasId || null,
@@ -436,14 +416,12 @@ chatRouter.post(
               groundingChunksCount: accumulatedSources.length,
             });
 
-            // Send final done event with full grounding, token consumption and updated balance
+            // Send final done event with full grounding and token consumption
             res.write(
               `data: ${JSON.stringify({
                 done: true,
                 modelUsed: actualModelUsed,
                 tokensConsumed: totalTokensCount,
-                creditsBalance: newBalance,
-                transactionId,
                 grounding: {
                   sources: accumulatedSources,
                   queries: accumulatedQueries,
@@ -491,21 +469,12 @@ chatRouter.post(
           }
 
           const fallbackTokens = Math.max(100, Math.ceil(fallbackText.length / 2.5));
-          const { newBalance, transactionId } = await deductCredits({
-            userId: user.id,
-            canvasId: canvasId || null,
-            modelName: 'deepdive-knowledge-base',
-            tokensConsumed: fallbackTokens,
-            actionType: 'ai_chat',
-          });
 
           res.write(
             `data: ${JSON.stringify({
               done: true,
               modelUsed: 'deepdive-knowledge-base (容灾模式)',
               tokensConsumed: fallbackTokens,
-              creditsBalance: newBalance,
-              transactionId,
               grounding: {
                 sources: [],
                 queries: [],

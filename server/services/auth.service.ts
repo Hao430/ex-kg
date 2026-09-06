@@ -17,7 +17,7 @@ export interface AuthResult {
 }
 
 /**
- * 注册：邮箱查重 + 建号（赠 50,000 初始算力）+ 建会话
+ * 注册：邮箱查重 + 建号 + 建会话
  */
 export async function signUp(data: {
   email: string;
@@ -37,7 +37,6 @@ export async function signUp(data: {
     passwordHash,
     name: data.name,
     role: 'user',
-    initialCredits: 50000,
   });
 
   const token = generateSessionToken();

@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import {
   AdminOverview,
-  CreditTransaction,
   AuthUser,
   AiModelConfig,
 } from '../../types';
@@ -10,7 +9,6 @@ import {
   ShieldAlert,
   Users,
   BarChart3,
-  Receipt,
   Search,
   CheckCircle2,
   XCircle,
@@ -39,7 +37,7 @@ import { Tooltip } from '../ui/Tooltip';
 
 export const AdminDashboardModal: React.FC = () => {
   const { adminModalOpen, closeAdminModal, user } = useAuth();
-  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'transactions' | 'models'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'models'>('overview');
 
   // Overview state
   const [overview, setOverview] = useState<AdminOverview | null>(null);
@@ -59,12 +57,6 @@ export const AdminDashboardModal: React.FC = () => {
   const [vipTargetUser, setVipTargetUser] = useState<AuthUser | null>(null);
   const [vipDaysToAdd, setVipDaysToAdd] = useState<number>(30);
   const [submittingVip, setSubmittingVip] = useState(false);
-
-  // Transactions state
-  const [transactions, setTransactions] = useState<CreditTransaction[]>([]);
-  const [txTotal, setTxTotal] = useState(0);
-  const [txPage, setTxPage] = useState(1);
-  const [loadingTx, setLoadingTx] = useState(false);
 
   // AI Model Configuration state
   const [modelConfig, setModelConfig] = useState<AiModelConfig>({
@@ -133,26 +125,6 @@ export const AdminDashboardModal: React.FC = () => {
     }
   }, [userPage, userSearch, userRoleFilter, userStatusFilter]);
 
-  const fetchTransactions = useCallback(async () => {
-    setLoadingTx(true);
-    try {
-      const params = new URLSearchParams({
-        page: txPage.toString(),
-        limit: '12',
-      });
-      const res = await fetch(`/api/admin/transactions?${params.toString()}`, { credentials: 'include' });
-      if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
-        const data = await res.json();
-        setTransactions(data.transactions);
-        setTxTotal(data.total);
-      }
-    } catch (e) {
-      console.error('Fetch transactions error:', e);
-    } finally {
-      setLoadingTx(false);
-    }
-  }, [txPage]);
-
   const fetchModelConfig = useCallback(async () => {
     setLoadingModelConfig(true);
     try {
@@ -175,10 +147,9 @@ export const AdminDashboardModal: React.FC = () => {
     if (adminModalOpen) {
       fetchOverview();
       fetchUsers();
-      fetchTransactions();
       fetchModelConfig();
     }
-  }, [adminModalOpen, fetchOverview, fetchUsers, fetchTransactions, fetchModelConfig]);
+  }, [adminModalOpen, fetchOverview, fetchUsers, fetchModelConfig]);
 
   if (!adminModalOpen) return null;
 
@@ -406,17 +377,6 @@ export const AdminDashboardModal: React.FC = () => {
           >
             <Users className="w-3.5 h-3.5" />
             用户与会员管控
-          </button>
-          <button
-            onClick={() => setActiveTab('transactions')}
-            className={`flex items-center gap-2 py-3 px-4 text-xs font-medium border-b-2 transition-colors ${
-              activeTab === 'transactions'
-                ? 'border-indigo-600 text-indigo-600 dark:text-indigo-400 dark:border-indigo-400 font-semibold'
-                : 'border-transparent text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
-            }`}
-          >
-            <Receipt className="w-3.5 h-3.5" />
-            调用审计流水
           </button>
         </div>
 
@@ -1141,116 +1101,6 @@ export const AdminDashboardModal: React.FC = () => {
             </div>
           )}
 
-          {/* TAB 3: TRANSACTIONS */}
-          {activeTab === 'transactions' && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="text-xs text-slate-500 dark:text-slate-400">
-                  全站算力流水审计台账（精确到每次 AI 推理与人工对账）
-                </div>
-                <Tooltip content="刷新流水账单">
-                  <button
-                    onClick={fetchTransactions}
-                    className="p-1.5 rounded-lg text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                  </button>
-                </Tooltip>
-              </div>
-
-              {/* Table */}
-              <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700/80">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-50 dark:bg-slate-800/80 text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-700">
-                    <tr>
-                      <th className="py-3 px-4 font-semibold">时间</th>
-                      <th className="py-3 px-3 font-semibold">用户邮箱</th>
-                      <th className="py-3 px-3 font-semibold">业务类型</th>
-                      <th className="py-3 px-3 font-semibold">模型/原因</th>
-                      <th className="py-3 px-3 font-semibold">变动点数</th>
-                      <th className="py-3 px-4 font-semibold text-right">变动后余额</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-700 dark:text-slate-300">
-                    {loadingTx ? (
-                      <tr>
-                        <td colSpan={6} className="py-8 text-center text-slate-400">
-                          正在加载流水账单...
-                        </td>
-                      </tr>
-                    ) : transactions.length === 0 ? (
-                      <tr>
-                        <td colSpan={6} className="py-8 text-center text-slate-400">
-                          暂无对账流水
-                        </td>
-                      </tr>
-                    ) : (
-                      transactions.map((tx) => (
-                        <tr key={tx.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40">
-                          <td className="py-3 px-4 text-slate-500 dark:text-slate-400 text-[11px]">
-                            {new Date(tx.created_at).toLocaleString('zh-CN', { hour12: false })}
-                          </td>
-                          <td className="py-3 px-3 font-medium text-slate-800 dark:text-slate-200">
-                            {tx.user_email || '未知用户'}
-                          </td>
-                          <td className="py-3 px-3">
-                            <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
-                                tx.action_type === 'ai_chat'
-                                  ? 'bg-blue-100 text-blue-700 dark:bg-blue-950/80 dark:text-blue-300'
-                                  : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300'
-                              }`}
-                            >
-                              {tx.action_type === 'ai_chat' ? 'AI 推理扣减' : '系统调账/充值'}
-                            </span>
-                          </td>
-                          <td className="py-3 px-3 text-slate-600 dark:text-slate-400 truncate max-w-[200px]">
-                            {tx.model_name}
-                          </td>
-                          <td className="py-3 px-3 font-medium">
-                            {tx.tokens_consumed > 0 ? (
-                              <span className="text-rose-600 dark:text-rose-400">
-                                -{tx.tokens_consumed.toLocaleString()}
-                              </span>
-                            ) : (
-                              <span className="text-emerald-600 dark:text-emerald-400">
-                                +{Math.abs(tx.tokens_consumed).toLocaleString()}
-                              </span>
-                            )}
-                          </td>
-                          <td className="py-3 px-4 text-right font-semibold text-slate-900 dark:text-white">
-                            {tx.balance_after.toLocaleString()} 点
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Pagination */}
-              <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 pt-2">
-                <span>共 {txTotal} 笔流水</span>
-                <div className="flex items-center gap-2">
-                  <button
-                    disabled={txPage <= 1}
-                    onClick={() => setTxPage((p) => p - 1)}
-                    className="px-2.5 py-1 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 disabled:opacity-40"
-                  >
-                    上一页
-                  </button>
-                  <span>第 {txPage} 页</span>
-                  <button
-                    disabled={txPage * 12 >= txTotal}
-                    onClick={() => setTxPage((p) => p + 1)}
-                    className="px-2.5 py-1 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 disabled:opacity-40"
-                  >
-                    下一页
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Modal for Grant / Adjust VIP Days */}

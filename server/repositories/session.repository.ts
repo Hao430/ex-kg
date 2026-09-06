@@ -51,7 +51,7 @@ export async function findSession(token: string): Promise<{ session: SessionReco
       await initDbSchema();
       const res = await p.query(
         `SELECT s.id as session_id, s.user_id, s.token, s.expires_at, s.ip_address, s.user_agent, s.created_at as session_created_at,
-                u.id as u_id, u.email, u.password_hash, u.name, u.avatar, u.role, u.credits_balance, u.vip_expires_at, u.is_active, u.failed_attempts, u.locked_until, u.last_login_at, u.created_at as user_created_at, u.updated_at as user_updated_at
+                u.id as u_id, u.email, u.password_hash, u.name, u.avatar, u.role, u.vip_expires_at, u.is_active, u.failed_attempts, u.locked_until, u.last_login_at, u.created_at as user_created_at, u.updated_at as user_updated_at
          FROM sessions s
          JOIN users u ON u.id = s.user_id
          WHERE s.token = $1 AND s.expires_at > NOW()`,
@@ -75,7 +75,6 @@ export async function findSession(token: string): Promise<{ session: SessionReco
           name: row.name,
           avatar: row.avatar,
           role: row.role,
-          credits_balance: Number(row.credits_balance),
           vip_expires_at: row.vip_expires_at ? new Date(row.vip_expires_at).toISOString() : null,
           is_active: row.is_active,
           failed_attempts: row.failed_attempts,

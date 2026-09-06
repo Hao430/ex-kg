@@ -84,7 +84,6 @@ export interface AuthUser {
   name: string;
   avatar?: string;
   role: 'user' | 'vip' | 'admin';
-  credits_balance: number;
   vip_expires_at?: string | null;
   is_active?: boolean;
   failed_attempts?: number;
@@ -122,18 +121,6 @@ export interface SubscriptionPlan {
   popular?: boolean;
   desc: string;
   badge?: string;
-}
-
-export interface CreditTransaction {
-  id: string;
-  user_id: string;
-  user_email?: string;
-  canvas_id: string | null;
-  model_name: string;
-  tokens_consumed: number;
-  balance_after: number;
-  action_type: string;
-  created_at: string;
 }
 
 export interface AdminOverview {

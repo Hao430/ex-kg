@@ -2,10 +2,8 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import {
   listAdminUsers,
-  listAdminTransactions,
   getAdminOverview,
   updateUserStatus,
-  adjustUserCredits,
   grantUserVipDays,
   getUserOrFail,
   getMaskedModelConfig,
@@ -80,35 +78,6 @@ adminRouter.put('/users/:id/status', asyncHandler(async (req: Request, res: Resp
 }));
 
 /**
- * POST /api/admin/users/:id/credits
- * Manual credit adjustment with audit trail
- */
-const AdjustCreditsSchema = z.object({
-  amount: z.number().int().refine((val) => val !== 0, '调账点数不能为 0'),
-  reason: z.string().min(2, '请填写调账原因（至少 2 个字）'),
-});
-
-adminRouter.post('/users/:id/credits', asyncHandler(async (req: Request, res: Response) => {
-  const { amount, reason } = validate(AdjustCreditsSchema, req.body, 'INVALID_ADJUSTMENT');
-  const targetUser = await getUserOrFail(req.params.id);
-  const operator = req.user!;
-
-  const { newBalance, transactionId } = await adjustUserCredits({
-    userId: targetUser.id,
-    amount,
-    operatorId: operator.id,
-    reason: `[管理员 ${operator.email}] ${reason}`,
-  });
-
-  res.json({
-    success: true,
-    message: `已成功${amount > 0 ? '增加' : '扣除'} ${Math.abs(amount)} 点数，用户当前余额为 ${newBalance} 点`,
-    new_balance: newBalance,
-    transaction_id: transactionId,
-  });
-}));
-
-/**
  * POST /api/admin/users/:id/vip
  * Grant or extend VIP membership days for a user
  */
@@ -137,25 +106,6 @@ adminRouter.post('/users/:id/vip', asyncHandler(async (req: Request, res: Respon
       : `已取消用户 ${targetUser.email} 的 VIP 会员权限`,
     user: result.user,
     vip_expires_at: result.vip_expires_at,
-  });
-}));
-
-/**
- * GET /api/admin/transactions
- * Global credit transaction ledger
- */
-adminRouter.get('/transactions', asyncHandler(async (req: Request, res: Response) => {
-  const page = parseInt(req.query.page as string, 10) || 1;
-  const limit = parseInt(req.query.limit as string, 10) || 20;
-  const userId = typeof req.query.userId === 'string' ? req.query.userId : undefined;
-  const actionType = typeof req.query.actionType === 'string' ? req.query.actionType : undefined;
-
-  const result = await listAdminTransactions({ page, limit, userId, actionType });
-  res.json({
-    success: true,
-    ...result,
-    page,
-    limit,
   });
 }));
 

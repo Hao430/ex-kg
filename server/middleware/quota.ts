@@ -3,7 +3,7 @@ import { assertCanInfer } from '../services/quota.service.js';
 import { ForbiddenError } from '../lib/errors.js';
 
 /**
- * AI 推理配额中间件（Spec B1/B2，替换旧点数 quotaMiddleware）：
+ * AI 推理配额中间件（Spec B1/B2，替换旧版 quotaMiddleware）：
  * - VIP 过期 → 403 VIP_EXPIRED（禁推理）
  * - 体验版目标画布 chat 节点 ≥ 10 → 403 NODE_LIMIT_REACHED
  * - VIP 有效 / Admin → 放行

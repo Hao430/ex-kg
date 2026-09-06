@@ -1,12 +1,9 @@
 import { findUserById, updateVipMembership } from '../repositories/user.repository.js';
 import {
-  adjustUserCredits,
   createOrder,
 } from '../repositories/billing.repository.js';
 import { NotFoundError } from '../lib/errors.js';
 import type { UserRecord } from '../core/records.js';
-
-export { deductCredits } from '../repositories/billing.repository.js';
 
 /**
  * Subscribe user to a time-based membership plan (weekly, monthly, yearly)
@@ -54,19 +51,4 @@ export async function subscribeUserPlan(data: {
   }
 
   return { role: 'vip', vip_expires_at: newExpiresAt, user: updated };
-}
-
-/**
- * 自助充值（demo 用途）
- */
-export async function recharge(data: {
-  userId: string;
-  amount: number;
-}): Promise<{ newBalance: number; transactionId: string }> {
-  return adjustUserCredits({
-    userId: data.userId,
-    amount: data.amount,
-    operatorId: data.userId,
-    reason: `自主充值: +${data.amount} 点`,
-  });
 }

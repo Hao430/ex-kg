@@ -31,7 +31,6 @@ export async function initDbSchema(): Promise<boolean> {
         name VARCHAR(100) DEFAULT '' NOT NULL,
         avatar TEXT,
         role VARCHAR(20) DEFAULT 'user' NOT NULL CHECK (role IN ('user', 'vip', 'admin')),
-        credits_balance BIGINT DEFAULT 50000 NOT NULL CHECK (credits_balance >= 0),
         vip_expires_at TIMESTAMPTZ,
         is_active BOOLEAN DEFAULT TRUE NOT NULL,
         failed_attempts INT DEFAULT 0 NOT NULL,
@@ -153,21 +152,7 @@ export async function initDbSchema(): Promise<boolean> {
       ALTER TABLE edges ADD COLUMN IF NOT EXISTS animated BOOLEAN DEFAULT FALSE;
     `);
 
-    // 6. Credit transactions table
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS credit_transactions (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        canvas_id VARCHAR(64) REFERENCES canvases(id) ON DELETE SET NULL,
-        model_name VARCHAR(64) NOT NULL,
-        tokens_consumed INT NOT NULL,
-        balance_after BIGINT NOT NULL,
-        action_type VARCHAR(32) DEFAULT 'ai_chat',
-        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
-      );
-    `);
-
-    // 6.1 Orders (充值与会员订阅订单表)
+    // 6. Orders (会员订阅订单表)
     await client.query(`
       CREATE TABLE IF NOT EXISTS orders (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -391,7 +376,6 @@ export async function initDbSchema(): Promise<boolean> {
       CREATE INDEX IF NOT EXISTS idx_canvases_user_updated ON canvases(user_id, updated_at DESC);
       CREATE INDEX IF NOT EXISTS idx_nodes_canvas_id ON nodes(canvas_id);
       CREATE INDEX IF NOT EXISTS idx_edges_canvas_id ON edges(canvas_id);
-      CREATE INDEX IF NOT EXISTS idx_transactions_user ON credit_transactions(user_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_orders_user_created ON orders(user_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_orders_order_no ON orders(order_no);
       CREATE INDEX IF NOT EXISTS idx_ai_logs_user ON ai_request_logs(user_id, created_at DESC);
@@ -399,6 +383,10 @@ export async function initDbSchema(): Promise<boolean> {
       CREATE INDEX IF NOT EXISTS idx_nodes_fulltext ON nodes
         USING GIN (to_tsvector('simple', COALESCE(title, '') || ' ' || COALESCE(question, '') || ' ' || COALESCE(answer, '') || ' ' || COALESCE(content, '') || ' ' || COALESCE(note, '')));
     `);
+
+    // C 组清理迁移：点数体系已下线，删除历史遗留列与流水表
+    await client.query(`ALTER TABLE users DROP COLUMN IF EXISTS credits_balance;`);
+    await client.query(`DROP TABLE IF EXISTS credit_transactions;`);
 
     // Seed default admin in PG if table is empty
     const usersCountRes = await client.query('SELECT COUNT(*) as count FROM users');
@@ -408,11 +396,11 @@ export async function initDbSchema(): Promise<boolean> {
       const vipHash = await hashPassword('Vip123456!');
 
       await client.query(
-        `INSERT INTO users (id, email, password_hash, name, role, credits_balance)
+        `INSERT INTO users (id, email, password_hash, name, role)
          VALUES
-           ('00000000-0000-0000-0000-000000000001', 'admin@deepdive.ai', $1, '系统管理员', 'admin', 200000),
-           ('00000000-0000-0000-0000-000000000002', 'user@deepdive.ai', $2, '探索先锋', 'user', 50000),
-           ('00000000-0000-0000-0000-000000000003', 'vip@deepdive.ai', $3, '高级智囊', 'vip', 100000)
+           ('00000000-0000-0000-0000-000000000001', 'admin@deepdive.ai', $1, '系统管理员', 'admin'),
+           ('00000000-0000-0000-0000-000000000002', 'user@deepdive.ai', $2, '探索先锋', 'user'),
+           ('00000000-0000-0000-0000-000000000003', 'vip@deepdive.ai', $3, '高级智囊', 'vip')
          ON CONFLICT (email) DO NOTHING`,
         [adminHash, userHash, vipHash]
       );

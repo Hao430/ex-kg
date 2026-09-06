@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { deleteSession } from '../repositories/session.repository.js';
 import { signUp, signIn, updateProfile } from '../services/auth.service.js';
-import { subscribeUserPlan, recharge } from '../services/billing.service.js';
+import { subscribeUserPlan } from '../services/billing.service.js';
 import { submitFeedback } from '../services/feedback.service.js';
 import { asyncHandler } from '../lib/async-handler.js';
 import { validate } from '../lib/validate.js';
@@ -40,10 +40,6 @@ const SubscribeSchema = z.object({
   plan: z.enum(['weekly', 'monthly', 'yearly']),
 });
 
-const RechargeSchema = z.object({
-  amount: z.number().int().positive('充值点数必须为正整数'),
-});
-
 /**
  * Set session cookie (7 days)
  */
@@ -63,7 +59,6 @@ function publicUser(user: {
   name: string;
   avatar?: string;
   role: string;
-  credits_balance: number;
   vip_expires_at?: string | null;
   is_active?: boolean;
   created_at?: string;
@@ -75,14 +70,13 @@ function publicUser(user: {
     name: user.name,
     avatar: user.avatar,
     role: user.role,
-    credits_balance: user.credits_balance,
     vip_expires_at: user.vip_expires_at,
   };
 }
 
 /**
  * POST /api/auth/sign-up
- * Register a new user with 50,000 initial credits & auto session cookie
+ * Register a new user & auto session cookie
  */
 authRouter.post('/sign-up', asyncHandler(async (req: Request, res: Response) => {
   const { email, password, name } = validate(SignUpSchema, req.body);
@@ -98,7 +92,7 @@ authRouter.post('/sign-up', asyncHandler(async (req: Request, res: Response) => 
 
   res.status(201).json({
     success: true,
-    message: '注册成功，已获赠 50,000 点新手探索算力！',
+    message: '注册成功，欢迎加入 DeepDive！',
     user: publicUser(user),
     token,
   });
@@ -157,7 +151,6 @@ authRouter.get('/me', authMiddleware, (req: Request, res: Response) => {
       name: user.name,
       avatar: user.avatar,
       role: user.role,
-      credits_balance: user.credits_balance,
       vip_expires_at: user.vip_expires_at,
       is_active: user.is_active,
       created_at: user.created_at,
@@ -190,7 +183,6 @@ authRouter.post('/profile', authMiddleware, asyncHandler(async (req: Request, re
       name: updated.name,
       avatar: updated.avatar,
       role: updated.role,
-      credits_balance: updated.credits_balance,
       vip_expires_at: updated.vip_expires_at,
       is_active: updated.is_active,
       created_at: updated.created_at,
@@ -247,30 +239,8 @@ authRouter.post('/subscribe', authMiddleware, asyncHandler(async (req: Request, 
       email: updatedUser.email,
       name: updatedUser.name,
       role: updatedUser.role,
-      credits_balance: updatedUser.credits_balance,
       vip_expires_at: updatedUser.vip_expires_at,
       is_active: updatedUser.is_active,
     },
-  });
-}));
-
-/**
- * POST /api/auth/recharge
- * Allow self-service top-up for testing / demo
- */
-authRouter.post('/recharge', authMiddleware, asyncHandler(async (req: Request, res: Response) => {
-  const { amount } = validate(RechargeSchema, req.body);
-  const user = req.user!;
-
-  const { newBalance, transactionId } = await recharge({
-    userId: user.id,
-    amount,
-  });
-
-  res.json({
-    success: true,
-    message: `成功充值 ${amount} 点 AI 算力！`,
-    credits_balance: newBalance,
-    transactionId,
   });
 }));

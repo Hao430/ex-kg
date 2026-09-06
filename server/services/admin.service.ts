@@ -1,23 +1,17 @@
 import { findUserById, updateVipMembership, updateUserStatus } from '../repositories/user.repository.js';
 import {
-  adjustUserCredits,
-} from '../repositories/billing.repository.js';
-import {
   listAdminUsers,
-  listAdminTransactions,
   getAdminOverview,
 } from '../repositories/admin.repository.js';
 import { getAiModelConfig, saveAiModelConfig } from '../repositories/ai.repository.js';
 import { NotFoundError } from '../lib/errors.js';
-import type { AiModelConfig, CreditTransactionRecord, UserRecord } from '../core/records.js';
+import type { AiModelConfig, UserRecord } from '../core/records.js';
 
 export {
   listAdminUsers,
-  listAdminTransactions,
   getAdminOverview,
 } from '../repositories/admin.repository.js';
 export { updateUserStatus } from '../repositories/user.repository.js';
-export { adjustUserCredits } from '../repositories/billing.repository.js';
 
 export type AdminOverview = Awaited<ReturnType<typeof getAdminOverview>>;
 

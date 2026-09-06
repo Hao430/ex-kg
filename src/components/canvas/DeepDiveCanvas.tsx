@@ -219,7 +219,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
   } | null>(null);
   const renderWarning = useRenderMonitor('DeepDiveCanvas');
   const reactFlowInstance = useReactFlow();
-  const { isVip, updateCredits, openAuthModal, openRechargeModal } = useAuth();
+  const { isVip, openAuthModal, openRechargeModal } = useAuth();
 
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
@@ -406,7 +406,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       
       const timeoutId = setTimeout(() => {
         if (!isCompleted) {
-          setApiWarning('AI 模型响应较慢，由于云端算力排队或并发较高，请您耐心等待...');
+          setApiWarning('AI 模型响应较慢，由于云端推理排队或并发较高，请您耐心等待...');
           setTimeout(() => setApiWarning(null), 5000);
         }
       }, 10000); // 10 seconds gentle prompt
@@ -435,10 +435,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
 
           if (response.status === 401) {
             openAuthModal('signin');
-            errDetail = '请先登录后再提问，新用户赠送 50,000 算力点数';
-          } else if (response.status === 402) {
-            openRechargeModal();
-            errDetail = 'AI 算力点数不足（当前余额为 0），请充值后继续使用';
+            errDetail = '请先登录后再提问，欢迎加入 DeepDive 开启深度探索';
           }
 
           throw new Error(errDetail);
@@ -459,7 +456,6 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
                   try {
                     const parsed = JSON.parse(line.slice(6));
                     if (parsed.grounding) receivedGrounding = parsed.grounding;
-                    if (typeof parsed.creditsBalance === 'number') updateCredits(parsed.creditsBalance);
                     if (parsed.text) rawAccumulatedText += parsed.text;
                   } catch {
                     // Ignore parse error on partial chunks
@@ -485,15 +481,9 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
                 if (parsed.grounding) {
                   receivedGrounding = parsed.grounding;
                 }
-                if (typeof parsed.creditsBalance === 'number') {
-                  updateCredits(parsed.creditsBalance);
-                }
                 if (parsed.done) {
                   if (parsed.grounding) {
                     receivedGrounding = parsed.grounding;
-                  }
-                  if (typeof parsed.creditsBalance === 'number') {
-                    updateCredits(parsed.creditsBalance);
                   }
                   streamCompleted = true;
                   break;
