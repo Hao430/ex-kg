@@ -13,7 +13,17 @@ export const inMemoryStore = {
   aiRequestLogs: [] as import('./records.js').AiRequestLogRecord[],
   systemSettings: new Map<string, any>(),
   feedbacks: [] as import('./records.js').FeedbackRecord[],
+  auditLogs: [] as import('./records.js').AuditLogRecord[],
 };
+
+/** 审计日志内存上限：最新在前，超出裁剪最旧记录 */
+const AUDIT_LOGS_MAX = 1000;
+
+export function trimAuditLogs(): void {
+  if (inMemoryStore.auditLogs.length > AUDIT_LOGS_MAX) {
+    inMemoryStore.auditLogs.length = AUDIT_LOGS_MAX;
+  }
+}
 
 /**
  * Seed default users in inMemoryStore

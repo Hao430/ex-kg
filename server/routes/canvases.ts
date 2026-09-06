@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { z } from 'zod';
 import {
   listUserCanvases,
   getCanvasOrFail,
@@ -8,8 +9,30 @@ import {
 } from '../services/canvas.service.js';
 import { asyncHandler } from '../lib/async-handler.js';
 import { authMiddleware } from '../middleware/auth.js';
+import { validate } from '../lib/validate.js';
 
 export const canvasesRouter = Router();
+
+/**
+ * Spec F3：POST /api/canvases/:id/save 入参 zod 校验（id 由路由 params 提供）
+ */
+const SaveCanvasSchema = z.object({
+  id: z.string().optional(),
+  title: z.string(),
+  description: z.string().optional(),
+  viewport: z
+    .object({
+      x: z.number(),
+      y: z.number(),
+      zoom: z.number(),
+    })
+    .optional(),
+  defaultModel: z.string().optional(),
+  enableWebSearch: z.boolean().optional(),
+  nodes: z.array(z.record(z.string(), z.any())).default([]),
+  edges: z.array(z.record(z.string(), z.any())).default([]),
+  expectedUpdatedAt: z.string().datetime({ message: 'expectedUpdatedAt 必须是 ISO 时间串' }).optional(),
+});
 
 // Apply auth to all canvas management routes for multi-tenant isolation
 canvasesRouter.use(authMiddleware);
@@ -43,19 +66,19 @@ canvasesRouter.get('/:id', asyncHandler(async (req: Request, res: Response) => {
 canvasesRouter.post('/:id/save', asyncHandler(async (req: Request, res: Response) => {
   const user = req.user!;
   const isAdmin = user.role === 'admin';
-  const { title, description, viewport, defaultModel, enableWebSearch, nodes, edges, expectedUpdatedAt } = req.body;
+  const body = validate(SaveCanvasSchema, req.body);
 
   const saved = await saveUserCanvas(
     {
       id: req.params.id,
-      title,
-      description,
-      viewport,
-      defaultModel,
-      enableWebSearch,
-      nodes: nodes || [],
-      edges: edges || [],
-      expectedUpdatedAt,
+      title: body.title,
+      description: body.description,
+      viewport: body.viewport,
+      defaultModel: body.defaultModel,
+      enableWebSearch: body.enableWebSearch,
+      nodes: body.nodes,
+      edges: body.edges,
+      expectedUpdatedAt: body.expectedUpdatedAt,
     },
     user.id,
     isAdmin

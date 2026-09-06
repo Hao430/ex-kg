@@ -87,6 +87,18 @@ export interface CanvasRecord {
   edges?: any[];
 }
 
+export interface AuditLogRecord {
+  id: string;
+  user_id?: string | null;
+  action: string;
+  target_type?: string | null;
+  target_id?: string | null;
+  ip_address?: string | null;
+  user_agent?: string | null;
+  details?: any;
+  created_at: string;
+}
+
 export interface DbStatus {
   connected: boolean;
   type: 'postgresql' | 'in-memory-fallback';

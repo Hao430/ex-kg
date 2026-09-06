@@ -8,8 +8,9 @@ import {
   getUserOrFail,
   getMaskedModelConfig,
   resolveConfigForSave,
-  saveAiModelConfig,
+  saveModelConfigWithAudit,
   listAllOrders,
+  listAuditLogs,
 } from '../services/admin.service.js';
 import { getAiModelConfig } from '../services/ai.service.js';
 import { asyncHandler } from '../lib/async-handler.js';
@@ -44,6 +45,25 @@ adminRouter.get('/users', asyncHandler(async (req: Request, res: Response) => {
   const status = typeof req.query.status === 'string' ? req.query.status : undefined;
 
   const result = await listAdminUsers({ page, limit, search, role, status });
+  res.json({
+    success: true,
+    ...result,
+    page,
+    limit,
+  });
+}));
+
+/**
+ * GET /api/admin/audit-logs
+ * Paginated audit log query (Spec F2)
+ */
+adminRouter.get('/audit-logs', asyncHandler(async (req: Request, res: Response) => {
+  const page = parseInt(req.query.page as string, 10) || 1;
+  const limit = parseInt(req.query.limit as string, 10) || 10;
+  const action = typeof req.query.action === 'string' ? req.query.action : undefined;
+  const userId = typeof req.query.userId === 'string' ? req.query.userId : undefined;
+
+  const result = await listAuditLogs({ page, limit, action, userId });
   res.json({
     success: true,
     ...result,
@@ -90,7 +110,11 @@ adminRouter.put('/users/:id/status', asyncHandler(async (req: Request, res: Resp
     return;
   }
 
-  const updated = await updateUserStatus(targetUser.id, is_active);
+  const updated = await updateUserStatus(targetUser.id, is_active, {
+    actorId: req.user!.id,
+    ip: req.ip,
+    userAgent: req.headers['user-agent'],
+  });
   res.json({
     success: true,
     message: is_active ? '账号已成功解封' : '账号已被冻结并强制踢下线',
@@ -110,7 +134,13 @@ adminRouter.post('/users/:id/vip', asyncHandler(async (req: Request, res: Respon
   const { days } = validate(GrantVipSchema, req.body, 'INVALID_VIP_DAYS');
   const targetUser = await getUserOrFail(req.params.id);
 
-  const result = await grantUserVipDays({ userId: targetUser.id, days });
+  const result = await grantUserVipDays({
+    userId: targetUser.id,
+    days,
+    actorId: req.user!.id,
+    ip: req.ip,
+    userAgent: req.headers['user-agent'],
+  });
 
   const formattedDate = result.vip_expires_at
     ? new Date(result.vip_expires_at).toLocaleDateString('zh-CN', {
@@ -159,7 +189,11 @@ adminRouter.put('/model-config', asyncHandler(async (req: Request, res: Response
   const data = validate(ModelConfigSchema, req.body, 'INVALID_CONFIG');
   const resolved = await resolveConfigForSave(data);
 
-  const saved = await saveAiModelConfig(resolved, req.user?.email);
+  const saved = await saveModelConfigWithAudit(resolved, req.user?.email, {
+    actorId: req.user!.id,
+    ip: req.ip,
+    userAgent: req.headers['user-agent'],
+  });
 
   res.json({
     success: true,

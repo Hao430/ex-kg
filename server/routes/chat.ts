@@ -1,10 +1,32 @@
 import { Router, Request, Response } from 'express';
+import { z } from 'zod';
 import { GoogleGenAI } from '@google/genai';
 import { getAiModelConfig, recordAiRequestLog } from '../services/ai.service.js';
 import { authMiddleware, validateInputLimits, roleBasedRateLimiter } from '../middleware/auth.js';
 import { chatQuotaMiddleware } from '../middleware/quota.js';
+import { validate } from '../lib/validate.js';
+import { AppError } from '../lib/errors.js';
 
 export const chatRouter = Router();
+
+/**
+ * Spec F3：POST /api/chat 入参 zod 校验
+ * （长度规则仍由 validateInputLimits 中间件负责）
+ */
+const ChatSchema = z.object({
+  messages: z
+    .array(
+      z.object({
+        role: z.enum(['user', 'assistant', 'model']),
+        content: z.string(),
+      })
+    )
+    .min(1, '提问消息列表不能为空'),
+  model: z.string().optional(),
+  canvasId: z.string().nullable().optional(),
+  nodeId: z.string().nullable().optional(),
+  systemInstruction: z.string().optional(),
+});
 
 // Lazy GoogleGenAI initialization
 let genaiClient: GoogleGenAI | null = null;
@@ -100,9 +122,14 @@ chatRouter.post(
     validateInputLimits,
     chatQuotaMiddleware,
   async (req: Request, res: Response) => {
-    const { messages, model, systemInstruction, canvasId, nodeId } = req.body;
     const user = req.user!;
     const startTime = Date.now();
+
+    let messages: { role: string; content: string }[] = [];
+    let model: string | undefined;
+    let systemInstruction: string | undefined;
+    let canvasId: string | null | undefined;
+    let nodeId: string | null | undefined;
 
     // Set SSE headers
     res.setHeader('Content-Type', 'text/event-stream');
@@ -110,6 +137,9 @@ chatRouter.post(
     res.setHeader('Connection', 'keep-alive');
 
     try {
+      // Spec F3：zod 全入参校验（保留 validateInputLimits 中间件负责长度规则）
+      ({ messages, model, systemInstruction, canvasId, nodeId } = validate(ChatSchema, req.body));
+
       // 1. Fetch system AI model configuration
       const systemModelConfig = await getAiModelConfig();
 
@@ -488,6 +518,11 @@ chatRouter.post(
         throw lastError || new Error('All model candidates failed');
       }
     } catch (error: unknown) {
+      // Spec F3：zod 校验失败（ValidationError 等 AppError）→ 转对应状态码 JSON，而非 SSE 错误流
+      if (error instanceof AppError) {
+        res.status(error.status).json({ error: error.message, code: error.code });
+        return;
+      }
       console.error('Chat API Error:', error);
       const friendlyMsg = cleanErrorMessage(error);
       try {

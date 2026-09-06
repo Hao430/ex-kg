@@ -10,6 +10,7 @@ import {
 import { NotFoundError } from '../lib/errors.js';
 import { assertCanCreateBoard } from './quota.service.js';
 import { findUserById } from '../repositories/user.repository.js';
+import { recordAuditLog } from '../repositories/audit.repository.js';
 import type { CanvasRecord } from '../core/records.js';
 
 export async function listUserCanvases(userId: string | undefined, isAdmin: boolean): Promise<CanvasRecord[]> {
@@ -50,7 +51,16 @@ export async function saveUserCanvas(
 }
 
 export async function deleteUserCanvas(canvasId: string, userId: string, isAdmin: boolean): Promise<boolean> {
-  return deleteCanvas(canvasId, userId, isAdmin);
+  const success = await deleteCanvas(canvasId, userId, isAdmin);
+  if (success) {
+    await recordAuditLog({
+      userId,
+      action: 'canvas_delete',
+      targetType: 'canvas',
+      targetId: canvasId,
+    });
+  }
+  return success;
 }
 
 export async function searchUserNodes(queryText: string, canvasId?: string, userId?: string): Promise<any[]> {

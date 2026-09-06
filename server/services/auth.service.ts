@@ -9,6 +9,7 @@ import {
   updateUserProfile,
 } from '../repositories/user.repository.js';
 import { createSession } from '../repositories/session.repository.js';
+import { recordAuditLog } from '../repositories/audit.repository.js';
 import type { UserRecord } from '../core/records.js';
 
 export interface AuthResult {
@@ -47,6 +48,13 @@ export async function signUp(data: {
     userAgent: data.userAgent,
   });
 
+  await recordAuditLog({
+    userId: newUser.id,
+    action: 'sign_up',
+    ip: data.ip,
+    userAgent: data.userAgent,
+  });
+
   return { user: newUser, token };
 }
 
@@ -66,11 +74,13 @@ export async function signIn(data: {
   }
 
   if (!user.is_active) {
+    await recordAuditLog({ userId: user.id, action: 'sign_in_failed', details: { reason: 'account_frozen' }, ip: data.ip, userAgent: data.userAgent });
     throw new ForbiddenError('该账户已被运营管理员冻结，无法登录', 'ACCOUNT_FROZEN');
   }
 
   if (isAccountLocked(user.locked_until)) {
     const remainingMinutes = getRemainingLockMinutes(user.locked_until!);
+    await recordAuditLog({ userId: user.id, action: 'sign_in_failed', details: { reason: 'account_locked' }, ip: data.ip, userAgent: data.userAgent });
     throw new LockedError(
       `连续输错密码达 5 次，账户已被临时锁定。请在 ${remainingMinutes} 分钟后重试`,
       { remainingMinutes }
@@ -80,6 +90,7 @@ export async function signIn(data: {
   const isMatch = await verifyPassword(data.password, user.password_hash);
   if (!isMatch) {
     const { failedAttempts, lockedUntil } = await recordFailedLogin(user.id);
+    await recordAuditLog({ userId: user.id, action: 'sign_in_failed', details: { reason: 'wrong_password', failedAttempts }, ip: data.ip, userAgent: data.userAgent });
     if (lockedUntil) {
       throw new LockedError('连续 5 次输错密码，账号已被锁定 15 分钟', { remainingMinutes: 15 });
     }
@@ -99,6 +110,13 @@ export async function signIn(data: {
     userId: user.id,
     token,
     ipAddress: data.ip,
+    userAgent: data.userAgent,
+  });
+
+  await recordAuditLog({
+    userId: user.id,
+    action: 'sign_in',
+    ip: data.ip,
     userAgent: data.userAgent,
   });
 

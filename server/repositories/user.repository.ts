@@ -199,6 +199,7 @@ export async function updateUserStatus(userId: string, isActive: boolean): Promi
         [isActive, userId]
       );
       if (!isActive) {
+        // 冻结强制踢下线（保留原语义）
         await p.query('DELETE FROM sessions WHERE user_id = $1', [userId]);
       }
       if (res.rows.length > 0) return res.rows[0];

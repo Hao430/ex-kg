@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { deleteSession } from '../repositories/session.repository.js';
+import { deleteSession, findSession } from '../repositories/session.repository.js';
+import { recordAuditLog } from '../repositories/audit.repository.js';
 import { signUp, signIn, updateProfile } from '../services/auth.service.js';
 import { subscribeUserPlan } from '../services/billing.service.js';
 import { submitFeedback } from '../services/feedback.service.js';
@@ -131,7 +132,14 @@ authRouter.post('/sign-in', loginRateLimiter, asyncHandler(async (req: Request, 
 authRouter.post('/sign-out', asyncHandler(async (req: Request, res: Response) => {
   const token = req.cookies?.session_token || req.headers.authorization?.slice(7).trim();
   if (token) {
+    const result = await findSession(token).catch(() => null);
     await deleteSession(token);
+    await recordAuditLog({
+      userId: result?.user.id || null,
+      action: 'sign_out',
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
   }
   res.clearCookie('session_token', { path: '/' });
   res.json({ success: true, message: '已安全登出' });

@@ -6,6 +6,7 @@ import {
 } from '../repositories/billing.repository.js';
 import { ConflictError, ForbiddenError, NotFoundError } from '../lib/errors.js';
 import { mockProvider } from './payment/mock-provider.js';
+import { recordAuditLog } from '../repositories/audit.repository.js';
 import type { OrderRecord, UserRecord } from '../core/records.js';
 
 const planInfoMap = {
@@ -41,6 +42,14 @@ export async function activateOrder(order: OrderRecord): Promise<{ role: 'vip'; 
   if (!updated) {
     throw new NotFoundError('用户不存在');
   }
+
+  await recordAuditLog({
+    userId: order.user_id,
+    action: 'subscribe',
+    targetType: 'order',
+    targetId: order.order_no,
+    details: { planId: order.plan_id, orderNo: order.order_no },
+  });
 
   return { role: 'vip', vip_expires_at: newExpiresAt, user: updated };
 }
