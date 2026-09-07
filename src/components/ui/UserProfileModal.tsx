@@ -12,6 +12,7 @@ import {
   Loader2,
   Camera,
   Trash2,
+  KeyRound,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -32,7 +33,7 @@ const PRESET_AVATARS = [
 ];
 
 export const UserProfileModal: React.FC = () => {
-  const { user, isVip, userProfileModalOpen, closeUserProfileModal, updateProfile, openRechargeModal, logout } = useAuth();
+  const { user, isVip, userProfileModalOpen, closeUserProfileModal, updateProfile, changePassword, openRechargeModal, logout } = useAuth();
 
   const [name, setName] = useState('');
   const [selectedAvatar, setSelectedAvatar] = useState('🧠');
@@ -40,6 +41,12 @@ export const UserProfileModal: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [statusMsg, setStatusMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // 修改密码
+  const [oldPassword, setOldPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [changingPassword, setChangingPassword] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -97,6 +104,38 @@ export const UserProfileModal: React.FC = () => {
     reader.readAsDataURL(file);
   };
 
+  // 已登录修改密码：成功后服务端踢全部会话，前端同步登出并回到登录态
+  const handleChangePassword = async () => {
+    if (!oldPassword || !newPassword) {
+      setStatusMsg({ type: 'error', text: '请填写旧密码与新密码' });
+      return;
+    }
+    if (newPassword.length < 6) {
+      setStatusMsg({ type: 'error', text: '新密码长度至少为 6 位' });
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setStatusMsg({ type: 'error', text: '两次输入的新密码不一致' });
+      return;
+    }
+
+    setChangingPassword(true);
+    setStatusMsg(null);
+    const res = await changePassword(oldPassword, newPassword);
+    setChangingPassword(false);
+
+    if (res.success) {
+      setOldPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      closeUserProfileModal();
+      await logout();
+      alert('密码已修改，请使用新密码重新登录');
+    } else {
+      setStatusMsg({ type: 'error', text: res.error || '修改密码失败，请重试' });
+    }
+  };
+
   // Spec F4：自助注销账号（软删除，30 天内可联系管理员恢复）
   const handleDeleteAccount = async () => {
     if (!confirm('注销后 30 天内可联系管理员恢复，确认注销？')) return;
@@ -151,7 +190,7 @@ export const UserProfileModal: React.FC = () => {
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: 10 }}
           transition={{ duration: 0.2 }}
-          className="relative w-full max-w-lg bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden text-slate-100"
+          className="relative w-full max-w-lg max-h-[90vh] overflow-y-auto bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl text-slate-100"
         >
           {/* Header Banner */}
           <div className="relative h-28 bg-gradient-to-r from-indigo-950 via-purple-950 to-slate-900 border-b border-slate-800/80 p-6 flex justify-between items-start">
@@ -261,12 +300,92 @@ export const UserProfileModal: React.FC = () => {
                 <input
                   id="user-profile-name-input"
                   type="text"
+                  autoComplete="nickname"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   maxLength={30}
                   placeholder="请输入您的昵称"
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition"
                 />
+              </div>
+            </div>
+
+            {/* Change Password Card */}
+            <div className="bg-slate-950/70 border border-slate-800/90 rounded-xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <KeyRound className="w-4 h-4 text-indigo-400" />
+                  <span className="text-sm font-semibold text-slate-200">修改密码</span>
+                </div>
+                <span className="text-[11px] text-slate-500">修改成功后需重新登录</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                <input
+                  id="user-profile-old-password"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleChangePassword();
+                    }
+                  }}
+                  type="password"
+                  value={oldPassword}
+                  onChange={(e) => setOldPassword(e.target.value)}
+                  placeholder="旧密码"
+                  autoComplete="current-password"
+                  className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition"
+                />
+                <input
+                  id="user-profile-new-password"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleChangePassword();
+                    }
+                  }}
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="新密码（至少 6 位）"
+                  autoComplete="new-password"
+                  className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition"
+                />
+                <input
+                  id="user-profile-confirm-password"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleChangePassword();
+                    }
+                  }}
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="确认新密码"
+                  autoComplete="new-password"
+                  className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition"
+                />
+              </div>
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  id="user-profile-change-password-btn"
+                  onClick={handleChangePassword}
+                  disabled={changingPassword}
+                  className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 disabled:opacity-50 rounded-lg transition"
+                >
+                  {changingPassword ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      提交中...
+                    </>
+                  ) : (
+                    <>
+                      <KeyRound className="w-3.5 h-3.5" />
+                      确认修改
+                    </>
+                  )}
+                </button>
               </div>
             </div>
 

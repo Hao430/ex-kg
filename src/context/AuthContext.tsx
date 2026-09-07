@@ -9,8 +9,8 @@ interface AuthContextType {
   register: (email: string, password: string, name?: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
   updateProfile: (data: { name?: string; avatar?: string }) => Promise<{ success: boolean; error?: string }>;
+  changePassword: (oldPassword: string, newPassword: string) => Promise<{ success: boolean; error?: string }>;
   submitFeedback: (data: FeedbackPayload) => Promise<{ success: boolean; message?: string; error?: string }>;
-  subscribe: (plan: 'weekly' | 'monthly' | 'yearly') => Promise<{ success: boolean; message?: string; error?: string }>;
   // Modals state
   authModalOpen: boolean;
   authModalMode: 'signin' | 'signup';
@@ -146,6 +146,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const changePassword = async (oldPassword: string, newPassword: string) => {
+    try {
+      const res = await fetch('/api/auth/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ oldPassword, newPassword }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        return { success: false, error: data.error || '修改密码失败' };
+      }
+      // 服务端已踢全部会话，前端同步登出
+      setUser(null);
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e?.message || '网络连接异常' };
+    }
+  };
+
   const submitFeedback = async (payload: FeedbackPayload) => {
     try {
       const res = await fetch('/api/auth/feedback', {
@@ -172,27 +192,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
     } catch {}
     setUser(null);
-  };
-
-  const subscribe = async (plan: 'weekly' | 'monthly' | 'yearly') => {
-    try {
-      const res = await fetch('/api/auth/subscribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ plan }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        return { success: false, error: data.error || '开通订阅失败' };
-      }
-      if (data.user) {
-        setUser(data.user);
-      }
-      return { success: true, message: data.message };
-    } catch (e: any) {
-      return { success: false, error: e?.message || '开通订阅异常' };
-    }
   };
 
   const openAuthModal = useCallback((mode: 'signin' | 'signup' = 'signin') => {
@@ -248,8 +247,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         register,
         logout,
         updateProfile,
+        changePassword,
         submitFeedback,
-        subscribe,
         authModalOpen,
         authModalMode,
         openAuthModal,

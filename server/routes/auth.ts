@@ -2,10 +2,10 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { deleteSession, findSession } from '../repositories/session.repository.js';
 import { recordAuditLog } from '../repositories/audit.repository.js';
-import { signUp, signIn, updateProfile, resendVerification, requestPasswordReset, resetPassword, deleteOwnAccount } from '../services/auth.service.js';
+import { signUp, signIn, updateProfile, resendVerification, requestPasswordReset, resetPassword, changeOwnPassword, deleteOwnAccount } from '../services/auth.service.js';
 import { markEmailVerifiedByToken } from '../repositories/user.repository.js';
 import { ValidationError } from '../lib/errors.js';
-import { subscribeUserPlan } from '../services/billing.service.js';
+import { subscribeUserPlan, isPaymentEnabled } from '../services/billing.service.js';
 import { submitFeedback } from '../services/feedback.service.js';
 import { asyncHandler } from '../lib/async-handler.js';
 import { validate } from '../lib/validate.js';
@@ -50,6 +50,11 @@ const ForgotPasswordSchema = z.object({
 const ResetPasswordSchema = z.object({
   token: z.string().min(1, '缺少重置令牌'),
   password: z.string().min(6, '密码长度至少为 6 位'),
+});
+
+const ChangePasswordSchema = z.object({
+  oldPassword: z.string().min(1, '请输入旧密码'),
+  newPassword: z.string().min(6, '新密码长度至少为 6 位'),
 });
 
 /**
@@ -277,6 +282,24 @@ authRouter.post('/reset-password', asyncHandler(async (req: Request, res: Respon
 }));
 
 /**
+ * POST /api/auth/change-password（登录态）
+ * 已登录修改密码：旧密码校验 → 更新 → 踢全部会话（需重新登录）。
+ * 复用 loginRateLimiter 防旧密码爆破。
+ */
+authRouter.post('/change-password', authMiddleware, loginRateLimiter, asyncHandler(async (req: Request, res: Response) => {
+  const { oldPassword, newPassword } = validate(ChangePasswordSchema, req.body);
+  await changeOwnPassword({
+    userId: req.user!.id,
+    oldPassword,
+    newPassword,
+    ip: req.ip,
+    userAgent: req.headers['user-agent'],
+  });
+  res.clearCookie('session_token', { path: '/' });
+  res.json({ success: true, message: '密码已修改，请使用新密码重新登录' });
+}));
+
+/**
  * POST /api/auth/feedback
  * Submit user feedback & suggestion
  */
@@ -298,8 +321,13 @@ authRouter.post('/feedback', asyncHandler(async (req: Request, res: Response) =>
 /**
  * POST /api/auth/subscribe
  * Subscribe to weekly / monthly / yearly Pro membership
+ * 一期未接真实支付，PAYMENT_ENABLED 默认禁用（503），过渡走微信人工充值。
  */
 authRouter.post('/subscribe', authMiddleware, asyncHandler(async (req: Request, res: Response) => {
+  if (!isPaymentEnabled()) {
+    res.status(503).json({ error: '在线支付暂未开放，请通过客服微信人工充值开通会员', code: 'PAYMENT_DISABLED' });
+    return;
+  }
   const { plan } = validate(SubscribeSchema, req.body);
   const user = req.user!;
 

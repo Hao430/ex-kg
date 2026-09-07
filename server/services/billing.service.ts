@@ -18,6 +18,14 @@ const planInfoMap = {
 export type SubscriptionPlan = keyof typeof planInfoMap;
 
 /**
+ * 一期未接真实支付，在线充值接口默认禁用（PAYMENT_ENABLED=true 才开放）。
+ * 过渡方案：微信人工充值 + Admin 后台赠 VIP（POST /api/admin/users/:id/vip）。
+ */
+export function isPaymentEnabled(): boolean {
+  return process.env.PAYMENT_ENABLED === 'true';
+}
+
+/**
  * Activate a paid order: extend VIP membership by order.durationDays
  * (base time = now, or existing expiry for renewal stacking; admin is never downgraded)
  */

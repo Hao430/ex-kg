@@ -177,23 +177,23 @@ chatRouter.post(
       const effectiveSystemInstruction = baseSystemInstruction + searchInstruction;
 
       // =========================================================================
-      // PATH A: OpenAI-Compatible Provider (DeepSeek, OpenAI, SiliconFlow, Kimi, etc.)
+      // PATH A: OpenAI-Compatible Provider（千问 Qwen 系列等）
+      // 切换到 OpenAI 兼容 Responses API，通过内置 web_search 工具实现联网搜索；
+      // 搜索来源（web_search_call.action.sources）映射为前端 grounding 面板结构。
       // =========================================================================
       if (systemModelConfig.provider === 'openai' && systemModelConfig.openai_api_key) {
         const baseUrl = (systemModelConfig.openai_base_url || 'https://api.openai.com/v1').replace(/\/+$/, '');
         const actualModelUsed = systemModelConfig.openai_model || model;
         const apiKey = systemModelConfig.openai_api_key;
-        const endpoint = `${baseUrl}/chat/completions`;
+        const endpoint = `${baseUrl}/responses`;
 
-        const openaiMessages = [
-          { role: 'system', content: effectiveSystemInstruction },
-          ...messages.map((m: { role: string; content: string }) => ({
-            role: m.role === 'assistant' ? 'assistant' : 'user',
-            content: m.content,
-          })),
-        ];
+        // Responses API 输入：EasyInputMessage 数组（system 指令走顶层 instructions）
+        const responsesInput = messages.map((m: { role: string; content: string }) => ({
+          role: m.role === 'assistant' ? 'assistant' : 'user',
+          content: m.content,
+        }));
 
-        const openAiResponse = await fetch(endpoint, {
+        const responsesResponse = await fetch(endpoint, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -201,29 +201,71 @@ chatRouter.post(
           },
           body: JSON.stringify({
             model: actualModelUsed,
-            messages: openaiMessages,
+            instructions: effectiveSystemInstruction,
+            input: responsesInput,
+            tools: [{ type: 'web_search' }],
             stream: true,
+            enable_thinking: false, // 关闭思维链：画布卡片只需最终回答，且首字更快
             temperature: systemModelConfig.temperature ?? 0.7,
-            max_tokens: systemModelConfig.max_tokens ?? 4096,
+            max_output_tokens: systemModelConfig.max_tokens ?? 4096,
+            store: false,
           }),
         });
 
-        if (!openAiResponse.ok) {
-          const errBody = await openAiResponse.text();
+        if (!responsesResponse.ok) {
+          const errBody = await responsesResponse.text();
           let parsedErr = errBody;
           try {
             const j = JSON.parse(errBody);
             parsedErr = j?.error?.message || j?.message || errBody;
           } catch {}
-          throw new Error(`OpenAI 接口调用失败 (HTTP ${openAiResponse.status}): ${parsedErr}`);
+          throw new Error(`OpenAI 接口调用失败 (HTTP ${responsesResponse.status}): ${parsedErr}`);
         }
 
-        if (!openAiResponse.body) {
+        if (!responsesResponse.body) {
           throw new Error('OpenAI 接口未返回有效数据流');
         }
 
         let accumulatedResponseText = '';
-        const reader = openAiResponse.body.getReader();
+        const accumulatedSources: { index: number; title: string; uri: string; domain: string }[] = [];
+        const seenUris = new Set<string>();
+        const accumulatedQueries: string[] = [];
+        const seenQueries = new Set<string>();
+        let usageTokens: { input?: number; output?: number; total?: number } | null = null;
+
+        const collectQueries = (q: unknown) => {
+          const list = Array.isArray(q) ? q : typeof q === 'string' ? [q] : [];
+          for (const item of list) {
+            if (typeof item === 'string' && item.trim() && !seenQueries.has(item.trim())) {
+              seenQueries.add(item.trim());
+              accumulatedQueries.push(item.trim());
+            }
+          }
+        };
+
+        const collectSources = (sources: unknown) => {
+          if (!Array.isArray(sources)) return;
+          for (const s of sources) {
+            const uri = typeof (s as any)?.url === 'string' ? (s as any).url : '';
+            if (uri && !seenUris.has(uri)) {
+              seenUris.add(uri);
+              let domain = '';
+              try {
+                domain = new URL(uri).hostname.replace(/^www\./, '');
+              } catch {
+                domain = uri;
+              }
+              accumulatedSources.push({
+                index: accumulatedSources.length + 1,
+                title: domain || `参考来源 [${accumulatedSources.length + 1}]`,
+                uri,
+                domain,
+              });
+            }
+          }
+        };
+
+        const reader = responsesResponse.body.getReader();
         const decoder = new TextDecoder('utf-8');
         let buffer = '';
 
@@ -238,41 +280,87 @@ chatRouter.post(
           for (const line of lines) {
             const trimmed = line.trim();
             if (!trimmed || trimmed.startsWith(':')) continue;
-            if (trimmed === 'data: [DONE]') continue;
+            if (!trimmed.startsWith('data:')) continue;
 
-            if (trimmed.startsWith('data: ')) {
-              const jsonStr = trimmed.slice(6);
-              try {
-                const chunk = JSON.parse(jsonStr);
-                const deltaContent = chunk?.choices?.[0]?.delta?.content || '';
-                if (deltaContent) {
-                  accumulatedResponseText += deltaContent;
-                  res.write(`data: ${JSON.stringify({ text: deltaContent })}\n\n`);
+            const jsonStr = trimmed.slice(5).trim();
+            let chunk: any;
+            try {
+              chunk = JSON.parse(jsonStr);
+            } catch {
+              continue; // 忽略非 JSON 行
+            }
+
+            switch (chunk?.type) {
+              case 'response.output_text.delta': {
+                const delta = chunk?.delta;
+                if (typeof delta === 'string' && delta) {
+                  accumulatedResponseText += delta;
+                  res.write(`data: ${JSON.stringify({ text: delta })}\n\n`);
                 }
-              } catch (e) {
-                // Ignore chunk parse errors
+                break;
               }
+              case 'response.output_item.done': {
+                // web_search_call 完成事件：提取搜索查询与来源 URL
+                if (chunk?.item?.type === 'web_search_call') {
+                  collectQueries(chunk.item.action?.query);
+                  collectQueries(chunk.item.action?.queries);
+                  collectSources(chunk.item.action?.sources);
+                  if (accumulatedSources.length > 0 || accumulatedQueries.length > 0) {
+                    res.write(
+                      `data: ${JSON.stringify({
+                        grounding: { sources: accumulatedSources, queries: accumulatedQueries },
+                      })}\n\n`
+                    );
+                  }
+                }
+                break;
+              }
+              case 'response.completed':
+              case 'response.incomplete': {
+                const u = chunk?.response?.usage;
+                if (u) {
+                  usageTokens = {
+                    input: typeof u.input_tokens === 'number' ? u.input_tokens : undefined,
+                    output: typeof u.output_tokens === 'number' ? u.output_tokens : undefined,
+                    total: typeof u.total_tokens === 'number' ? u.total_tokens : undefined,
+                  };
+                }
+                break;
+              }
+              case 'response.failed': {
+                throw new Error(chunk?.response?.error?.message || 'Responses API 调用失败');
+              }
+              default:
+                // response.created / in_progress / reasoning_text.* / content_part.* 等事件忽略
+                break;
             }
           }
         }
 
-        // Calculate token consumption
-        const promptChars = openaiMessages.reduce((acc, m) => acc + (m.content?.length || 0), 0);
-        const promptTokens = Math.ceil(promptChars / 3.5);
-        const responseTokens = Math.ceil(accumulatedResponseText.length / 2.5);
-        const totalTokensCount = Math.max(100, promptTokens + responseTokens);
+        // response.failed 场景：无任何文本输出则视为失败走容灾链路
+        if (!accumulatedResponseText && !usageTokens) {
+          throw new Error('Responses API 未返回有效输出');
+        }
+
+        // Token 消耗：优先 Responses usage，缺失时按字符数估算
+        const promptChars = (effectiveSystemInstruction.length +
+          messages.reduce((acc: number, m: { content: string }) => acc + (m.content?.length || 0), 0));
+        const promptTokens = usageTokens?.input ?? Math.ceil(promptChars / 3.5);
+        const responseTokens = usageTokens?.output ?? Math.ceil(accumulatedResponseText.length / 2.5);
+        const totalTokensCount =
+          usageTokens?.total ?? Math.max(100, (promptTokens as number) + (responseTokens as number));
 
         await recordAiRequestLog({
           userId: user.id,
           canvasId: canvasId || null,
           nodeId: nodeId || null,
           modelName: actualModelUsed,
-          promptTokens: promptTokens,
-          completionTokens: responseTokens,
+          promptTokens: promptTokens as number,
+          completionTokens: responseTokens as number,
           totalTokens: totalTokensCount,
           latencyMs: Date.now() - startTime,
           status: 'success',
-          groundingChunksCount: 0,
+          groundingChunksCount: accumulatedSources.length,
         });
 
         // Send final done event
@@ -282,8 +370,8 @@ chatRouter.post(
             modelUsed: actualModelUsed,
             tokensConsumed: totalTokensCount,
             grounding: {
-              sources: [],
-              queries: [],
+              sources: accumulatedSources,
+              queries: accumulatedQueries,
             },
           })}\n\n`
         );

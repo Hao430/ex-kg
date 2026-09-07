@@ -37,37 +37,12 @@ const PLANS: SubscriptionPlan[] = [
 ];
 
 export const RechargeModal: React.FC = () => {
-  const { user, isVip, rechargeModalOpen, closeRechargeModal, subscribe, openAuthModal, upgradeModalReason } = useAuth();
+  const { user, isVip, rechargeModalOpen, closeRechargeModal, upgradeModalReason } = useAuth();
   const [selectedPlan, setSelectedPlan] = useState<SubscriptionPlanId>('monthly');
-  const [loading, setLoading] = useState(false);
-  const [feedback, setFeedback] = useState<string | null>(null);
 
   if (!rechargeModalOpen) return null;
 
   const currentPlan = PLANS.find((p) => p.id === selectedPlan) || PLANS[1];
-
-  const handleSubscribe = async () => {
-    if (!user) {
-      closeRechargeModal();
-      openAuthModal('signin');
-      return;
-    }
-
-    setLoading(true);
-    setFeedback(null);
-    const res = await subscribe(currentPlan.id);
-    setLoading(false);
-
-    if (res.success) {
-      setFeedback(res.message || '恭喜开通 Pro 会员！');
-      setTimeout(() => {
-        closeRechargeModal();
-        setFeedback(null);
-      }, 1500);
-    } else {
-      setFeedback(res.error || '开通会员失败');
-    }
-  };
 
   const formatExpiry = (dateStr?: string | null) => {
     if (!dateStr) return '';
@@ -152,18 +127,6 @@ export const RechargeModal: React.FC = () => {
               <span className="font-semibold text-amber-900 dark:text-amber-200">
                 {formatExpiry(user.vip_expires_at)}
               </span>
-            </div>
-          )}
-
-          {feedback && (
-            <div
-              className={`mb-4 p-3 rounded-xl text-xs font-medium ${
-                feedback.includes('恭喜') || feedback.includes('成功')
-                  ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
-                  : 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 border border-rose-200 dark:border-rose-800'
-              }`}
-            >
-              {feedback}
             </div>
           )}
 
@@ -259,21 +222,11 @@ export const RechargeModal: React.FC = () => {
             </div>
           </div>
 
-          {/* Action button */}
-          <button
-            onClick={handleSubscribe}
-            disabled={loading}
-            className="w-full py-3 px-4 bg-gradient-to-r from-amber-500 via-indigo-600 to-indigo-700 hover:from-amber-600 hover:to-indigo-600 text-white rounded-xl text-sm font-semibold transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2 cursor-pointer disabled:opacity-70"
-          >
-            {loading ? (
-              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-            ) : (
-              <>
-                <Crown className="w-4 h-4 text-amber-200" />
-                {isVip ? `续费 ${currentPlan.name} (${currentPlan.price})` : `立即开通 ${currentPlan.name} (${currentPlan.price})`}
-              </>
-            )}
-          </button>
+          {/* 一期未接在线支付：仅展示档位，引导人工充值（公告见上方） */}
+          <div className="w-full py-3 px-4 rounded-xl text-sm font-medium flex items-center justify-center gap-2 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800/60">
+            <MessageCircle className="w-4 h-4" />
+            请添加客服微信转账充值，站长确认到账后开通所选档位
+          </div>
 
           <div className="mt-4 flex items-center justify-center gap-4 text-[11px] text-slate-400">
             <span className="flex items-center gap-1">

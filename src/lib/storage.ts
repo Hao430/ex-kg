@@ -150,6 +150,19 @@ export async function syncBoardToBackend(board: StoredBoard): Promise<'ok' | 'co
       return 'conflict';
     }
 
+    // 401 会话失效（如改密/重置密码后被踢下线）：重试无意义——提示重新登录并停止重试
+    if (res.status === 401) {
+      window.dispatchEvent(
+        new CustomEvent('deepdive:canvas-save-conflict', {
+          detail: {
+            boardId: board.id,
+            message: '登录状态已失效，请重新登录后再保存画板',
+          },
+        })
+      );
+      return 'conflict';
+    }
+
     // 配额/权限类 403 为永久失败，重试无意义——直接提示（Spec B1/B4）
     if (res.status === 403) {
       const body = await res.json().catch(() => null) as any;

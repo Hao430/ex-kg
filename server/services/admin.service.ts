@@ -1,5 +1,7 @@
-import { findUserById, updateVipMembership, updateUserStatus as repoUpdateUserStatus, restoreAccount as repoRestoreAccount } from '../repositories/user.repository.js';
+import { findUserById, findUserByEmail, updateVipMembership, updateUserEmail as repoUpdateUserEmail, updateUserStatus as repoUpdateUserStatus, restoreAccount as repoRestoreAccount } from '../repositories/user.repository.js';
 import { ConflictError } from '../lib/errors.js';
+import { sendVerificationEmail } from '../lib/mailer.js';
+import crypto from 'node:crypto';
 import {
   listAdminUsers,
   getAdminOverview,
@@ -126,6 +128,67 @@ export async function grantUserVipDays(data: {
   });
 
   return { role: updated.role, vip_expires_at: updated.vip_expires_at || null, user: updated };
+}
+
+/**
+ * Admin 修改用户邮箱。
+ * 规范化查重（软删用户邮箱可复用，F4 口径）→ 更新 email 并重置验证状态（Spec D3）→
+ * 向新邮箱发送验证邮件（发信失败不影响改绑）→ 审计 admin_email_change。不踢会话（身份未变）。
+ */
+export async function adminUpdateUserEmail(data: {
+  targetUserId: string;
+  newEmail: string;
+  actorId?: string;
+  ip?: string;
+  userAgent?: string;
+}): Promise<{ user: UserRecord; oldEmail: string }> {
+  const target = await findUserById(data.targetUserId);
+  if (!target) throw new NotFoundError('用户不存在');
+
+  const newEmail = data.newEmail.trim().toLowerCase();
+  const oldEmail = target.email;
+  if (newEmail === oldEmail) {
+    throw new ConflictError('新邮箱与当前邮箱一致，无需修改', 'EMAIL_UNCHANGED');
+  }
+
+  const existing = await findUserByEmail(newEmail);
+  if (existing) {
+    throw new ConflictError('该邮箱已被其他账号使用', 'EMAIL_TAKEN');
+  }
+
+  const verifyToken = crypto.randomBytes(32).toString('hex');
+  const verifyExpiresAt = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+
+  let updated: UserRecord | null;
+  try {
+    updated = await repoUpdateUserEmail(data.targetUserId, newEmail, verifyToken, verifyExpiresAt);
+  } catch (e: any) {
+    if (e?.code === '23505') {
+      throw new ConflictError('该邮箱已被其他账号使用', 'EMAIL_TAKEN');
+    }
+    throw e;
+  }
+  if (!updated) throw new NotFoundError('用户不存在');
+
+  // 发信失败不影响改绑（与 signUp 的验证邮件口径一致）
+  const verifyUrl = `${process.env.APP_URL || 'http://localhost:3000'}/verify-email?token=${verifyToken}`;
+  try {
+    await sendVerificationEmail(newEmail, verifyUrl);
+  } catch (e) {
+    console.warn('adminUpdateUserEmail: 验证邮件发送失败（改绑已完成）:', e);
+  }
+
+  await recordAuditLog({
+    userId: data.actorId || null,
+    action: 'admin_email_change',
+    targetType: 'user',
+    targetId: data.targetUserId,
+    ip: data.ip,
+    userAgent: data.userAgent,
+    details: { targetUserId: data.targetUserId, oldEmail, newEmail },
+  });
+
+  return { user: updated, oldEmail };
 }
 
 /**

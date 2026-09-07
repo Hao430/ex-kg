@@ -29,7 +29,12 @@ async function start() {
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.get('*', (_req, res) => {
+    app.get('*', (req, res) => {
+      // 静态资源缺失时明确 404，而非把 index.html 当 CSS/JS 返回（避免 MIME type 报错掩盖真相）
+      if (req.path.startsWith('/assets/')) {
+        res.status(404).json({ error: 'Static asset not found: dist 与 index.html 不一致，请完整重新构建部署' });
+        return;
+      }
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }

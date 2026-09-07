@@ -7,6 +7,7 @@ import {
   grantUserVipDays,
   getUserOrFail,
   restoreAccount,
+  adminUpdateUserEmail,
   getMaskedModelConfig,
   resolveConfigForSave,
   saveModelConfigWithAudit,
@@ -171,6 +172,33 @@ adminRouter.post('/users/:id/vip', asyncHandler(async (req: Request, res: Respon
       : `已取消用户 ${targetUser.email} 的 VIP 会员权限`,
     user: result.user,
     vip_expires_at: result.vip_expires_at,
+  });
+}));
+
+/**
+ * PUT /api/admin/users/:id/email
+ * Admin 修改用户邮箱：重置邮箱验证状态并发送验证邮件，写审计日志。
+ */
+const UserEmailSchema = z.object({
+  email: z.string().email('请输入有效的邮箱地址'),
+});
+
+adminRouter.put('/users/:id/email', asyncHandler(async (req: Request, res: Response) => {
+  const { email } = validate(UserEmailSchema, req.body, 'INVALID_EMAIL');
+  const targetUser = await getUserOrFail(req.params.id);
+
+  const result = await adminUpdateUserEmail({
+    targetUserId: targetUser.id,
+    newEmail: email,
+    actorId: req.user!.id,
+    ip: req.ip,
+    userAgent: req.headers['user-agent'],
+  });
+
+  res.json({
+    success: true,
+    message: `已将用户 ${result.oldEmail} 的邮箱修改为 ${result.user.email}，验证邮件已发送至新邮箱`,
+    user: result.user,
   });
 }));
 

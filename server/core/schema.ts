@@ -435,15 +435,25 @@ export async function initDbSchema(): Promise<boolean> {
       const userHash = await hashPassword('User123456!');
       const vipHash = await hashPassword('Vip123456!');
 
-      await client.query(
-        `INSERT INTO users (id, email, password_hash, name, role, email_verified)
-         VALUES
-           ('00000000-0000-0000-0000-000000000001', 'admin@deepdive.ai', $1, '系统管理员', 'admin', TRUE),
-           ('00000000-0000-0000-0000-000000000002', 'user@deepdive.ai', $2, '探索先锋', 'user', TRUE),
-           ('00000000-0000-0000-0000-000000000003', 'vip@deepdive.ai', $3, '高级智囊', 'vip', TRUE)
-         ON CONFLICT (email) DO NOTHING`,
-        [adminHash, userHash, vipHash]
-      );
+        // PG partial unique index does not support ON CONFLICT arbiter, use check-then-insert
+        const existingEmails = await client.query(
+          "SELECT email FROM users WHERE email IN ('admin@deepdive.ai', 'user@deepdive.ai', 'vip@deepdive.ai')"
+        );
+        const existingSet = new Set(existingEmails.rows.map((r: any) => r.email));
+        const seeds = [
+          { id: '00000000-0000-0000-0000-000000000001', email: 'admin@deepdive.ai', hash: adminHash, name: '系统管理员', role: 'admin' },
+          { id: '00000000-0000-0000-0000-000000000002', email: 'user@deepdive.ai', hash: userHash, name: '探索先锋', role: 'user' },
+          { id: '00000000-0000-0000-0000-000000000003', email: 'vip@deepdive.ai', hash: vipHash, name: '高级智囊', role: 'vip' },
+        ];
+        for (const s of seeds) {
+          if (!existingSet.has(s.email)) {
+            await client.query(
+              `INSERT INTO users (id, email, password_hash, name, role, email_verified)
+               VALUES ($1, $2, $3, $4, $5, TRUE)`,
+              [s.id, s.email, s.hash, s.name, s.role]
+            );
+          }
+        }
     }
 
     // Spec D3：种子账号（存量豁免）始终视为已验证

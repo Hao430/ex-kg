@@ -38,9 +38,17 @@ function buildTransport(): Transporter {
   return nodemailer.createTransport({ jsonTransport: true });
 }
 
-// 模块级复用同一 transporter
-const transporter = buildTransport();
-const isDryRun = (transporter.options as { jsonTransport?: boolean }).jsonTransport === true;
+// 惰性初始化 transporter：在首次发送时（而非模块加载时）构建。
+// 修复：ESM import 提升导致 dotenv.config() 在模块初始化后才执行，模块级
+// buildTransport()/isDryRun 会读到未加载 .env 的空 SMTP → 永远误判 dry-run。
+let _transporter: Transporter | null = null;
+function getTransporter(): Transporter {
+  if (!_transporter) _transporter = buildTransport();
+  return _transporter;
+}
+function isDryRun(): boolean {
+  return (getTransporter().options as { jsonTransport?: boolean }).jsonTransport === true;
+}
 
 /**
  * 发送邮箱验证邮件。发信失败仅 console.warn，不向上抛（不阻塞注册/重发主流程）。
@@ -51,7 +59,7 @@ export async function sendVerificationEmail(to: string, verifyUrl: string): Prom
   const html = `<p>欢迎加入 枝想！</p><p>请点击以下链接完成邮箱验证（24 小时内有效）：</p><p><a href="${verifyUrl}">${verifyUrl}</a></p>`;
 
   try {
-    if (isDryRun) {
+    if (isDryRun()) {
       // 干跑模式：内容进内存 outbox（有上限），供测试断言
       outbox.unshift({ to, subject, text, html });
       if (outbox.length > OUTBOX_LIMIT) outbox.pop();
@@ -59,7 +67,7 @@ export async function sendVerificationEmail(to: string, verifyUrl: string): Prom
       return;
     }
 
-    await transporter.sendMail({
+    await getTransporter().sendMail({
       from: process.env.SMTP_USER,
       to,
       subject,
@@ -80,14 +88,14 @@ export async function sendPasswordResetEmail(to: string, resetUrl: string): Prom
   const html = `<p>您正在重置 枝想 账号密码。</p><p>请点击以下链接设置新密码（1 小时内有效）：</p><p><a href="${resetUrl}">${resetUrl}</a></p><p>如非本人操作，请忽略此邮件。</p>`;
 
   try {
-    if (isDryRun) {
+    if (isDryRun()) {
       outbox.unshift({ to, subject, text, html });
       if (outbox.length > OUTBOX_LIMIT) outbox.pop();
       console.log(`[mailer:dry-run] 重置密码邮件（${to}）：${resetUrl}`);
       return;
     }
 
-    await transporter.sendMail({
+    await getTransporter().sendMail({
       from: process.env.SMTP_USER,
       to,
       subject,

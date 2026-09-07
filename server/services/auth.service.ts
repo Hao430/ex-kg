@@ -244,3 +244,36 @@ export async function resetPassword(data: {
     userAgent: data.userAgent,
   });
 }
+
+/**
+ * 已登录修改密码。
+ * 旧密码错误 → 400 WRONG_OLD_PASSWORD；成功 → 更新密码 + 删除全部会话（含当前，需重新登录）+ 审计。
+ */
+export async function changeOwnPassword(data: {
+  userId: string;
+  oldPassword: string;
+  newPassword: string;
+  ip?: string | null;
+  userAgent?: string | null;
+}): Promise<void> {
+  const user = await findUserById(data.userId);
+  if (!user) {
+    throw new NotFoundError('未找到该用户');
+  }
+
+  const isMatch = await verifyPassword(data.oldPassword, user.password_hash);
+  if (!isMatch) {
+    throw new AppError(400, 'WRONG_OLD_PASSWORD', '旧密码不正确');
+  }
+
+  const passwordHash = await hashPassword(data.newPassword);
+  await updateUserPassword(user.id, passwordHash);
+  await deleteUserSessions(user.id);
+
+  await recordAuditLog({
+    userId: user.id,
+    action: 'password_change',
+    ip: data.ip,
+    userAgent: data.userAgent,
+  });
+}

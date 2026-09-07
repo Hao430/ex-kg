@@ -535,3 +535,47 @@ export async function restoreAccount(userId: string): Promise<UserRecord | null>
   user.updated_at = new Date().toISOString();
   return user;
 }
+
+/**
+ * 管理员修改用户邮箱：更新 email 并重置邮箱验证状态（Spec D3：新邮箱需重新验证）。
+ * PG 唯一索引冲突（23505，partial index WHERE deleted_at IS NULL）向上抛由 service 转 409。
+ * 双模。用户不存在返回 null。
+ */
+export async function updateUserEmail(
+  userId: string,
+  newEmail: string,
+  verifyToken: string,
+  verifyExpiresAt: string
+): Promise<UserRecord | null> {
+  const p = getPool();
+  if (p) {
+    try {
+      const res = await p.query(
+        `UPDATE users
+         SET email = $1,
+             email_verified = FALSE,
+             verify_token = $2,
+             verify_expires_at = $3,
+             updated_at = NOW()
+         WHERE id = $4 AND deleted_at IS NULL
+         RETURNING *`,
+        [newEmail, verifyToken, verifyExpiresAt, userId]
+      );
+      if (res.rows.length > 0) return mapRowToUser(res.rows[0]);
+      return null;
+    } catch (e: any) {
+      // 邮箱唯一冲突向上抛，由 service 转 409
+      if (e?.code === '23505') throw e;
+      console.warn('PG updateUserEmail failed, fallback to memory:', e);
+    }
+  }
+
+  const user = inMemoryStore.users.get(userId);
+  if (!user || user.deleted_at) return null;
+  user.email = newEmail;
+  user.email_verified = false;
+  user.verify_token = verifyToken;
+  user.verify_expires_at = verifyExpiresAt;
+  user.updated_at = new Date().toISOString();
+  return user;
+}
