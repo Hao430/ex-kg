@@ -6,6 +6,7 @@ import { validate } from '../lib/validate.js';
 import { effectiveEntitlements, NODE_LIMIT, BOARD_LIMIT } from '../services/quota.service.js';
 import { countCanvasNodes, getCanvasOwnerInfo } from '../repositories/canvas.repository.js';
 import { listCanvases } from '../repositories/canvas.repository.js';
+import { getAiModelConfig } from '../services/ai.service.js';
 
 export const quotaRouter = Router();
 
@@ -20,6 +21,7 @@ export const quotaRouter = Router();
  *     vipExpired: boolean,
  *     board: { used, limit: number | null },          // limit null = 不受限
  *     node:  { used, limit: number | null, remaining: number | null } | null,
+ *     vipOnlyModelCount: number,                      // VIP 专享模型数（Spec K7/D3，未配置为 0）
  *   }
  * node 仅在携带 canvasId 时返回；计数为已保存画布的 chat 节点全量（含 suggested 占位）。
  * 归属校验：canvasId 存在但不属于当前用户 → 404（严格属主制，不泄露存在性）。
@@ -44,6 +46,13 @@ quotaRouter.get(
     const canvases = await listCanvases(user.id, user.role === 'admin');
     const board = { used: canvases.length, limit: boardLimit };
 
+    // Spec K7（D3）：VIP 专享模型数量（与 chatQuotaMiddleware 同源的配置读取），
+    // 前端升级弹窗据此展示「专享模型」权益行；未配置时为 0，前端隐藏该行不展示空气权益。
+    const aiConfig = await getAiModelConfig();
+    const vipOnlyModelCount = (aiConfig.vip_only_models || []).filter(
+      (m) => typeof m === 'string' && m.trim()
+    ).length;
+
     let node: { used: number; limit: number | null; remaining: number | null } | null = null;
     if (canvasId) {
       const info = await getCanvasOwnerInfo(canvasId);
@@ -64,6 +73,7 @@ quotaRouter.get(
       vipGraceDaysRemaining: ent.vipGraceDaysRemaining ?? null,
       board,
       node,
+      vipOnlyModelCount,
     });
   })
 );

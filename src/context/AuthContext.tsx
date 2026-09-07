@@ -26,8 +26,10 @@ interface AuthContextType {
   openFeedbackModal: () => void;
   closeFeedbackModal: () => void;
   rechargeModalOpen: boolean;
+  /** 触发升级时的画板上下文（Spec K7：用于拉取当前画板节点余量） */
+  rechargeCanvasId: string | null;
   upgradeModalReason: string | null;
-  openRechargeModal: (reason?: string) => void;
+  openRechargeModal: (reason?: string, canvasId?: string) => void;
   closeRechargeModal: () => void;
   adminModalOpen: boolean;
   openAdminModal: () => void;
@@ -47,6 +49,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [userProfileModalOpen, setUserProfileModalOpen] = useState(false);
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
   const [rechargeModalOpen, setRechargeModalOpen] = useState(false);
+  // Spec K7：升级触发时的画板上下文（配额墙触发点传入，弹窗据此展示节点余量）
+  const [rechargeCanvasId, setRechargeCanvasId] = useState<string | null>(null);
   const [upgradeModalReason, setUpgradeModalReason] = useState<string | null>(null);
   const [adminModalOpen, setAdminModalOpen] = useState(false);
 
@@ -262,13 +266,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setFeedbackModalOpen(false);
   }, []);
 
-  const openRechargeModal = useCallback((reason?: string) => {
+  const openRechargeModal = useCallback((reason?: string, canvasId?: string) => {
     setUpgradeModalReason(reason || null);
+    setRechargeCanvasId(canvasId || null);
     setRechargeModalOpen(true);
   }, []);
 
   const closeRechargeModal = useCallback(() => {
     setRechargeModalOpen(false);
+    setRechargeCanvasId(null);
     setUpgradeModalReason(null);
   }, []);
 
@@ -305,6 +311,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         openFeedbackModal,
         closeFeedbackModal,
         rechargeModalOpen,
+        rechargeCanvasId,
         upgradeModalReason,
         openRechargeModal,
         closeRechargeModal,

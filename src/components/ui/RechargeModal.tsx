@@ -6,6 +6,18 @@ import { SubscriptionPlan, SubscriptionPlanId } from '../../types';
 // 一期过渡支付：客服微信人工充值（微信号经 .env 的 VITE_SUPPORT_WECHAT_ID 配置，为空时公告不显示微信号）
 const SUPPORT_WECHAT_ID = import.meta.env.VITE_SUPPORT_WECHAT_ID?.trim() || '';
 
+/** GET /api/quota 返回的余量形状（Spec J2/K7，仅取本弹窗所需字段） */
+interface QuotaInfo {
+  plan: 'trial' | 'vip' | 'admin';
+  board: { used: number; limit: number | null };
+  node: { used: number; limit: number | null; remaining: number | null } | null;
+  vipOnlyModelCount: number;
+}
+
+/** 配额接口失败时的兜底口径（与服务端 BOARD_LIMIT/NODE_LIMIT 常量一致） */
+const FALLBACK_BOARD_LIMIT = 3;
+const FALLBACK_NODE_LIMIT = 10;
+
 const PLANS: SubscriptionPlan[] = [
   {
     id: 'weekly',
@@ -37,10 +49,42 @@ const PLANS: SubscriptionPlan[] = [
 ];
 
 export const RechargeModal: React.FC = () => {
-  const { user, isVip, rechargeModalOpen, closeRechargeModal, upgradeModalReason } = useAuth();
+  const { user, isVip, rechargeModalOpen, rechargeCanvasId, closeRechargeModal, upgradeModalReason } = useAuth();
   const [selectedPlan, setSelectedPlan] = useState<SubscriptionPlanId>('monthly');
+  // Spec K7（D3）：真实权益数据——打开弹窗时拉取 /api/quota（余量与配额口径同源），
+  // 触发点带画板上下文时一并返回当前画板节点余量；失败时为 null，
+  // 权益对比回退到默认常量、用量行隐藏，绝不展示虚构数字
+  const [quota, setQuota] = useState<QuotaInfo | null>(null);
+
+  React.useEffect(() => {
+    if (!rechargeModalOpen) return;
+    let cancelled = false;
+    setQuota(null);
+    (async () => {
+      try {
+        const url = rechargeCanvasId
+          ? `/api/quota?canvasId=${encodeURIComponent(rechargeCanvasId)}`
+          : '/api/quota';
+        const res = await fetch(url, { credentials: 'include' });
+        if (!res.ok) return;
+        const body = (await res.json()) as QuotaInfo;
+        if (!cancelled) setQuota(body);
+      } catch {
+        // 静默降级：权益对比使用默认常量
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [rechargeModalOpen, rechargeCanvasId]);
 
   if (!rechargeModalOpen) return null;
+
+  // 免费版权益数值：优先服务端真实口径，接口失败回退常量
+  const boardLimit = quota?.board.limit ?? FALLBACK_BOARD_LIMIT;
+  const nodeLimit = quota?.node?.limit ?? FALLBACK_NODE_LIMIT;
+  // VIP 专享模型行仅在管理员实际配置后展示（未配置 → 不展示空气权益）
+  const vipOnlyModelCount = quota?.vipOnlyModelCount ?? 0;
 
   const currentPlan = PLANS.find((p) => p.id === selectedPlan) || PLANS[1];
 
@@ -178,6 +222,23 @@ export const RechargeModal: React.FC = () => {
                 {currentPlan.desc}
               </span>
             </div>
+
+            {/* Spec K7（D3）：真实使用量（体验版；数据来自 /api/quota，与后端拦截同口径） */}
+            {quota && quota.plan === 'trial' && (
+              <div className="flex flex-wrap items-center gap-2 mb-3">
+                <span className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900/60 border border-slate-200/60 dark:border-slate-800 text-[11px] text-slate-600 dark:text-slate-300">
+                  画板 <span className="font-semibold text-slate-900 dark:text-white">{quota.board.used}</span>
+                  <span className="text-slate-400"> / {quota.board.limit ?? '∞'}</span>
+                </span>
+                {quota.node && (
+                  <span className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900/60 border border-slate-200/60 dark:border-slate-800 text-[11px] text-slate-600 dark:text-slate-300">
+                    当前画板节点 <span className="font-semibold text-slate-900 dark:text-white">{quota.node.used}</span>
+                    <span className="text-slate-400"> / {quota.node.limit ?? '∞'}</span>
+                  </span>
+                )}
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-3 text-xs">
               <div className="p-2.5 rounded-lg bg-white dark:bg-slate-900/60 border border-slate-200/60 dark:border-slate-800 text-slate-600 dark:text-slate-400">
                 <div className="font-semibold text-slate-800 dark:text-slate-200 mb-2 flex items-center gap-1.5">
@@ -187,14 +248,11 @@ export const RechargeModal: React.FC = () => {
                 <ul className="space-y-1.5 text-[11px]">
                   <li className="flex items-center gap-1.5 text-slate-500">
                     <Layers className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                    最多创建 3 个独立画板
+                    最多创建 {boardLimit} 个独立画板
                   </li>
                   <li className="flex items-center gap-1.5 text-slate-500">
                     <Network className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                    单画板限制 10 个 AI 思考节点
-                  </li>
-                  <li className="flex items-center gap-1.5 text-slate-400">
-                    常规响应队列
+                    单画板 {nodeLimit} 个 AI 思考节点
                   </li>
                 </ul>
               </div>
@@ -213,6 +271,13 @@ export const RechargeModal: React.FC = () => {
                     <Infinity className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />
                     无限 AI 节点推演与多分支探讨
                   </li>
+                  {/* Spec K7（D3）：仅当管理员配置了 VIP 专享模型时才展示，未配置不画大饼 */}
+                  {vipOnlyModelCount > 0 && (
+                    <li className="flex items-center gap-1.5 font-medium text-emerald-600 dark:text-emerald-400">
+                      <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                      专享 {vipOnlyModelCount} 个高级模型
+                    </li>
+                  )}
                   <li className="flex items-center gap-1.5 font-medium text-emerald-600 dark:text-emerald-400">
                     <Check className="w-3.5 h-3.5 shrink-0" />
                     支持子分支“导出为独立画板”

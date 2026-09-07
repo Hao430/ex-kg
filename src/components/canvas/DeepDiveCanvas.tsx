@@ -163,7 +163,8 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       if (serverNodeRemaining <= 0) {
         // K4 事件 10：配额墙触达（免费版转化漏斗核心指标；remaining 为计数非 PII）
         trackEvent('quota_wall', { remaining: serverNodeRemaining });
-        openRechargeModal('当前画板的 AI 推理节点额度已用完。升级 Pro 畅享无限节点深度探索与推演！');
+        // Spec K7：传入画板上下文，升级弹窗可展示当前画板真实节点余量
+        openRechargeModal('当前画板的 AI 推理节点额度已用完。升级 Pro 畅享无限节点深度探索与推演！', canvasId ?? undefined);
         return false;
       }
       return true;

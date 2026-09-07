@@ -125,6 +125,8 @@ describe('J2 配额余量 API（D2）', () => {
     assert.equal(body.vipExpired, false);
     assert.deepEqual(body.board, { used: 1, limit: 3 });
     assert.equal(body.node, null);
+    // Spec K7（D3）：VIP 专享模型数量随响应透出；测试环境无 admin 配置 → 0（前端据此隐藏模型权益行）
+    assert.equal(body.vipOnlyModelCount, 0);
   });
 
   test('体验版带 canvasId：node 计数与 chatQuotaMiddleware 同口径（含 suggested，排除 note）', async () => {
