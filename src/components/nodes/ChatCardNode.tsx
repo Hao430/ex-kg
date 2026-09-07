@@ -45,7 +45,86 @@ function preprocessLaTeX(content: string): string {
     .replace(/\\\(([\s\S]*?)\\\)/g, (_, math) => `$${math.trim()}$`);
 }
 
-export const ChatCardNode: React.FC<NodeProps> = ({ id, data, selected }) => {
+// ---------------------------------------------------------------------------
+// Markdown 渲染配置（性能：模块级常量，避免每次渲染重建引用导致
+// ReactMarkdown 无法复用解析结果；components 映射与插件数组均稳定）
+// ---------------------------------------------------------------------------
+const REMARK_PLUGINS = [remarkGfm, remarkMath];
+const REHYPE_PLUGINS = [rehypeKatex];
+const MARKDOWN_COMPONENTS = {
+  p: ({ children }: any) => (
+    <p className="mb-2.5 last:mb-0 leading-relaxed text-slate-700 dark:text-slate-300 break-words">{children}</p>
+  ),
+  h1: ({ children }: any) => (
+    <h1 className="text-base font-bold text-slate-900 dark:text-slate-100 mt-3 mb-2">{children}</h1>
+  ),
+  h2: ({ children }: any) => (
+    <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 mt-2.5 mb-1.5">{children}</h2>
+  ),
+  h3: ({ children }: any) => (
+    <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100 mt-2 mb-1">{children}</h3>
+  ),
+  ul: ({ children }: any) => (
+    <ul className="list-disc pl-4 mb-2.5 space-y-1 text-slate-700 dark:text-slate-300">{children}</ul>
+  ),
+  ol: ({ children }: any) => (
+    <ol className="list-decimal pl-4 mb-2.5 space-y-1 text-slate-700 dark:text-slate-300">{children}</ol>
+  ),
+  li: ({ children }: any) => <li className="leading-relaxed">{children}</li>,
+  blockquote: ({ children }: any) => (
+    <blockquote className="border-l-3 border-indigo-500 dark:border-indigo-400 pl-3.5 py-1.5 my-2 bg-indigo-50/40 dark:bg-indigo-950/25 rounded-r-lg text-slate-700 dark:text-slate-300 text-xs italic">
+      {children}
+    </blockquote>
+  ),
+  code: ({ className, children, ...props }: any) => {
+    const isInline = !className && typeof children === 'string' && !children.includes('\n');
+    if (isInline) {
+      return (
+        <code
+          className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-indigo-700 dark:text-indigo-300 font-mono text-[11px] font-medium border border-slate-200/60 dark:border-slate-700"
+          {...props}
+        >
+          {children}
+        </code>
+      );
+    }
+    return (
+      <div className="my-2.5 rounded-xl bg-[#090e1a] dark:bg-[#060a12] p-3 text-slate-100 font-mono text-xs overflow-x-auto shadow-xs border border-slate-800/80">
+        <code {...props}>{children}</code>
+      </div>
+    );
+  },
+  table: ({ children }: any) => (
+    <div className="overflow-x-auto my-2.5 border border-slate-200 dark:border-slate-700 rounded-lg">
+      <table className="min-w-full text-xs text-left border-collapse">{children}</table>
+    </div>
+  ),
+  th: ({ children }: any) => (
+    <th className="px-3 py-2 bg-slate-100 dark:bg-slate-800 font-semibold text-slate-800 dark:text-slate-200 border-b border-slate-200 dark:border-slate-700">
+      {children}
+    </th>
+  ),
+  td: ({ children }: any) => (
+    <td className="px-3 py-2 border-b border-slate-100 dark:border-slate-800 text-slate-700 dark:text-slate-300">{children}</td>
+  ),
+  strong: ({ children }: any) => <strong className="font-semibold text-slate-900 dark:text-white">{children}</strong>,
+  a: ({ href, children }: any) => (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-indigo-600 dark:text-indigo-400 underline hover:text-indigo-800 dark:hover:text-indigo-300"
+    >
+      {children}
+    </a>
+  ),
+  hr: () => <hr className="my-3 border-slate-200 dark:border-slate-800" />,
+} as const;
+
+/** 流式渲染节流间隔：generating 期间 Markdown 重解析频率上限（毫秒） */
+const STREAM_RENDER_INTERVAL_MS = 150;
+
+export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selected }) => {
   const nodeData = data as unknown as ChatNodeData;
   const nodeActions = useNodeActions();
   const { openAuthModal, openRechargeModal } = useAuth();
@@ -72,7 +151,30 @@ export const ChatCardNode: React.FC<NodeProps> = ({ id, data, selected }) => {
     nodeData.messages?.filter((m) => m.role === 'assistant').map((m) => m.content).join('\n\n') ??
     '';
 
-  const processedAnswer = useMemo(() => preprocessLaTeX(currentAnswerText), [currentAnswerText]);
+  // 流式节流：generating 期间 answer 高频增长，全量重解析 Markdown+KaTeX 是最大渲染热点。
+  // 限频到 ~150ms 一次；非 generating（含最终完成帧）总是渲染最新全文。
+  const [throttledAnswer, setThrottledAnswer] = useState<string | null>(null);
+  const lastFlushRef = useRef(0);
+  useEffect(() => {
+    if (nodeData.status !== 'generating') {
+      setThrottledAnswer(null); // 完成态：直接渲染全文
+      return;
+    }
+    const now = Date.now();
+    if (now - lastFlushRef.current >= STREAM_RENDER_INTERVAL_MS) {
+      lastFlushRef.current = now;
+      setThrottledAnswer(currentAnswerText);
+    } else {
+      const t = setTimeout(() => {
+        lastFlushRef.current = Date.now();
+        setThrottledAnswer(currentAnswerText);
+      }, STREAM_RENDER_INTERVAL_MS);
+      return () => clearTimeout(t);
+    }
+  }, [currentAnswerText, nodeData.status]);
+  const renderedAnswer = nodeData.status === 'generating' && throttledAnswer !== null ? throttledAnswer : currentAnswerText;
+
+  const processedAnswer = useMemo(() => preprocessLaTeX(renderedAnswer), [renderedAnswer]);
 
   const handleCopy = () => {
     const qText = nodeData.question ? `[提问]\n${nodeData.question}\n\n` : '';
@@ -434,77 +536,9 @@ export const ChatCardNode: React.FC<NodeProps> = ({ id, data, selected }) => {
             {currentAnswerText ? (
               <div className="text-[13px] leading-relaxed text-slate-800 dark:text-slate-200 select-text">
                 <ReactMarkdown
-                  remarkPlugins={[remarkGfm, remarkMath]}
-                  rehypePlugins={[rehypeKatex]}
-                  components={{
-                    p: ({ children }) => (
-                      <p className="mb-2.5 last:mb-0 leading-relaxed text-slate-700 dark:text-slate-300 break-words">{children}</p>
-                    ),
-                    h1: ({ children }) => (
-                      <h1 className="text-base font-bold text-slate-900 dark:text-slate-100 mt-3 mb-2">{children}</h1>
-                    ),
-                    h2: ({ children }) => (
-                      <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 mt-2.5 mb-1.5">{children}</h2>
-                    ),
-                    h3: ({ children }) => (
-                      <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100 mt-2 mb-1">{children}</h3>
-                    ),
-                    ul: ({ children }) => (
-                      <ul className="list-disc pl-4 mb-2.5 space-y-1 text-slate-700 dark:text-slate-300">{children}</ul>
-                    ),
-                    ol: ({ children }) => (
-                      <ol className="list-decimal pl-4 mb-2.5 space-y-1 text-slate-700 dark:text-slate-300">{children}</ol>
-                    ),
-                    li: ({ children }) => <li className="leading-relaxed">{children}</li>,
-                    blockquote: ({ children }) => (
-                      <blockquote className="border-l-3 border-indigo-500 dark:border-indigo-400 pl-3.5 py-1.5 my-2 bg-indigo-50/40 dark:bg-indigo-950/25 rounded-r-lg text-slate-700 dark:text-slate-300 text-xs italic">
-                        {children}
-                      </blockquote>
-                    ),
-                    code: ({ node, className, children, ...props }) => {
-                      const isInline = !className && typeof children === 'string' && !children.includes('\n');
-                      if (isInline) {
-                        return (
-                          <code
-                            className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-indigo-700 dark:text-indigo-300 font-mono text-[11px] font-medium border border-slate-200/60 dark:border-slate-700"
-                            {...props}
-                          >
-                            {children}
-                          </code>
-                        );
-                      }
-                      return (
-                        <div className="my-2.5 rounded-xl bg-[#090e1a] dark:bg-[#060a12] p-3 text-slate-100 font-mono text-xs overflow-x-auto shadow-xs border border-slate-800/80">
-                          <code {...props}>{children}</code>
-                        </div>
-                      );
-                    },
-                    table: ({ children }) => (
-                      <div className="overflow-x-auto my-2.5 border border-slate-200 dark:border-slate-700 rounded-lg">
-                        <table className="min-w-full text-xs text-left border-collapse">{children}</table>
-                      </div>
-                    ),
-                    th: ({ children }) => (
-                      <th className="px-3 py-2 bg-slate-100 dark:bg-slate-800 font-semibold text-slate-800 dark:text-slate-200 border-b border-slate-200 dark:border-slate-700">
-                        {children}
-                      </th>
-                    ),
-                    td: ({ children }) => (
-                      <td className="px-3 py-2 border-b border-slate-100 dark:border-slate-800 text-slate-700 dark:text-slate-300">{children}</td>
-                    ),
-                    strong: ({ children }) => <strong className="font-semibold text-slate-900 dark:text-white">{children}</strong>,
-                    a: ({ href, children }) => (
-                      <a
-                        href={href}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-indigo-600 dark:text-indigo-400 underline hover:text-indigo-800 dark:hover:text-indigo-300"
-                      >
-                        {children}
-                      </a>
-                    ),
-                    hr: () => <hr className="my-3 border-slate-200 dark:border-slate-800" />,
-                  }}
+                  remarkPlugins={REMARK_PLUGINS}
+                  rehypePlugins={REHYPE_PLUGINS}
+                  components={MARKDOWN_COMPONENTS}
                 >
                   {processedAnswer}
                 </ReactMarkdown>
@@ -670,4 +704,5 @@ export const ChatCardNode: React.FC<NodeProps> = ({ id, data, selected }) => {
       />
     </div>
   );
-};
+});
+ChatCardNode.displayName = 'ChatCardNode';

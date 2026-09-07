@@ -68,136 +68,6 @@ const NOTE_ANIMATED_EDGE_STYLE: React.CSSProperties = {
 const AI_EDGE_MARKER: Edge['markerEnd'] = { type: MarkerType.ArrowClosed, color: AI_EDGE_COLOR };
 const NOTE_EDGE_MARKER: Edge['markerEnd'] = { type: MarkerType.ArrowClosed, color: NOTE_EDGE_COLOR };
 
-// Initial state: One root answered node + 2 auto-derived suggested exploration nodes
-const INITIAL_RAW_NODES: Node[] = [
-  {
-    id: 'root-1',
-    type: 'chat',
-    position: { x: 80, y: 160 },
-    draggable: false,
-    data: {
-      title: '量子计算核心概念',
-      depth: 0,
-      question: '什么是量子叠加态（Quantum Superposition）？它与经典比特有什么本质区别？',
-      answer: `**量子叠加态 (Quantum Superposition)** 是量子信息与量子物理的基石原理：
-
-1. **经典比特 vs 量子比特 (Qubit)**：
-   - **经典比特**：状态非 $0$ 即 $1$；
-   - **量子比特**：可以处于状态 $|0\\rangle$ 与 $|1\\rangle$ 的任意线性叠加：
-     $$|\\psi\\rangle = \\alpha|0\\rangle + \\beta|1\\rangle \\quad (\\text{满足 } |\\alpha|^2 + |\\beta|^2 = 1)$$
-
-2. **指数级计算威力**：
-   - $N$ 个经典比特任意时刻只能表达 $2^N$ 种可能中的**一种**状态；
-   - $N$ 个量子比特的相干叠加系统能同时涵盖全部 $2^N$ 种基态，为算法提供指数级的状态空间探索潜能。
-
-💡 *提示：你可以选择右侧的「探索建议」一键展开探讨，或在下方输入框继续追问衍生新分支！*`,
-      status: 'idle',
-      model: '',
-      enableWebSearch: true,
-      grounding: {
-        queries: ['量子叠加态 经典比特 本质区别 量子计算原理'],
-        sources: [
-          {
-            index: 1,
-            title: 'Quantum superposition - Wikipedia',
-            uri: 'https://en.wikipedia.org/wiki/Quantum_superposition',
-            domain: 'en.wikipedia.org',
-          },
-          {
-            index: 2,
-            title: 'What is Quantum Superposition? - IBM Quantum Computing',
-            uri: 'https://www.ibm.com/topics/quantum-computing',
-            domain: 'ibm.com',
-          },
-          {
-            index: 3,
-            title: 'Quantum Information and Computation - Stanford Encyclopedia of Philosophy',
-            uri: 'https://plato.stanford.edu/entries/qt-quantcomp/',
-            domain: 'plato.stanford.edu',
-          },
-        ],
-      },
-      suggestionsSpawned: true,
-    },
-  },
-  {
-    id: 'sug-init-1',
-    type: 'chat',
-    position: { x: 620, y: 60 },
-    draggable: false,
-    data: {
-      title: 'Shor 算法加速机理',
-      depth: 1,
-      question: 'Shor 算法是如何巧妙利用量子叠加与相位干涉实现对 RSA 大数分解的指数级加速的？',
-      answer: '',
-      status: 'suggested',
-      parentId: 'root-1',
-      model: 'gemini-3.1-flash-lite',
-    },
-  },
-  {
-    id: 'note-demo-1',
-    type: 'note',
-    position: { x: 620, y: 320 },
-    draggable: true,
-    data: {
-      title: '硬件瓶颈假设与研究沉淀',
-      content: '量子并行计算威力源于态空间指数爆炸；但要达到容错计算，必须攻克微观系统与外界热噪声的耦合（退相干）。若无法维持相干态，叠加态将坍缩回经典态。',
-    },
-  },
-  {
-    id: 'sug-init-2',
-    type: 'chat',
-    position: { x: 1040, y: 320 },
-    draggable: false,
-    data: {
-      title: '量子退相干核心瓶颈',
-      depth: 1,
-      question: '基于前述硬件假设，环境噪声导致的量子退相干（Decoherence）为何是建造物理量子计算机的最大工程挑战？',
-      answer: '',
-      status: 'suggested',
-      parentId: 'note-demo-1',
-      model: 'gemini-3.1-flash-lite',
-    },
-  },
-];
-
-const INITIAL_RAW_EDGES: Edge[] = [
-  {
-    id: 'e-root-sug-1',
-    source: 'root-1',
-    target: 'sug-init-1',
-    type: 'default',
-    animated: true,
-    style: AI_SUGGEST_EDGE_STYLE,
-    markerEnd: AI_EDGE_MARKER,
-  },
-  {
-    id: 'e-root-note-1',
-    source: 'root-1',
-    sourceHandle: 'out',
-    target: 'note-demo-1',
-    targetHandle: 'in',
-    type: 'default',
-    animated: false,
-    style: NOTE_EDGE_STYLE,
-    markerEnd: NOTE_EDGE_MARKER,
-  },
-  {
-    id: 'e-note-sug-2',
-    source: 'note-demo-1',
-    sourceHandle: 'out',
-    target: 'sug-init-2',
-    targetHandle: 'in',
-    type: 'default',
-    animated: true,
-    style: NOTE_ANIMATED_EDGE_STYLE,
-    markerEnd: NOTE_EDGE_MARKER,
-  },
-];
-
-// Pre-layout initial graph
-const INITIAL_LAYOUTED = getLayoutedElements(INITIAL_RAW_NODES, INITIAL_RAW_EDGES, 'LR');
 
 interface DeepDiveCanvasProps {
   initialNodes?: Node[];
@@ -270,13 +140,24 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
   const applyLayout = useCallback(
     (currentNodes = nodesRef.current, currentEdges = edgesRef.current) => {
       const layouted = getLayoutedElements(currentNodes, currentEdges, 'LR');
-      setNodes([...layouted.nodes]);
-      setEdges([...layouted.edges]);
+      // 布局无变化（缓存命中且位置未动）时跳过 setNodes，避免无谓的全画布重渲染
+      if (layouted.nodes !== currentNodes) setNodes(layouted.nodes);
+      if (layouted.edges !== currentEdges) setEdges(layouted.edges);
       window.requestAnimationFrame(() => {
         reactFlowInstance.fitView({ padding: 0.25, duration: 400 });
       });
     },
     [reactFlowInstance, setNodes, setEdges]
+  );
+
+  // MiniMap 节点配色（useCallback 按 theme 记忆化，避免内联函数使 MiniMap memo 失效）
+  const minimapNodeColor = useCallback(
+    (n: Node) => {
+      if (n.type === 'note') return theme === 'dark' ? '#d97706' : '#f59e0b';
+      if ((n.data as any)?.status === 'suggested') return theme === 'dark' ? '#6366f1' : '#a5b4fc';
+      return theme === 'dark' ? '#4f46e5' : '#6366f1';
+    },
+    [theme]
   );
 
   // Helper to extract clean user-friendly error message
@@ -1333,6 +1214,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
           nodeTypes={nodeTypes}
+          onlyRenderVisibleElements
           nodesDraggable={true}
           nodesConnectable={true}
           elementsSelectable={true}
@@ -1357,11 +1239,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
             position="bottom-right"
             zoomable
             pannable
-            nodeColor={(n) => {
-              if (n.type === 'note') return theme === 'dark' ? '#d97706' : '#f59e0b';
-              if ((n.data as any)?.status === 'suggested') return theme === 'dark' ? '#6366f1' : '#a5b4fc';
-              return theme === 'dark' ? '#4f46e5' : '#6366f1';
-            }}
+            nodeColor={minimapNodeColor}
             maskColor={theme === 'dark' ? 'rgba(7, 12, 24, 0.78)' : 'rgba(241, 245, 249, 0.75)'}
             className="!bg-white/95 dark:!bg-[#0c1322]/95 !border !border-slate-200/90 dark:!border-white/10 !shadow-2xl !rounded-2xl !backdrop-blur-md"
           />
