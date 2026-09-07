@@ -304,12 +304,12 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             <span className="text-[11px] text-slate-400 mt-0.5">任意词句瞬时衍生</span>
           </div>
           <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/[0.05] flex flex-col items-center justify-center text-center">
-            <span className="text-base sm:text-lg font-bold text-indigo-400 tracking-tight">多模型自由切</span>
-            <span className="text-[11px] text-slate-400 mt-0.5">Gemini 3.8 / 3.1 / 2.5</span>
+            <span className="text-base sm:text-lg font-bold text-indigo-400 tracking-tight">前沿大模型</span>
+            <span className="text-[11px] text-slate-400 mt-0.5">极速推理与深度推演</span>
           </div>
           <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/[0.05] flex flex-col items-center justify-center text-center">
             <span className="text-base sm:text-lg font-bold text-emerald-400 tracking-tight">实时联网检索</span>
-            <span className="text-[11px] text-slate-400 mt-0.5">Google 权威来源引证</span>
+            <span className="text-[11px] text-slate-400 mt-0.5">权威来源引证溯源</span>
           </div>
           <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/[0.05] flex flex-col items-center justify-center text-center">
             <span className="text-base sm:text-lg font-bold text-amber-400 tracking-tight">深夜护眼模式</span>
@@ -396,7 +396,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                     已联网
                   </span>
                   <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                    Gemini 3.8 Flash
+                    深度推演模式
                   </span>
                 </div>
               </div>
@@ -434,7 +434,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                     <Globe className="w-3 h-3 text-cyan-400" />
                     <span>权威检索来源 (3 篇)</span>
                   </div>
-                  <span className="text-[9px] text-slate-400">Google Grounding</span>
+                  <span className="text-[9px] text-slate-400">实时联网溯源</span>
                 </div>
                 <div className="flex flex-wrap gap-1 mt-1">
                   <span className="px-1.5 py-0.5 rounded bg-white/[0.05] border border-white/[0.08] text-[9px] text-blue-200">
@@ -466,7 +466,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               <div className="mt-3 flex items-center justify-between text-[10px] text-slate-400 pt-2 border-t border-white/[0.06]">
                 <span className="flex items-center gap-1 text-slate-300">
                   <SlidersHorizontal className="w-3 h-3 text-indigo-400" />
-                  <span>Gemini 3.8 Flash · 实时检索</span>
+                  <span>智能推演引擎 · 实时检索</span>
                 </span>
                 <span>已衍生 2 个子分支</span>
               </div>
@@ -591,10 +591,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               <SlidersHorizontal className="w-6 h-6" />
             </div>
             <h3 className="text-lg font-bold text-white mb-2.5 tracking-tight">
-              多元前沿模型自由调配
+              前沿大模型驱动
             </h3>
             <p className="text-xs sm:text-sm text-slate-400 leading-relaxed mb-4">
-              支持卡片级与全局模型自选。在极速推理的 Gemini 3.1 Flash-Lite、全能高效的 Gemini 3.8 Flash 与深度推演的 Gemini 2.5 Pro 间灵活切换。
+              深度优化的推理引擎，兼顾极速响应与深度推演。按任务场景在轻量快速与深谋远虑之间动态平衡，持续迭代升级。
             </p>
             <div className="flex items-center gap-2 text-xs text-indigo-400 font-medium">
               <span>按需调优计算性能与推理深度</span>
@@ -611,10 +611,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               实时联网搜索与来源索引
             </h3>
             <p className="text-xs sm:text-sm text-slate-400 leading-relaxed mb-4">
-              支持 Google Search 真实联网检索增强。自动抽取权威论文、官方文档与行业报告来源，卡片内置可交互的引用角标与来源卡片，杜绝幻觉。
+              支持真实联网检索增强。自动抽取权威论文、官方文档与行业报告来源，卡片内置可交互的引用角标与来源卡片，杜绝幻觉。
             </p>
             <div className="flex items-center gap-2 text-xs text-emerald-400 font-medium">
-              <span>Google Grounding 溯源有据</span>
+              <span>联网检索 · 溯源有据</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </div>
           </div>
@@ -882,7 +882,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               className="flex items-center gap-2 px-8 py-4 rounded-2xl text-sm font-bold text-white bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-500 hover:from-blue-500 hover:to-cyan-400 shadow-2xl shadow-blue-500/40 border border-white/20 transition-all hover:scale-105 active:scale-95"
             >
               <Compass className="w-4 h-4 text-white" />
-              <span>立即进入思维画布 (无需注册)</span>
+              <span>立即进入思维画布，开启深度探索</span>
               <ArrowRight className="w-4 h-4 text-white" />
             </button>
           </div>
@@ -892,7 +892,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             <span>•</span>
             <span>✓ 一键导出 Markdown 研报</span>
             <span>•</span>
-            <span>✓ 极速 Gemini 智能推理</span>
+            <span>✓ 极速 AI 智能推理</span>
           </div>
         </div>
       </section>
