@@ -8,6 +8,7 @@ import { canvasesRouter } from './routes/canvases.js';
 import { chatRouter } from './routes/chat.js';
 import { subscriptionsRouter } from './routes/subscriptions.js';
 import { quotaRouter } from './routes/quota.js';
+import { sharesRouter } from './routes/shares.js';
 import { errorHandler } from './middleware/error-handler.js';
 import { checkDbStatus } from './core/db-status.js';
 
@@ -62,6 +63,7 @@ export function createApp(): express.Express {
   app.use('/api/chat', chatRouter);
   app.use('/api/subscriptions', subscriptionsRouter);
   app.use('/api/quota', quotaRouter);
+  app.use('/api/shares', sharesRouter);
 
   // Unified error handling (must be after all API routes)
   app.use(errorHandler);

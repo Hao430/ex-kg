@@ -16,6 +16,8 @@ export const inMemoryStore = {
   auditLogs: [] as import('./records.js').AuditLogRecord[],
   /** 注册邮箱验证码（email 为 key，一邮箱一码） */
   emailVerificationCodes: new Map<string, import('./records.js').EmailCodeRecord>(),
+  /** Spec K1：分享记录（canvas_id 为 key，一画板至多一个分享行，与 PG 唯一索引对齐） */
+  shares: new Map<string, import('./records.js').ShareRecord>(),
 };
 
 /** 审计日志内存上限：最新在前，超出裁剪最旧记录 */

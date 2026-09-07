@@ -217,6 +217,10 @@ export async function initDbSchema(): Promise<boolean> {
         password_hash VARCHAR(255),
         permission VARCHAR(20) DEFAULT 'view' NOT NULL,
         views_count INT DEFAULT 0,
+        -- Spec K1：快照式只读分享——创建时刻的全量画布快照（不可变，后续编辑不传播）
+        snapshot_data JSONB,
+        -- Spec K1：软撤销时间戳（非空 = 分享已失效，但保留行以便审计与重新分享覆盖）
+        revoked_at TIMESTAMPTZ,
         expires_at TIMESTAMPTZ,
         created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
       );
@@ -439,6 +443,13 @@ export async function initDbSchema(): Promise<boolean> {
     // 存量库同步将列默认值改为空串（写入路径始终显式赋值，此处仅口径对齐）
     await client.query(`ALTER TABLE canvases ALTER COLUMN default_model SET DEFAULT '';`);
     await client.query(`ALTER TABLE nodes ALTER COLUMN model_used SET DEFAULT '';`);
+
+    // Spec K1：快照式只读分享——存量库补列 + 一画板至多一个活跃分享（重复 POST 幂等 upsert）
+    await client.query(`ALTER TABLE canvas_shares ADD COLUMN IF NOT EXISTS snapshot_data JSONB;`);
+    await client.query(`ALTER TABLE canvas_shares ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;`);
+    await client.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_canvas_shares_canvas ON canvas_shares(canvas_id);`
+    );
 
     // Seed default admin in PG if table is empty
     const usersCountRes = await client.query('SELECT COUNT(*) as count FROM users');

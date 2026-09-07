@@ -43,6 +43,34 @@ export const quotaRateLimiter = rateLimit({
 });
 
 /**
+ * Rate limiter for share create/revoke: 10 req/min per IP（写操作，Spec K1）
+ */
+export const shareActionRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: '分享操作过于频繁，请稍后再试',
+    code: 'RATE_LIMIT_EXCEEDED',
+  },
+});
+
+/**
+ * Rate limiter for public share read: 60 req/min per IP（公开端点，防枚举扫描，Spec K1）
+ */
+export const publicShareReadLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: '访问过于频繁，请稍后再试',
+    code: 'RATE_LIMIT_EXCEEDED',
+  },
+});
+
+/**
  * Rate limiter for resend-verification: 3 req/10min per user（防邮件轰炸，Spec D3 审计）
  */
 export const resendVerificationRateLimiter = rateLimit({

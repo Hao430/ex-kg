@@ -98,6 +98,19 @@ export interface CanvasRecord {
   deleted_at?: string | null;
 }
 
+/** Spec K1：快照式只读分享记录（canvas_shares 双模映射） */
+export interface ShareRecord {
+  id: string;
+  canvas_id: string;
+  share_code: string;
+  /** 创建时刻的全量画布快照（不可变，后续画布编辑不传播） */
+  snapshot: { title: string; nodes: any[]; edges: any[] } | null;
+  views_count: number;
+  /** 软撤销时间戳（非空 = 分享已失效） */
+  revoked_at?: string | null;
+  created_at: string;
+}
+
 export interface AuditLogRecord {
   id: string;
   user_id?: string | null;

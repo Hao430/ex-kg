@@ -8,8 +8,9 @@ import {
   searchUserNodes,
 } from '../services/canvas.service.js';
 import { asyncHandler } from '../lib/async-handler.js';
-import { authMiddleware } from '../middleware/auth.js';
+import { authMiddleware, shareActionRateLimiter } from '../middleware/auth.js';
 import { validate } from '../lib/validate.js';
+import { createShareForCanvas, revokeShareForCanvas } from '../services/share.service.js';
 
 export const canvasesRouter = Router();
 
@@ -96,6 +97,27 @@ canvasesRouter.delete('/:id', asyncHandler(async (req: Request, res: Response) =
   const isAdmin = user.role === 'admin';
   const success = await deleteUserCanvas(req.params.id, user.id, isAdmin);
   res.json({ success });
+}));
+
+/**
+ * POST /api/canvases/:id/share（Spec K1 / B1）
+ * 创建（或幂等重建）画布的快照式只读分享；严格属主制，重复调用返回同一画板的最新分享。
+ */
+canvasesRouter.post('/:id/share', shareActionRateLimiter, asyncHandler(async (req: Request, res: Response) => {
+  const user = req.user!;
+  const appUrl = process.env.APP_URL || `${req.protocol}://${req.get('host') || 'localhost'}`;
+  const result = await createShareForCanvas(user, req.params.id, appUrl);
+  res.json(result);
+}));
+
+/**
+ * DELETE /api/canvases/:id/share（Spec K1 / B1）
+ * 撤销画布分享（软撤）；严格属主制。
+ */
+canvasesRouter.delete('/:id/share', shareActionRateLimiter, asyncHandler(async (req: Request, res: Response) => {
+  const user = req.user!;
+  await revokeShareForCanvas(user, req.params.id);
+  res.json({ success: true });
 }));
 
 /**
