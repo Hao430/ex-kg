@@ -60,7 +60,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       icon: BookOpen,
       title: '学术科研与深度理论推演',
       desc: '拆解复杂前沿论文，对抽象定理、数学公式逐步下钻，在同一张画布上构建完整知识体系。',
-      tags: ['arXiv论文精读', 'KaTeX公式推导', '多理论交叉对比'],
+      tags: ['arXiv论文精读', '论文公式推导', '多理论交叉对比'],
       sampleTopic: '什么是无穷？——希尔伯特旅馆与康托尔的集合论',
     },
     {
@@ -93,7 +93,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
     },
     {
       q: '我的研究数据和画板内容安全吗？',
-      a: '绝对安全。枝想默认将所有画布、节点、连线与便签完整保存在您浏览器的本地存储（Local Storage）中，支持一键导出标准 JSON 备份或 Markdown 研报大纲，数据完全归您所有。',
+      a: '请放心。枝想将您的画布、节点、连线与便签完整保存在您的专属账号中，更换浏览器或设备登录后内容依然如初，数据严格隔离、仅您本人可见。您也可以随时一键导出标准 JSON 备份或 Markdown 研报大纲，成果永远由您带走。',
     },
     {
       q: '“划词追问”功能是如何工作的？',
@@ -101,7 +101,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
     },
     {
       q: '支持哪些数学公式与代码格式？',
-      a: '完美渲染学术级数学公式：行内公式（$E=mc^2$）与独立块级矩阵积分公式（$$...$$）均可正确排版，同时支持主流编程语言代码高亮与一键复制代码块。',
+      a: '完美渲染学术级数学公式：行内公式（$E=mc^2$）与独立块级矩阵积分公式（$$...$$）均可正确排版；代码块支持整洁排版与一键复制，语法高亮能力正在加紧开发中，敬请期待。',
     },
   ];
 
@@ -625,10 +625,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               <Cpu className="w-6 h-6" />
             </div>
             <h3 className="text-lg font-bold text-white mb-2.5 tracking-tight">
-              学术级 KaTeX 公式与代码推演
+              学术级数学公式与代码推演
             </h3>
             <p className="text-xs sm:text-sm text-slate-400 leading-relaxed mb-4">
-              专为科研与工程设计。完美解析 LaTeX 行内与行间公式、矩阵、偏微分与积分。支持代码语法高亮与思维链（Chain of Thought）折叠审视。
+              专为科研与工程设计。完美解析行内与行间数学公式、矩阵、偏微分与积分。代码块支持整洁排版与一键复制，重要卡片可一键折叠，快速梳理全图骨架。
             </p>
             <div className="flex items-center gap-2 text-xs text-amber-400 font-medium">
               <span>实时流式渲染与数学推导</span>
