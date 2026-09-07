@@ -241,6 +241,17 @@ export const Topbar: React.FC<TopbarProps> = ({
           )}
         </div>
 
+        {/* 新建画板直达入口：不再藏于画板下拉，降低认知负担 */}
+        <Tooltip content="新建思考画板" side="bottom">
+          <button
+            onClick={onNewBoard}
+            className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white text-xs font-medium shadow-sm transition-colors"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span className="hidden md:inline">新建画板</span>
+          </button>
+        </Tooltip>
+
         {/* Micro Stats UI: Current Canvas Total Nodes & Performance Alert */}
         {typeof nodeCount === 'number' && (
           <>
