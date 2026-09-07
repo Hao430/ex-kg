@@ -38,13 +38,35 @@ export const generateUniqueId = (prefix: string = 'node'): string => {
   globalIdCounter += 1;
   const time = Date.now();
   const rand = Math.random().toString(36).substring(2, 8);
-  return `${prefix}-${time}-${globalIdCounter}-${rand}`;
+  // 前缀截断：调用方会把父级 id 拼进前缀（如 node-${sourceNodeId}），层级越深 id 越长，
+  // 会超过 PostgreSQL varchar(64) 上限（报 22001 value too long）导致画布保存失败。
+  // 截断前缀只损失语义、不影响唯一性（time+counter+rand 保证唯一）。
+  const safePrefix = prefix.length > 24 ? prefix.slice(0, 24) : prefix;
+  return `${safePrefix}-${time}-${globalIdCounter}-${rand}`;
 };
 
 const nodeTypes = {
   chat: ChatCardNode,
   note: NoteCardNode,
 };
+
+// ---- Edge style constants: unified definitions to avoid repeating inline style objects in multiple places ----
+const AI_EDGE_COLOR = '#6366f1';
+const NOTE_EDGE_COLOR = '#d97706';
+const AI_EDGE_STYLE: React.CSSProperties = { stroke: AI_EDGE_COLOR, strokeWidth: 2 };
+const AI_SUGGEST_EDGE_STYLE: React.CSSProperties = {
+  stroke: AI_EDGE_COLOR,
+  strokeWidth: 1.8,
+  strokeDasharray: '4,4',
+};
+const NOTE_EDGE_STYLE: React.CSSProperties = { stroke: NOTE_EDGE_COLOR, strokeWidth: 2 };
+const NOTE_ANIMATED_EDGE_STYLE: React.CSSProperties = {
+  stroke: NOTE_EDGE_COLOR,
+  strokeWidth: 2,
+  strokeDasharray: '4,3',
+};
+const AI_EDGE_MARKER: Edge['markerEnd'] = { type: MarkerType.ArrowClosed, color: AI_EDGE_COLOR };
+const NOTE_EDGE_MARKER: Edge['markerEnd'] = { type: MarkerType.ArrowClosed, color: NOTE_EDGE_COLOR };
 
 // Initial state: One root answered node + 2 auto-derived suggested exploration nodes
 const INITIAL_RAW_NODES: Node[] = [
@@ -147,8 +169,8 @@ const INITIAL_RAW_EDGES: Edge[] = [
     target: 'sug-init-1',
     type: 'default',
     animated: true,
-    style: { stroke: '#6366f1', strokeWidth: 1.8, strokeDasharray: '4,4' },
-    markerEnd: { type: MarkerType.ArrowClosed, color: '#6366f1' },
+    style: AI_SUGGEST_EDGE_STYLE,
+    markerEnd: AI_EDGE_MARKER,
   },
   {
     id: 'e-root-note-1',
@@ -158,8 +180,8 @@ const INITIAL_RAW_EDGES: Edge[] = [
     targetHandle: 'in',
     type: 'default',
     animated: false,
-    style: { stroke: '#d97706', strokeWidth: 2 },
-    markerEnd: { type: MarkerType.ArrowClosed, color: '#d97706' },
+    style: NOTE_EDGE_STYLE,
+    markerEnd: NOTE_EDGE_MARKER,
   },
   {
     id: 'e-note-sug-2',
@@ -169,8 +191,8 @@ const INITIAL_RAW_EDGES: Edge[] = [
     targetHandle: 'in',
     type: 'default',
     animated: true,
-    style: { stroke: '#d97706', strokeWidth: 2, strokeDasharray: '4,3' },
-    markerEnd: { type: MarkerType.ArrowClosed, color: '#d97706' },
+    style: NOTE_ANIMATED_EDGE_STYLE,
+    markerEnd: NOTE_EDGE_MARKER,
   },
 ];
 
@@ -203,10 +225,10 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
   defaultEnableWebSearch = true,
 }) => {
   const [nodes, setNodes, onNodesChange] = useNodesState(
-    initialNodes || INITIAL_LAYOUTED.nodes
+    initialNodes || []
   );
   const [edges, setEdges, onEdgesChange] = useEdgesState(
-    initialEdges || INITIAL_LAYOUTED.edges
+    initialEdges || []
   );
   const [selectionPayload, setSelectionPayload] = useState<TextSelectionPayload | null>(null);
   const [apiWarning, setApiWarning] = useState<string | null>(null);
@@ -327,8 +349,8 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
           target: sugId,
           type: 'default',
           animated: true,
-          style: { stroke: '#6366f1', strokeWidth: 1.8, strokeDasharray: '4,4' },
-          markerEnd: { type: MarkerType.ArrowClosed, color: '#6366f1' },
+          style: AI_SUGGEST_EDGE_STYLE,
+          markerEnd: AI_EDGE_MARKER,
         };
 
         newNodes.push(sugNode);
@@ -341,8 +363,8 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
 
       // Auto-layout to align cleanly
       const layouted = getLayoutedElements(updatedNodes, updatedEdges, 'LR');
-      nodesRef.current = deduplicateNodes(layouted.nodes);
-      edgesRef.current = deduplicateEdges(layouted.edges);
+      nodesRef.current = layouted.nodes;
+      edgesRef.current = layouted.edges;
       setNodes(nodesRef.current);
       setEdges(edgesRef.current);
     },
@@ -604,48 +626,48 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
     [defaultModel, defaultEnableWebSearch, setNodes, spawnSuggestedNodes]
   );
 
-  // Requirement 2: Follow-up inquiry creates a NEW child node for the next dialogue
-  const handleFollowUpInquiry = useCallback(
-    (
-      sourceNodeId: string,
-      questionText: string,
-      options?: { model?: string; enableWebSearch?: boolean }
-    ) => {
-      if (!checkAiQuota()) return;
-
+  // Shared helper: create a child chat node + edge under a source node, auto-layout, pan camera to the new node, start generation
+  const createChildChatNode = useCallback(
+    (params: {
+      sourceNodeId: string;
+      question: string;
+      title: string | ((depth: number) => string);
+      options?: { model?: string; enableWebSearch?: boolean };
+      branchTriggerPhrase?: string;
+    }) => {
+      const { sourceNodeId, question, branchTriggerPhrase } = params;
       const sourceNode = nodesRef.current.find((n) => n.id === sourceNodeId);
       const parentData = sourceNode?.data as unknown as ChatNodeData | undefined;
       const depth = (parentData?.depth ?? 0) + 1;
 
       const activeModel =
-        options?.model || parentData?.model || defaultModel || '';
+        params.options?.model || parentData?.model || defaultModel || '';
       const activeWebSearch =
-        options?.enableWebSearch !== undefined
-          ? options.enableWebSearch
+        params.options?.enableWebSearch !== undefined
+          ? params.options.enableWebSearch
           : parentData?.enableWebSearch !== undefined
           ? parentData.enableWebSearch
           : defaultEnableWebSearch;
 
       const newId = generateUniqueId(`node-${sourceNodeId}`);
-      const title = questionText.slice(0, 16);
+      const title =
+        typeof params.title === 'function' ? params.title(depth) : params.title;
 
       const newNode: Node = {
         id: newId,
         type: 'chat',
-        position: {
-          x: (sourceNode?.position.x || 0) + 520,
-          y: sourceNode?.position.y || 0,
-        },
+        position: { x: 0, y: 0 }, // Layout will position correctly
         draggable: false,
         data: {
           title,
           depth,
-          question: questionText,
+          question,
           answer: '',
           status: 'generating',
           model: activeModel,
           enableWebSearch: activeWebSearch,
           parentId: sourceNodeId,
+          ...(branchTriggerPhrase ? { branchTriggerPhrase } : {}),
         },
       };
 
@@ -654,20 +676,18 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
         source: sourceNodeId,
         target: newId,
         type: 'default',
-        style: { stroke: '#6366f1', strokeWidth: 2 },
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: '#6366f1',
-        },
+        style: AI_EDGE_STYLE,
+        markerEnd: AI_EDGE_MARKER,
       };
 
-      const nextNodes = deduplicateNodes([...nodesRef.current, newNode]);
-      const nextEdges = deduplicateEdges([...edgesRef.current, newEdge]);
-
-      // Auto-layout with smooth transition
-      const layouted = getLayoutedElements(nextNodes, nextEdges, 'LR');
-      nodesRef.current = deduplicateNodes(layouted.nodes);
-      edgesRef.current = deduplicateEdges(layouted.edges);
+      // Auto-layout with smooth transition (输入已去重，layout 产物无需再次去重)
+      const layouted = getLayoutedElements(
+        deduplicateNodes([...nodesRef.current, newNode]),
+        deduplicateEdges([...edgesRef.current, newEdge]),
+        'LR'
+      );
+      nodesRef.current = layouted.nodes;
+      edgesRef.current = layouted.edges;
       setNodes(nodesRef.current);
       setEdges(edgesRef.current);
 
@@ -685,13 +705,31 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
 
       // Start generation in the new node
       setTimeout(() => {
-        generateNodeAnswer(newId, questionText, {
+        generateNodeAnswer(newId, question, {
           model: activeModel,
           enableWebSearch: activeWebSearch,
         });
       }, 100);
     },
     [defaultModel, defaultEnableWebSearch, generateNodeAnswer, reactFlowInstance, setNodes, setEdges]
+  );
+
+  // Requirement 2: Follow-up inquiry creates a NEW child node for the next dialogue
+  const handleFollowUpInquiry = useCallback(
+    (
+      sourceNodeId: string,
+      questionText: string,
+      options?: { model?: string; enableWebSearch?: boolean }
+    ) => {
+      if (!checkAiQuota()) return;
+      createChildChatNode({
+        sourceNodeId,
+        question: questionText,
+        title: questionText.slice(0, 16),
+        options,
+      });
+    },
+    [checkAiQuota, createChildChatNode]
   );
 
   // Requirement 3: User clicks on a suggested question node to generate answer
@@ -710,8 +748,8 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
             return {
               ...e,
               animated: false,
-              style: { stroke: '#6366f1', strokeWidth: 2 },
-              markerEnd: { type: MarkerType.ArrowClosed, color: '#6366f1' },
+              style: AI_EDGE_STYLE,
+              markerEnd: AI_EDGE_MARKER,
             };
           }
           return e;
@@ -728,75 +766,18 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
   const handleBranch = useCallback(
     (sourceNodeId: string, triggerPhrase?: string) => {
       if (!checkAiQuota()) return;
-      const sourceNode = nodesRef.current.find((n) => n.id === sourceNodeId);
-      const parentData = sourceNode?.data as unknown as ChatNodeData | undefined;
-      const depth = (parentData?.depth ?? 0) + 1;
-
-      const newId = generateUniqueId(`branch-${sourceNodeId}`);
-      const questionText = triggerPhrase
-        ? `请围绕「${triggerPhrase}」深入展开剖析其核心原理与关键影响。`
-        : '请在此分支展开深度探索与推演。';
-      const title = triggerPhrase
-        ? `深入: ${triggerPhrase.slice(0, 15)}`
-        : `深度 #${depth} 分支`;
-
-      const newNode: Node = {
-        id: newId,
-        type: 'chat',
-        position: {
-          x: (sourceNode?.position.x || 0) + 520,
-          y: sourceNode?.position.y || 0,
-        },
-        draggable: false,
-        data: {
-          title,
-          depth,
-          question: questionText,
-          answer: '',
-          status: 'generating',
-          model: 'gemini-flash-latest',
-          parentId: sourceNodeId,
-          branchTriggerPhrase: triggerPhrase,
-        },
-      };
-
-      const newEdge: Edge = {
-        id: generateUniqueId(`e-${sourceNodeId}-${newId}`),
-        source: sourceNodeId,
-        target: newId,
-        type: 'default',
-        style: { stroke: '#6366f1', strokeWidth: 2 },
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: '#6366f1',
-        },
-      };
-
-      const nextNodes = deduplicateNodes([...nodesRef.current, newNode]);
-      const nextEdges = deduplicateEdges([...edgesRef.current, newEdge]);
-
-      const layouted = getLayoutedElements(nextNodes, nextEdges, 'LR');
-      nodesRef.current = deduplicateNodes(layouted.nodes);
-      edgesRef.current = deduplicateEdges(layouted.edges);
-      setNodes(nodesRef.current);
-      setEdges(edgesRef.current);
-
-      setTimeout(() => {
-        const targetNode = layouted.nodes.find((n) => n.id === newId);
-        if (targetNode) {
-          reactFlowInstance.setCenter(
-            targetNode.position.x + 220,
-            targetNode.position.y + 180,
-            { zoom: 0.9, duration: 600 }
-          );
-        }
-      }, 50);
-
-      setTimeout(() => {
-        generateNodeAnswer(newId, questionText);
-      }, 100);
+      createChildChatNode({
+        sourceNodeId,
+        question: triggerPhrase
+          ? `请围绕「${triggerPhrase}」深入展开剖析其核心原理与关键影响。`
+          : '请在此分支展开深度探索与推演。',
+        title: (depth) =>
+          triggerPhrase ? `深入: ${triggerPhrase.slice(0, 15)}` : `深度 #${depth} 分支`,
+        options: { model: 'gemini-flash-latest' },
+        branchTriggerPhrase: triggerPhrase,
+      });
     },
-    [generateNodeAnswer, reactFlowInstance, setNodes, setEdges]
+    [checkAiQuota, createChildChatNode]
   );
 
   // Helper to recursively collect all descendant node IDs downstream
@@ -939,14 +920,6 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
         status: 'idle',
         model: defaultModel || '',
         enableWebSearch: defaultEnableWebSearch,
-        onSendMessage: (nId: string, q: string, opts?: any) =>
-          generateNodeAnswer(nId, q, opts),
-        onFollowUpInquiry: handleFollowUpInquiry,
-        onActivateSuggestion: handleActivateSuggestion,
-        onBranch: handleBranch,
-        onDelete: handleDeleteNode,
-        onToggleCollapse: handleToggleCollapse,
-        onUpdateTitle: handleUpdateTitle,
       },
     };
 
@@ -963,13 +936,6 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
     checkAiQuota,
     defaultModel,
     defaultEnableWebSearch,
-    generateNodeAnswer,
-    handleFollowUpInquiry,
-    handleActivateSuggestion,
-    handleBranch,
-    handleDeleteNode,
-    handleToggleCollapse,
-    handleUpdateTitle,
     reactFlowInstance,
     setNodes,
   ]);
@@ -1015,11 +981,8 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
         targetHandle: 'in',
         type: 'default',
         animated: true,
-        style: { stroke: '#d97706', strokeWidth: 2, strokeDasharray: '4,3' },
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: '#d97706',
-        },
+        style: NOTE_ANIMATED_EDGE_STYLE,
+        markerEnd: NOTE_EDGE_MARKER,
       };
 
       setNodes((nds) => deduplicateNodes([...nds, newNode]));
@@ -1047,19 +1010,8 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       }
 
       // Breadth-First-Search down the directed tree to collect all descendants
-      const visitedNodeIds = new Set<string>([rootNodeId]);
-      const queue = [rootNodeId];
-
-      while (queue.length > 0) {
-        const currId = queue.shift()!;
-        const outgoingEdges = edgesRef.current.filter((e) => e.source === currId);
-        for (const edge of outgoingEdges) {
-          if (!visitedNodeIds.has(edge.target)) {
-            visitedNodeIds.add(edge.target);
-            queue.push(edge.target);
-          }
-        }
-      }
+      const descendants = getDescendantNodeIds(rootNodeId);
+      const visitedNodeIds = new Set<string>([rootNodeId, ...descendants]);
 
       const subNodes = nodesRef.current.filter((n) => visitedNodeIds.has(n.id));
       const subEdges = edgesRef.current.filter(
@@ -1108,7 +1060,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       );
       setTimeout(() => setApiWarning(null), 6000);
     },
-    [applyLayout, isVip, openRechargeModal, setEdges, setNodes]
+    [applyLayout, getDescendantNodeIds, isVip, openRechargeModal, setEdges, setNodes]
   );
 
   // Add note node placed near viewport center
@@ -1173,15 +1125,8 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
         target: newId,
         type: 'default',
         animated: true,
-        style: {
-          stroke: '#d97706',
-          strokeWidth: 2,
-          strokeDasharray: '4,3',
-        },
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: '#d97706',
-        },
+        style: NOTE_ANIMATED_EDGE_STYLE,
+        markerEnd: NOTE_EDGE_MARKER,
       };
 
       setNodes((nds) => deduplicateNodes([...nds, newNode]));
@@ -1196,59 +1141,6 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
     },
     [reactFlowInstance, setNodes, setEdges]
   );
-
-  // Re-bind callbacks into node data
-  useEffect(() => {
-    setNodes((nds) =>
-      nds.map((node) => {
-        if (node.type === 'chat') {
-          return {
-            ...node,
-            data: {
-              ...node.data,
-              onSendMessage: (nId: string, q: string, opts?: any) =>
-                generateNodeAnswer(nId, q, opts),
-              onFollowUpInquiry: handleFollowUpInquiry,
-              onActivateSuggestion: handleActivateSuggestion,
-              onBranch: handleBranch,
-              onDelete: handleDeleteNode,
-              onToggleCollapse: handleToggleCollapse,
-              onUpdateTitle: handleUpdateTitle,
-              onRetry: (nId: string, opts?: any) => {
-                const chatData = node.data as unknown as ChatNodeData;
-                const q = chatData.question || chatData.title;
-                if (q) {
-                  generateNodeAnswer(nId, q, opts);
-                }
-              },
-            },
-          };
-        } else if (node.type === 'note') {
-          return {
-            ...node,
-            data: {
-              ...node.data,
-              onUpdate: handleUpdateNote,
-              onDelete: handleDeleteNode,
-              onBranchFromNote: handleBranchFromNote,
-            },
-          };
-        }
-        return node;
-      })
-    );
-  }, [
-    generateNodeAnswer,
-    handleFollowUpInquiry,
-    handleActivateSuggestion,
-    handleBranch,
-    handleBranchFromNote,
-    handleDeleteNode,
-    handleToggleCollapse,
-    handleUpdateTitle,
-    handleUpdateNote,
-    setNodes,
-  ]);
 
   // Expose trigger refs to parent
   useEffect(() => {
@@ -1325,7 +1217,6 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       const sourceNode = nodesRef.current.find((n) => n.id === params.source);
       const targetNode = nodesRef.current.find((n) => n.id === params.target);
       const isNoteInvolved = sourceNode?.type === 'note' || targetNode?.type === 'note';
-      const strokeColor = isNoteInvolved ? '#d97706' : '#6366f1';
 
       setEdges((eds) =>
         deduplicateEdges(
@@ -1335,12 +1226,8 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
               id: generateUniqueId(`e-${params.source}-${params.target}`),
               type: 'default',
               animated: isNoteInvolved,
-              style: {
-                stroke: strokeColor,
-                strokeWidth: 2,
-                strokeDasharray: isNoteInvolved ? '4,3' : undefined,
-              },
-              markerEnd: { type: MarkerType.ArrowClosed, color: strokeColor },
+              style: isNoteInvolved ? NOTE_ANIMATED_EDGE_STYLE : AI_EDGE_STYLE,
+              markerEnd: isNoteInvolved ? NOTE_EDGE_MARKER : AI_EDGE_MARKER,
             },
             eds
           )

@@ -20,20 +20,12 @@ export const NoteCardNode: React.FC<NodeProps> = ({ id, data, selected }) => {
   const lastAddRef = useRef<number>(0);
 
   const handleBlur = () => {
-    if (nodeActions?.updateNote) {
-      nodeActions.updateNote(id, content, title);
-    } else {
-      noteData.onUpdate?.(id, content, title);
-    }
+    nodeActions?.updateNote?.(id, content, title);
   };
 
   const handleBranch = () => {
     const textToExplore = content.trim() || title;
-    if (nodeActions?.branchFromNote) {
-      nodeActions.branchFromNote(id, textToExplore);
-    } else {
-      noteData.onBranchFromNote?.(id, textToExplore);
-    }
+    nodeActions?.branchFromNote?.(id, textToExplore);
   };
 
   const handleAddNextNote = () => {
@@ -55,11 +47,7 @@ export const NoteCardNode: React.FC<NodeProps> = ({ id, data, selected }) => {
   };
 
   const handleDelete = () => {
-    if (nodeActions?.deleteNode) {
-      nodeActions.deleteNode(id);
-    } else {
-      noteData.onDelete?.(id);
-    }
+    nodeActions?.deleteNode?.(id);
   };
 
   return (

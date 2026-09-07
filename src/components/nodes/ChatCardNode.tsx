@@ -100,11 +100,7 @@ export const ChatCardNode: React.FC<NodeProps> = ({ id, data, selected }) => {
       model: nodeData.model,
       enableWebSearch: true,
     };
-    if (nodeActions?.followUpInquiry) {
-      nodeActions.followUpInquiry(id, query, options);
-    } else {
-      nodeData.onFollowUpInquiry?.(id, query, options);
-    }
+    nodeActions?.followUpInquiry?.(id, query, options);
     setFollowUpInput('');
   };
 
@@ -117,11 +113,7 @@ export const ChatCardNode: React.FC<NodeProps> = ({ id, data, selected }) => {
       model: nodeData.model,
       enableWebSearch: true,
     };
-    if (nodeActions?.sendMessage) {
-      nodeActions.sendMessage(id, query, options);
-    } else {
-      nodeData.onSendMessage?.(id, query, options);
-    }
+    nodeActions?.sendMessage?.(id, query, options);
     setInitialInput('');
   };
 
@@ -129,38 +121,22 @@ export const ChatCardNode: React.FC<NodeProps> = ({ id, data, selected }) => {
     setEditingTitle(false);
     const trimmed = titleValue.trim();
     if (trimmed) {
-      if (nodeActions?.updateTitle) {
-        nodeActions.updateTitle(id, trimmed);
-      } else {
-        nodeData.onUpdateTitle?.(id, trimmed);
-      }
+      nodeActions?.updateTitle?.(id, trimmed);
     } else {
       setTitleValue(nodeData.title);
     }
   };
 
   const handleDelete = () => {
-    if (nodeActions?.deleteNode) {
-      nodeActions.deleteNode(id);
-    } else {
-      nodeData.onDelete?.(id);
-    }
+    nodeActions?.deleteNode?.(id);
   };
 
   const handleToggleCollapse = () => {
-    if (nodeActions?.toggleCollapse) {
-      nodeActions.toggleCollapse(id);
-    } else {
-      nodeData.onToggleCollapse?.(id);
-    }
+    nodeActions?.toggleCollapse?.(id);
   };
 
   const handleActivateSuggestion = () => {
-    if (nodeActions?.activateSuggestion) {
-      nodeActions.activateSuggestion(id);
-    } else {
-      nodeData.onActivateSuggestion?.(id);
-    }
+    nodeActions?.activateSuggestion?.(id);
   };
 
   const handleRetry = () => {
@@ -170,15 +146,9 @@ export const ChatCardNode: React.FC<NodeProps> = ({ id, data, selected }) => {
         model: nodeData.model,
         enableWebSearch: true,
       };
-      if (nodeActions?.sendMessage) {
-        nodeActions.sendMessage(id, q, options);
-      } else {
-        nodeData.onSendMessage?.(id, q, options);
-      }
+      nodeActions?.sendMessage?.(id, q, options);
     }
-  };
-
-  // --------------------------------------------------------------------------
+  };  // --------------------------------------------------------------------------
   // MODE A: Exploration Suggestion Node (Specialized Branch Trigger Pill Card)
   // --------------------------------------------------------------------------
   if (nodeData.status === 'suggested') {
@@ -447,11 +417,7 @@ export const ChatCardNode: React.FC<NodeProps> = ({ id, data, selected }) => {
                           type="button"
                           onClick={() => {
                             setInitialInput(preset);
-                            if (nodeActions?.sendMessage) {
-                              nodeActions.sendMessage(id, preset);
-                            } else {
-                              nodeData.onSendMessage?.(id, preset);
-                            }
+                            nodeActions?.sendMessage?.(id, preset);
                           }}
                           className="nodrag text-[11px] px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/40 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 font-normal transition-colors text-left border border-indigo-100 dark:border-indigo-900/50 cursor-pointer"
                         >

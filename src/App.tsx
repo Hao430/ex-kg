@@ -171,14 +171,17 @@ function MainApp() {
         setBoards(activeList);
         activeId = activeList[0].id;
       } else {
+        // Spec B: 新账号/无任何画布时初始为空白画布(不再注入 default-board 量子演示画布)
         const defaultMeta: DeepDiveBoardMeta = {
           id: 'default-board',
-          name: '量子计算深度探索',
+          name: '未命名思维画布',
           updatedAt: Date.now(),
-          nodeCount: 1,
+          nodeCount: 0,
         };
         setBoards([defaultMeta]);
-        setNodeCount(1);
+        setInitialNodes([]);
+        setInitialEdges([]);
+        setNodeCount(0);
         setBoardReady(true);
         return;
       }

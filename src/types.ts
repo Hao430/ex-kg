@@ -41,23 +41,12 @@ export interface ChatNodeData {
   suggestionsSpawned?: boolean;
   enableWebSearch?: boolean;
   grounding?: GroundingMetadata;
-  onFollowUpInquiry?: (sourceNodeId: string, question: string, options?: { model?: string; enableWebSearch?: boolean }) => void;
-  onActivateSuggestion?: (nodeId: string) => void;
-  onSendMessage?: (nodeId: string, content: string, options?: { model?: string; enableWebSearch?: boolean }) => void;
-  onBranch?: (nodeId: string, phrase?: string) => void;
-  onDelete?: (nodeId: string) => void;
-  onToggleCollapse?: (nodeId: string) => void;
-  onUpdateTitle?: (nodeId: string, title: string) => void;
-  onRetry?: (nodeId: string, options?: { model?: string; enableWebSearch?: boolean }) => void;
 }
 
 export interface NoteNodeData {
   title: string;
   content: string;
   color?: string;
-  onUpdate?: (nodeId: string, content: string, title?: string) => void;
-  onDelete?: (nodeId: string) => void;
-  onBranchFromNote?: (nodeId: string, premiseText: string) => void;
 }
 
 export interface DeepDiveBoardMeta {
