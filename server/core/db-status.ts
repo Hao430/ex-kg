@@ -30,7 +30,7 @@ export async function checkDbStatus(): Promise<DbStatus> {
       return {
         connected: true,
         type: 'postgresql',
-        message: 'PostgreSQL 商业级数据库连接正常，表结构与权限索引就绪。',
+        message: 'PostgreSQL 数据库连接正常，数据存储就绪。',
         userCount: parseInt(uRes.rows[0].count, 10),
         canvasCount: parseInt(cRes.rows[0].count, 10),
         nodeCount: parseInt(nRes.rows[0].count, 10),

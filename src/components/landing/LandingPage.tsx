@@ -61,28 +61,28 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       title: '学术科研与深度理论推演',
       desc: '拆解复杂前沿论文，对抽象定理、数学公式逐步下钻，在同一张画布上构建完整知识体系。',
       tags: ['arXiv论文精读', 'KaTeX公式推导', '多理论交叉对比'],
-      sampleTopic: '超导量子计算与表面码纠错拓扑',
+      sampleTopic: '什么是无穷？——希尔伯特旅馆与康托尔的集合论',
     },
     {
       icon: Code2,
       title: '系统架构设计与技术权衡',
       desc: '推演微服务拆解、分布式事务一致性与高并发容灾方案，在不同分支上权衡架构优劣。',
       tags: ['分布式容灾', '高并发架构', '性能与一致性权衡'],
-      sampleTopic: '分布式数据库 Raft 共识与多副本强一致性',
+      sampleTopic: '什么是 AI Agent？——从聊天机器人到自主智能体',
     },
     {
       icon: TrendingUp,
       title: '商业战略分析与投资尽调',
       desc: '围绕行业大盘、竞争壁垒、供应链与财务模型多线并发深挖，生成结构严密的尽调大纲。',
       tags: ['产业链拆解', '商业壁垒推演', '研报大纲导出'],
-      sampleTopic: '具身智能商业化落地路径与算力瓶颈',
+      sampleTopic: '钻石为什么这么贵？——稀缺、垄断与营销的经济学',
     },
     {
       icon: Workflow,
       title: '高阶复杂学习与心智模型',
       desc: '告别碎片化问答，通过“提问 - 批判 - 验证 - 衍生”的螺旋闭环，建立属于你的认知星图。',
       tags: ['心智模型', '非线性思维', '双轨便签记录'],
-      sampleTopic: '大语言模型注意力机制与Transformer进化史',
+      sampleTopic: '费曼学习法为什么有效？——教是最好的学',
     },
   ];
 
@@ -101,7 +101,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
     },
     {
       q: '支持哪些数学公式与代码格式？',
-      a: '内嵌 KaTeX 数学排版引擎，完美解析学术级 LaTeX 行内公式（$E=mc^2$）与独立块级矩阵积分公式（$$...$$），同时支持主流编程语言代码高亮与一键复制代码块。',
+      a: '完美渲染学术级数学公式：行内公式（$E=mc^2$）与独立块级矩阵积分公式（$$...$$）均可正确排版，同时支持主流编程语言代码高亮与一键复制代码块。',
     },
   ];
 
@@ -273,10 +273,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         <div className="mt-8 flex flex-wrap items-center justify-center gap-2 text-xs text-slate-400 max-w-4xl mx-auto">
           <span className="text-slate-500 shrink-0 font-medium">推荐探索课题:</span>
           {[
-            '超导量子纠错拓扑',
-            'Transformer 注意力数学形式',
-            '分布式 Raft 共识强一致性',
-            '具身智能商业落地与算力瓶颈',
+            '什么是 AI Agent？与聊天机器人有何不同',
+            '特修斯之船：换了所有零件的船还是原船吗',
+            '自由意志存在吗？——决定论与相容论',
+            '缸中之脑：我们如何确知世界是真实的',
           ].map((topic) => (
             <button
               key={topic}
@@ -296,8 +296,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             <span className="text-[11px] text-slate-400 mt-0.5">自由平移与空间记忆</span>
           </div>
           <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/[0.05] flex flex-col items-center justify-center text-center">
-            <span className="text-base sm:text-lg font-bold text-cyan-400 tracking-tight">KaTeX 原生</span>
-            <span className="text-[11px] text-slate-400 mt-0.5">LaTeX 矩阵公式推导</span>
+            <span className="text-base sm:text-lg font-bold text-cyan-400 tracking-tight">数学公式排版</span>
+            <span className="text-[11px] text-slate-400 mt-0.5">LaTeX 行内与块级推导</span>
           </div>
           <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/[0.05] flex flex-col items-center justify-center text-center">
             <span className="text-base sm:text-lg font-bold text-blue-400 tracking-tight">划词递归裂变</span>

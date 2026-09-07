@@ -586,9 +586,9 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
                   <span className="text-[10px] text-slate-400 dark:text-slate-500 font-medium">✨ 或快速选择推荐议题探索：</span>
                   <div className="flex flex-wrap gap-1.5">
                     {[
-                      '超导量子比特与退相干机制',
-                      '量子纠错码 Surface Code 原理',
-                      'Shor 算法破解 RSA 的数论本质',
+                      '什么是 AI Agent？与聊天机器人有何不同',
+                      '特修斯之船：换了所有零件的船还是原船吗',
+                      '自由意志存在吗？——决定论与相容论',
                     ].map((preset) => (
                       <Tooltip key={preset} content={`点击快速探索议题: ${preset}`} side="bottom">
                         <button

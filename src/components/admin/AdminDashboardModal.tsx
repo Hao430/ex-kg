@@ -389,12 +389,9 @@ export const AdminDashboardModal: React.FC = () => {
                 <h3 className="text-base font-semibold text-slate-800 dark:text-slate-100">
                   枝想 运营管理与模型控制台
                 </h3>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-100 text-indigo-700 dark:bg-indigo-950/80 dark:text-indigo-300 dark:border dark:border-indigo-800/60">
-                  商业级 RBAC
-                </span>
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                当前管理员：{user?.email} · 具备全局用户管控、模型路由与商业对账权限
+                当前管理员：{user?.email} · 负责用户管理、模型配置与订阅管理
               </p>
             </div>
           </div>
@@ -535,7 +532,7 @@ export const AdminDashboardModal: React.FC = () => {
                 </p>
                 <div className="grid grid-cols-3 gap-3 text-xs">
                   <div className="p-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700/80">
-                    <span className="text-slate-500 dark:text-slate-400">多租户画板总数：</span>
+                    <span className="text-slate-500 dark:text-slate-400">画板总数：</span>
                     <span className="font-semibold text-slate-800 dark:text-slate-200 ml-1">
                       {dbInfo?.canvasCount ?? 0}
                     </span>
@@ -547,8 +544,8 @@ export const AdminDashboardModal: React.FC = () => {
                     </span>
                   </div>
                   <div className="p-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700/80">
-                    <span className="text-slate-500 dark:text-slate-400">租户隔离状态：</span>
-                    <span className="font-semibold text-emerald-600 dark:text-emerald-400 ml-1">WHERE user_id = $1 (Strict IDOR Protected)</span>
+                    <span className="text-slate-500 dark:text-slate-400">数据隔离状态：</span>
+                    <span className="font-semibold text-emerald-600 dark:text-emerald-400 ml-1">已按用户严格隔离</span>
                   </div>
                 </div>
               </div>
