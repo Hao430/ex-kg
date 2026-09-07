@@ -17,6 +17,8 @@ import {
   RotateCcw,
   Check,
   ChevronDown,
+  Cloud,
+  CloudOff,
   Compass,
   Sun,
   Moon,
@@ -127,49 +129,37 @@ export const Topbar: React.FC<TopbarProps> = ({
 
         <div className="h-4 w-[1px] bg-slate-200 dark:bg-slate-800" />
 
-        {/* Sync Status Indicator (Spec A5) */}
-        {syncState !== 'idle' && (
-          <Tooltip
-            content={
-              syncState === 'saved' ? '已同步到云端' :
-              syncState === 'pending' ? '待同步（离线或稍后自动补传）' :
-              syncState === 'error' ? '同步失败，已停止自动重试' :
-              '版本冲突：画板已在其他窗口被修改'
-            }
-            side="bottom"
+        {/* Sync Status Indicator (Spec A5)：云图标态 —— 斜杠云=本地模式，灰云=待同步，绿云=已同步，红云=失败/冲突 */}
+        <Tooltip
+          content={
+            !user ? '本地画板，未开启云端同步' :
+            syncState === 'pending' ? '待同步（离线或稍后自动补传）' :
+            syncState === 'error' ? '同步失败，已停止自动重试' :
+            syncState === 'conflict' ? '版本冲突：画板已在其他窗口被修改' :
+            '已同步到云端'
+          }
+          side="bottom"
+        >
+          <span
+            data-testid="sync-indicator"
+            aria-label={`同步状态：${!user ? 'local' : syncState}`}
+            className={`flex items-center justify-center w-7 h-7 rounded-lg cursor-default ${
+              !user || syncState === 'pending'
+                ? 'text-slate-400 dark:text-slate-500'
+                : syncState === 'error' || syncState === 'conflict'
+                ? 'text-red-500'
+                : 'text-emerald-500'
+            }`}
           >
-            <span
-              data-testid="sync-indicator"
-              aria-label={`同步状态：${syncState}`}
-              className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium cursor-default ${
-                syncState === 'saved'
-                  ? 'text-emerald-600 bg-emerald-50 dark:bg-emerald-500/10 dark:text-emerald-400'
-                  : syncState === 'pending'
-                  ? 'text-slate-500 bg-slate-100 dark:bg-slate-800 dark:text-slate-400'
-                  : syncState === 'error'
-                  ? 'text-red-600 bg-red-50 dark:bg-red-500/10 dark:text-red-400'
-                  : 'text-amber-600 bg-amber-50 dark:bg-amber-500/10 dark:text-amber-400'
-              }`}
-            >
-              <span
-                className={`w-1.5 h-1.5 rounded-full ${
-                  syncState === 'saved'
-                    ? 'bg-emerald-500'
-                    : syncState === 'pending'
-                    ? 'bg-slate-400 animate-pulse'
-                    : syncState === 'error'
-                    ? 'bg-red-500'
-                    : 'bg-amber-500'
-                }`}
+            {!user ? (
+              <CloudOff className="w-4 h-4" />
+            ) : (
+              <Cloud
+                className={`w-4 h-4 ${syncState === 'pending' ? 'animate-pulse' : ''}`}
               />
-              <span className="hidden md:inline">
-                {syncState === 'saved' ? '已同步' :
-                 syncState === 'pending' ? '待同步' :
-                 syncState === 'error' ? '同步失败' : '版本冲突'}
-              </span>
-            </span>
-          </Tooltip>
-        )}
+            )}
+          </span>
+        </Tooltip>
 
         {/* Board Switcher & Quick Rename */}
         <div className="relative flex items-center">
