@@ -149,6 +149,9 @@ export const ResetPasswordPage: React.FC = () => {
 export const VerifyEmailPage: React.FC = () => {
   const [status, setStatus] = useState<'pending' | 'success' | 'error'>(() => 'pending');
   const [message, setMessage] = useState('');
+  // Spec D3：错误态提供重发验证邮件入口（独立页面无 AuthProvider，直接裸 fetch）
+  const [resendState, setResendState] = useState<'idle' | 'sending' | 'sent'>('idle');
+  const [resendMessage, setResendMessage] = useState<string | null>(null);
 
   React.useEffect(() => {
     const token = new URLSearchParams(window.location.search).get('token') || '';
@@ -177,6 +180,34 @@ export const VerifyEmailPage: React.FC = () => {
     })();
   }, []);
 
+  const handleResend = async () => {
+    setResendMessage(null);
+    setResendState('sending');
+    try {
+      const res = await fetch('/api/auth/resend-verification', {
+        method: 'POST',
+        credentials: 'include',
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok) {
+        setResendState('sent');
+        setResendMessage(data?.message || '验证邮件已重新发送，请查收（注意检查垃圾邮件）');
+        return;
+      }
+      setResendState('idle');
+      if (res.status === 401) {
+        setResendMessage('请先登录后再重发验证邮件');
+      } else if (data?.code === 'EMAIL_ALREADY_VERIFIED') {
+        setResendMessage('该邮箱已完成验证，可直接返回首页登录');
+      } else {
+        setResendMessage(data?.error || '发送失败，请稍后重试');
+      }
+    } catch {
+      setResendState('idle');
+      setResendMessage('网络连接异常，请稍后重试');
+    }
+  };
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-950 p-4">
       <div className="w-full max-w-md bg-slate-900 rounded-2xl shadow-2xl border border-slate-800 overflow-hidden text-slate-100">
@@ -194,6 +225,30 @@ export const VerifyEmailPage: React.FC = () => {
           {status === 'success' && <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto" />}
           {status === 'error' && <AlertCircle className="w-10 h-10 text-rose-500 mx-auto" />}
           <p className="text-sm text-slate-300">{message || '正在验证邮箱...'}</p>
+          {status === 'error' && (
+            <div className="space-y-2">
+              {resendState !== 'sent' ? (
+                <button
+                  type="button"
+                  onClick={() => void handleResend()}
+                  disabled={resendState === 'sending'}
+                  className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 rounded-lg transition disabled:opacity-50"
+                >
+                  {resendState === 'sending' ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Mail className="w-3.5 h-3.5" />
+                  )}
+                  重新发送验证邮件
+                </button>
+              ) : (
+                <p className="text-xs text-emerald-400">{resendMessage}</p>
+              )}
+              {resendState !== 'sent' && resendMessage && (
+                <p className="text-xs text-slate-400">{resendMessage}</p>
+              )}
+            </div>
+          )}
           {status !== 'pending' && (
             <a href="/" className="inline-flex text-xs font-medium text-indigo-400 hover:text-indigo-300">
               返回首页

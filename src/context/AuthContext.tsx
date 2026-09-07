@@ -10,6 +10,7 @@ interface AuthContextType {
   logout: () => Promise<void>;
   updateProfile: (data: { name?: string; avatar?: string }) => Promise<{ success: boolean; error?: string }>;
   changePassword: (oldPassword: string, newPassword: string) => Promise<{ success: boolean; error?: string }>;
+  resendVerification: () => Promise<{ success: boolean; message?: string; error?: string }>;
   submitFeedback: (data: FeedbackPayload) => Promise<{ success: boolean; message?: string; error?: string }>;
   // Modals state
   authModalOpen: boolean;
@@ -166,6 +167,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  // Spec D3：重发验证邮件（需已登录；后端限流 3 次/10 分钟）
+  const resendVerification = async () => {
+    try {
+      const res = await fetch('/api/auth/resend-verification', {
+        method: 'POST',
+        credentials: 'include',
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        return { success: false, error: data?.error || '发送失败，请稍后重试' };
+      }
+      return { success: true, message: data?.message || '验证邮件已重新发送，请查收' };
+    } catch (e: any) {
+      return { success: false, error: e?.message || '网络连接异常' };
+    }
+  };
+
   const submitFeedback = async (payload: FeedbackPayload) => {
     try {
       const res = await fetch('/api/auth/feedback', {
@@ -248,6 +266,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         logout,
         updateProfile,
         changePassword,
+        resendVerification,
         submitFeedback,
         authModalOpen,
         authModalMode,

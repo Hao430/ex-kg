@@ -48,7 +48,7 @@ function MainApp() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [nodeCount, setNodeCount] = useState<number>(1);
 
-  const { isVip, openRechargeModal, user } = useAuth();
+  const { isVip, openRechargeModal, user, resendVerification } = useAuth();
 
   // Global Dark Mode state ('light' | 'dark')
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -390,6 +390,20 @@ function MainApp() {
       sessionStorage.setItem('deepdive_vip_banner_dismissed', new Date().toDateString());
     } catch { /* ignore */ }
   };
+  // Spec D3：未验证邮箱横幅（非 admin 且 email_verified=false），提供重发验证邮件入口
+  const [verifyResendState, setVerifyResendState] = useState<'idle' | 'sending' | 'sent'>('idle');
+  const needsEmailVerification = Boolean(user && user.role !== 'admin' && user.email_verified === false);
+  const handleResendVerification = async () => {
+    setVerifyResendState('sending');
+    const res = await resendVerification();
+    if (res.success) {
+      setVerifyResendState('sent');
+      showToast(res.message || '验证邮件已重新发送，请查收');
+    } else {
+      setVerifyResendState('idle');
+      showToast(res.error || '发送失败，请稍后重试');
+    }
+  };
   const ent = user?.entitlements;
   let vipBanner: { type: 'expiring' | 'grace'; text: string } | null = null;
   if (ent?.plan === 'vip' && ent.vipExpired) {
@@ -428,30 +442,56 @@ function MainApp() {
 
   return (
     <div className="w-screen h-screen overflow-hidden bg-slate-100 dark:bg-[#070b14] text-slate-900 dark:text-slate-100 flex flex-col font-sans select-none transition-colors duration-200">
-      {/* VIP 到期提醒横幅（Spec B3/B4） */}
-      {vipBanner && !vipBannerDismissed && (
-        <div
-          data-testid="vip-banner"
-          className={`absolute top-14 left-0 right-0 z-30 flex items-center justify-center gap-3 px-4 py-2 text-sm ${
-            vipBanner.type === 'grace'
-              ? 'bg-amber-500/95 text-white'
-              : 'bg-yellow-400/95 text-slate-900'
-          }`}
-        >
-          <span>{vipBanner.text}</span>
-          <button
-            onClick={() => openRechargeModal('VIP 到期提醒')}
-            className="underline font-semibold hover:opacity-80"
-          >
-            立即续费
-          </button>
-          <button
-            onClick={dismissVipBanner}
-            aria-label="关闭提醒"
-            className="ml-1 hover:opacity-70"
-          >
-            ✕
-          </button>
+      {/* 提醒横幅（未验证邮箱 Spec D3 / VIP 到期 Spec B3/B4），堆叠避免重叠 */}
+      {(needsEmailVerification || (vipBanner && !vipBannerDismissed)) && (
+        <div className="absolute top-14 left-0 right-0 z-30 flex flex-col gap-px">
+          {needsEmailVerification && (
+            <div
+              data-testid="email-verify-banner"
+              className="w-full flex items-center justify-center gap-3 px-4 py-2 text-sm bg-indigo-600/95 text-white"
+            >
+              <span>
+                邮箱尚未验证，验证后才能使用 AI 推理
+                {user?.email ? `（${user.email}）` : ''}
+              </span>
+              {verifyResendState === 'sent' ? (
+                <span className="font-semibold">验证邮件已发送，请查收</span>
+              ) : (
+                <button
+                  onClick={() => void handleResendVerification()}
+                  disabled={verifyResendState === 'sending'}
+                  className="underline font-semibold hover:opacity-80 disabled:opacity-50"
+                >
+                  {verifyResendState === 'sending' ? '发送中…' : '重新发送验证邮件'}
+                </button>
+              )}
+            </div>
+          )}
+          {vipBanner && !vipBannerDismissed && (
+            <div
+              data-testid="vip-banner"
+              className={`w-full flex items-center justify-center gap-3 px-4 py-2 text-sm ${
+                vipBanner.type === 'grace'
+                  ? 'bg-amber-500/95 text-white'
+                  : 'bg-yellow-400/95 text-slate-900'
+              }`}
+            >
+              <span>{vipBanner.text}</span>
+              <button
+                onClick={() => openRechargeModal('VIP 到期提醒')}
+                className="underline font-semibold hover:opacity-80"
+              >
+                立即续费
+              </button>
+              <button
+                onClick={dismissVipBanner}
+                aria-label="关闭提醒"
+                className="ml-1 hover:opacity-70"
+              >
+                ✕
+              </button>
+            </div>
+          )}
         </div>
       )}
       {/* Top Bar Navigation */}
