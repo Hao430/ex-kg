@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { GoogleGenAI } from '@google/genai';
-import { getAiModelConfig, getSavedAiModelConfig, recordAiRequestLog } from '../services/ai.service.js';
+import { getAiModelConfig, isModelConfigured, recordAiRequestLog } from '../services/ai.service.js';
 import { authMiddleware, validateInputLimits, roleBasedRateLimiter } from '../middleware/auth.js';
 import { chatQuotaMiddleware } from '../middleware/quota.js';
 import { validate } from '../lib/validate.js';
@@ -149,11 +149,9 @@ chatRouter.post(
 
       // 1.5 模型唯一来源是管理后台配置：管理员从未保存配置（或未选模型）时拒绝推理，
       // 不再回落到代码内硬编码模型，避免默认模型与实际可用渠道不符。
+      // Spec E4：判定抽为 isModelConfigured()，与 admin overview 告警横幅共用同口径。
       // 注：白名单 403（chatQuotaMiddleware）先于本检查，体验版命中 VIP 专享模型仍优先返回 403。
-      const savedConfig = await getSavedAiModelConfig();
-      const usingOpenAI = systemModelConfig.provider === 'openai' && !!systemModelConfig.openai_api_key;
-      const configuredModel = usingOpenAI ? savedConfig?.openai_model : savedConfig?.gemini_model;
-      if (!configuredModel || !String(configuredModel).trim()) {
+      if (!(await isModelConfigured())) {
         return res.status(400).json({
           error: 'AI 模型尚未配置，请管理员在管理后台「模型配置」中选择模型并保存后再试',
           code: 'MODEL_NOT_CONFIGURED',

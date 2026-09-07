@@ -44,6 +44,8 @@ export const AdminDashboardModal: React.FC = () => {
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [dbInfo, setDbInfo] = useState<any>(null);
   const [loadingOverview, setLoadingOverview] = useState(false);
+  // Spec E4：模型配置状态（false = 全站推理不可用，需醒目告警）；null = 尚未拉取
+  const [modelConfigured, setModelConfigured] = useState<boolean | null>(null);
 
   // Users state
   const [users, setUsers] = useState<AuthUser[]>([]);
@@ -107,6 +109,7 @@ export const AdminDashboardModal: React.FC = () => {
         const data = await res.json();
         setOverview(data.overview);
         setDbInfo(data.database);
+        setModelConfigured(typeof data.modelConfigured === 'boolean' ? data.modelConfigured : null);
       }
     } catch (e) {
       console.error('Fetch overview error:', e);
@@ -192,6 +195,26 @@ export const AdminDashboardModal: React.FC = () => {
   }, [adminModalOpen, fetchOverview, fetchUsers, fetchModelConfig]);
 
   if (!adminModalOpen) return null;
+
+  // Spec E4：模型未配置 = 全站推理不可用，醒目告警横幅（Overview 与 Models 页共用）。
+  // modelConfigured === null（尚未拉取）时不展示，避免闪报。
+  const modelWarningBanner = modelConfigured === false ? (
+    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-2xl border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/40 shadow-sm">
+      <div className="flex items-start gap-2.5">
+        <ShieldAlert className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
+        <div className="text-xs text-red-800 dark:text-red-200 leading-relaxed">
+          <span className="font-bold">模型未配置：全站 AI 推理当前不可用。</span>
+          <span className="ml-1">用户提问将收到「模型未配置」错误，请在下方选择模型并保存。</span>
+        </div>
+      </div>
+      <button
+        onClick={() => setActiveTab('models')}
+        className="shrink-0 px-3.5 py-1.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-semibold shadow-sm transition-colors"
+      >
+        立即配置模型
+      </button>
+    </div>
+  ) : null;
 
   const handleToggleUserStatus = async (targetUser: AuthUser) => {
     const nextStatus = !targetUser.is_active;
@@ -297,6 +320,8 @@ export const AdminDashboardModal: React.FC = () => {
       const d = await res.json();
       if (res.ok && d.success) {
         setFeedback('AI 模型与接口配置已成功保存并立即生效！');
+        // Spec E4：保存成功后同步刷新告警横幅状态（模型已配置 → 横幅消失）
+        setModelConfigured(true);
         if (d.config) {
           setModelConfig(d.config);
           setRawApiKeyInput(d.config.openai_api_key || '');
@@ -471,6 +496,8 @@ export const AdminDashboardModal: React.FC = () => {
           {/* TAB 1: OVERVIEW */}
           {activeTab === 'overview' && (
             <div className="space-y-6">
+              {/* Spec E4：模型未配置醒目告警（置顶） */}
+              {modelWarningBanner}
               {/* Metrics Grid */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200/80 dark:border-slate-700/80 shadow-xs">
@@ -591,6 +618,8 @@ export const AdminDashboardModal: React.FC = () => {
           {/* TAB: AI MODEL & API PROVIDER CONFIG */}
           {activeTab === 'models' && (
             <div className="space-y-6">
+              {/* Spec E4：未配置时页内同步告警，保存成功后自动消失 */}
+              {modelWarningBanner}
               <form onSubmit={handleSaveModelConfig} className="space-y-6">
                 {/* Provider Selector */}
                 <div className="p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/80 dark:border-slate-700/80">

@@ -14,7 +14,7 @@ import {
   listAllOrders,
   listAuditLogs,
 } from '../services/admin.service.js';
-import { getAiModelConfig } from '../services/ai.service.js';
+import { getAiModelConfig, isModelConfigured } from '../services/ai.service.js';
 import { asyncHandler } from '../lib/async-handler.js';
 import { checkDbStatus } from '../core/db-status.js';
 import { validate } from '../lib/validate.js';
@@ -35,7 +35,10 @@ adminRouter.use(requireAdmin);
 adminRouter.get('/overview', asyncHandler(async (_req: Request, res: Response) => {
   const overview = await getAdminOverview();
   const database = await checkDbStatus();
-  res.json({ success: true, overview, database });
+  // Spec E4：模型配置状态透出（false = 管理员未配置可用模型，全站推理 400 MODEL_NOT_CONFIGURED），
+  // Admin 后台据此展示醒目告警横幅
+  const modelConfigured = await isModelConfigured();
+  res.json({ success: true, overview, database, modelConfigured });
 }));
 
 /**
