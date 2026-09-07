@@ -3,6 +3,7 @@ import { getPool } from '../core/pool.js';
 import { initDbSchema } from '../core/schema.js';
 import { inMemoryStore, trimAuditLogs } from '../core/memory-store.js';
 import type { AuditLogRecord } from '../core/records.js';
+import { handlePgError } from '../core/db-guard.js';
 
 export interface RecordAuditLogData {
   userId?: string | null;
@@ -43,6 +44,7 @@ export async function recordAuditLog(data: RecordAuditLogData): Promise<void> {
         );
         return;
       } catch (e) {
+        handlePgError(e);
         console.warn('PG recordAuditLog fallback to in-memory:', e);
       }
     }
@@ -61,6 +63,7 @@ export async function recordAuditLog(data: RecordAuditLogData): Promise<void> {
     inMemoryStore.auditLogs.unshift(record);
     trimAuditLogs();
   } catch (e) {
+    handlePgError(e);
     console.warn('recordAuditLog failed (non-blocking):', e);
   }
 }
@@ -116,6 +119,7 @@ export async function listAuditLogs(params: {
         total,
       };
     } catch (e) {
+      handlePgError(e);
       console.warn('PG listAuditLogs fallback to in-memory:', e);
     }
   }
@@ -153,6 +157,7 @@ export async function cleanupOldAuditLogs(retentionDays: number): Promise<number
           );
       return res.rowCount || 0;
     } catch (e) {
+      handlePgError(e);
       console.warn('PG cleanupOldAuditLogs failed, falling back to memory only:', e);
     }
   }

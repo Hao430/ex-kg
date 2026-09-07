@@ -127,6 +127,8 @@ export interface DbStatus {
   canvasCount: number;
   nodeCount: number;
   databaseUrlConfigured: boolean;
+  /** Spec J1：最近 60s 内出现过 PG 故障（生产配置了 DATABASE_URL 且故障中恒为 true），供部署层探活告警 */
+  degraded?: boolean;
 }
 
 export interface AiModelConfig {

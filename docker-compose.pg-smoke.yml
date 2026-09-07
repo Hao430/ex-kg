@@ -1,0 +1,20 @@
+# J3（跟踪清单 E1）：PG 真库冒烟测试环境。
+# 用法：docker compose up -d postgres，然后 PG_SMOKE=1 npx tsx --test tests/pg/pg-smoke.test.ts
+# 默认套件（npm test）不加载本文件下的测试（glob 仅匹配 tests/*.test.ts）。
+services:
+  postgres:
+    image: postgres:16
+    container_name: arborize-pg-smoke
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: arborize_test
+    ports:
+      - '5433:5432'
+    tmpfs:
+      - /var/lib/postgresql/data # 冒烟库无需持久化，容器即抛
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d arborize_test']
+      interval: 2s
+      timeout: 2s
+      retries: 15

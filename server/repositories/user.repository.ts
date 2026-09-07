@@ -4,6 +4,7 @@ import { initDbSchema } from '../core/schema.js';
 import { inMemoryStore } from '../core/memory-store.js';
 import type { UserRecord } from '../core/records.js';
 import { deleteUserSessions } from './session.repository.js';
+import { handlePgError } from '../core/db-guard.js';
 
 /** 将 PG 行映射为 UserRecord（数值/时间戳规范化） */
 export function mapRowToUser(row: any): UserRecord {
@@ -39,6 +40,7 @@ export async function findUserByEmail(email: string): Promise<UserRecord | null>
       const res = await p.query('SELECT * FROM users WHERE email = $1 AND deleted_at IS NULL', [normalizedEmail]);
       if (res.rows.length > 0) return res.rows[0];
     } catch (e) {
+      handlePgError(e);
       console.warn('PG findUserByEmail fallback to in-memory:', e);
     }
   }
@@ -58,6 +60,7 @@ export async function findUserById(id: string): Promise<UserRecord | null> {
       const res = await p.query('SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL', [id]);
       if (res.rows.length > 0) return res.rows[0];
     } catch (e) {
+      handlePgError(e);
       console.warn('PG findUserById fallback to in-memory:', e);
     }
   }
@@ -98,6 +101,7 @@ export async function createUser(data: {
       );
       return res.rows[0];
     } catch (e) {
+      handlePgError(e);
       console.warn('PG createUser failed, storing in memory:', e);
     }
   }
@@ -141,6 +145,7 @@ export async function markEmailVerifiedByToken(token: string): Promise<UserRecor
       if (res.rows.length > 0) return mapRowToUser(res.rows[0]);
       return null;
     } catch (e) {
+      handlePgError(e);
       console.warn('PG markEmailVerifiedByToken failed, fallback to memory:', e);
     }
   }
@@ -174,6 +179,7 @@ export async function setVerificationToken(userId: string, token: string, expire
       );
       return;
     } catch (e) {
+      handlePgError(e);
       console.warn('PG setVerificationToken failed, fallback to memory:', e);
     }
   }
@@ -199,6 +205,7 @@ export async function setPasswordResetToken(userId: string, token: string, expir
       );
       return;
     } catch (e) {
+      handlePgError(e);
       console.warn('PG setPasswordResetToken failed, fallback to memory:', e);
     }
   }
@@ -227,6 +234,7 @@ export async function markPasswordResetByToken(token: string): Promise<UserRecor
       if (res.rows.length > 0) return mapRowToUser(res.rows[0]);
       return null;
     } catch (e) {
+      handlePgError(e);
       console.warn('PG markPasswordResetByToken failed, fallback to memory:', e);
     }
   }
@@ -259,6 +267,7 @@ export async function updateUserPassword(userId: string, passwordHash: string): 
       );
       return;
     } catch (e) {
+      handlePgError(e);
       console.warn('PG updateUserPassword failed, fallback to memory:', e);
     }
   }
@@ -288,6 +297,7 @@ export async function recordFailedLogin(userId: string): Promise<{ failedAttempt
       );
       return { failedAttempts: attempts, lockedUntil };
     } catch (e) {
+      handlePgError(e);
       console.warn('PG recordFailedLogin failed:', e);
     }
   }
@@ -308,6 +318,7 @@ export async function resetFailedLogin(userId: string): Promise<void> {
       );
       return;
     } catch (e) {
+      handlePgError(e);
       console.warn('PG resetFailedLogin failed:', e);
     }
   }
@@ -342,6 +353,7 @@ export async function updateUserProfile(data: {
       );
       if (res.rows.length > 0) return res.rows[0];
     } catch (e) {
+      handlePgError(e);
       console.warn('PG updateUserProfile fallback to in-memory:', e);
     }
   }
@@ -374,6 +386,7 @@ export async function updateUserStatus(userId: string, isActive: boolean): Promi
       }
       if (res.rows.length > 0) return res.rows[0];
     } catch (e) {
+      handlePgError(e);
       console.warn('PG updateUserStatus fallback:', e);
     }
   }
@@ -415,6 +428,7 @@ export async function updateVipMembership(data: {
       );
       if (res.rows.length > 0) return mapRowToUser(res.rows[0]);
     } catch (e) {
+      handlePgError(e);
       console.warn('PG updateVipMembership failed, updating memory:', e);
     }
   }
@@ -443,6 +457,7 @@ export async function deleteAccount(userId: string): Promise<boolean> {
       );
       return (res.rowCount || 0) > 0;
     } catch (e) {
+      handlePgError(e);
       console.warn('PG deleteAccount failed, fallback to memory:', e);
     }
   }
@@ -472,6 +487,7 @@ export async function cleanupDeletedUsers(retentionDays: number): Promise<number
           );
       return res.rowCount || 0;
     } catch (e) {
+      handlePgError(e);
       console.warn('PG cleanupDeletedUsers failed, falling back to memory only:', e);
     }
   }
@@ -524,6 +540,7 @@ export async function restoreAccount(userId: string): Promise<UserRecord | null>
     } catch (e: any) {
       // 邮箱唯一冲突（冷却期内同邮箱已重新注册）向上抛，由 service 转 409
       if (e?.code === '23505') throw e;
+      handlePgError(e);
       console.warn('PG restoreAccount failed, fallback to memory:', e);
     }
   }
@@ -566,6 +583,7 @@ export async function updateUserEmail(
     } catch (e: any) {
       // 邮箱唯一冲突向上抛，由 service 转 409
       if (e?.code === '23505') throw e;
+      handlePgError(e);
       console.warn('PG updateUserEmail failed, fallback to memory:', e);
     }
   }

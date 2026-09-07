@@ -2,6 +2,7 @@ import { getPool } from '../core/pool.js';
 import { initDbSchema } from '../core/schema.js';
 import { inMemoryStore } from '../core/memory-store.js';
 import type { OrderRecord } from '../core/records.js';
+import { handlePgError } from '../core/db-guard.js';
 
 /**
  * Create an order for recharge or VIP subscription
@@ -61,6 +62,7 @@ export async function createOrder(data: {
       }
       return orderRecord;
     } catch (e) {
+      handlePgError(e);
       console.warn('PG createOrder failed, fallback to memory:', e);
     }
   }
@@ -99,6 +101,7 @@ export async function listUserOrders(userId: string): Promise<OrderRecord[]> {
       const res = await p.query('SELECT * FROM orders WHERE user_id = $1 ORDER BY created_at DESC', [userId]);
       return res.rows.map(mapRowToOrder);
     } catch (e) {
+      handlePgError(e);
       console.warn('PG listUserOrders failed, using memory:', e);
     }
   }
@@ -141,6 +144,7 @@ export async function listAllOrders(params: {
         total: countRes.rows[0]?.count ?? 0,
       };
     } catch (e) {
+      handlePgError(e);
       console.warn('PG listAllOrders failed, using memory:', e);
     }
   }
@@ -169,6 +173,7 @@ export async function findOrderByNo(orderNo: string): Promise<OrderRecord | null
       const res = await p.query('SELECT * FROM orders WHERE order_no = $1', [orderNo]);
       if (res.rows.length > 0) return mapRowToOrder(res.rows[0]);
     } catch (e) {
+      handlePgError(e);
       console.warn('PG findOrderByNo failed, using memory:', e);
     }
   }
@@ -199,6 +204,7 @@ export async function updateOrderStatus(
       if (res.rows.length > 0) return mapRowToOrder(res.rows[0]);
       return null;
     } catch (e) {
+      handlePgError(e);
       console.warn('PG updateOrderStatus failed, updating memory:', e);
     }
   }

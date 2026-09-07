@@ -3,6 +3,7 @@ import { initDbSchema } from '../core/schema.js';
 import { inMemoryStore } from '../core/memory-store.js';
 import { DEFAULT_AI_MODEL_CONFIG } from '../core/records.js';
 import type { AiModelConfig, AiRequestLogRecord } from '../core/records.js';
+import { handlePgError } from '../core/db-guard.js';
 
 /**
  * Record AI Request Log for auditing & engineering metrics
@@ -63,6 +64,7 @@ export async function recordAiRequestLog(data: {
       );
       return log;
     } catch (e) {
+      handlePgError(e);
       console.warn('PG recordAiRequestLog failed:', e);
     }
   }
@@ -92,6 +94,7 @@ export async function getAiModelConfig(): Promise<AiModelConfig> {
       return { ...DEFAULT_AI_MODEL_CONFIG, ...res.rows[0].value };
     }
   } catch (err) {
+    handlePgError(err);
     console.error('Failed to get ai_model_config from DB:', err);
   }
 
@@ -114,6 +117,7 @@ export async function getSavedAiModelConfig(): Promise<Partial<AiModelConfig> | 
         return res.rows[0].value as Partial<AiModelConfig>;
       }
     } catch (err) {
+      handlePgError(err);
       console.error('Failed to get raw ai_model_config from DB:', err);
     }
   }
@@ -145,6 +149,7 @@ export async function saveAiModelConfig(config: Partial<AiModelConfig>, operator
       );
       return updated;
     } catch (err) {
+      handlePgError(err);
       console.error('Failed to save ai_model_config to DB:', err);
     }
   }
@@ -170,6 +175,7 @@ export async function cleanupOldAiLogs(retentionDays: number): Promise<number> {
           );
       return res.rowCount || 0;
     } catch (e) {
+      handlePgError(e);
       console.warn('PG cleanupOldAiLogs failed, falling back to memory only:', e);
     }
   }

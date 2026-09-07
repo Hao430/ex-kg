@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { getPool } from '../core/pool.js';
 import { inMemoryStore } from '../core/memory-store.js';
 import type { FeedbackRecord } from '../core/records.js';
+import { handlePgError } from '../core/db-guard.js';
 
 export async function createFeedback(data: {
   userId?: string;
@@ -40,6 +41,7 @@ export async function createFeedback(data: {
         };
       }
     } catch (e) {
+      handlePgError(e);
       console.warn('PG createFeedback fallback to in-memory:', e);
     }
   }

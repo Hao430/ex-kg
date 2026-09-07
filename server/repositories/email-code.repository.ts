@@ -2,6 +2,7 @@ import { getPool } from '../core/pool.js';
 import { initDbSchema } from '../core/schema.js';
 import { inMemoryStore } from '../core/memory-store.js';
 import type { EmailCodeRecord } from '../core/records.js';
+import { handlePgError } from '../core/db-guard.js';
 
 /** 连错上限：达 5 次即作废当前验证码（需重新获取） */
 export const EMAIL_CODE_MAX_ATTEMPTS = 5;
@@ -28,6 +29,7 @@ export async function upsertCode(email: string, code: string, expiresAt: string)
       );
       return;
     } catch (e) {
+      handlePgError(e);
       console.warn('PG upsertCode failed, fallback to memory:', e);
     }
   }
@@ -65,6 +67,7 @@ export async function getCode(email: string): Promise<EmailCodeRecord | null> {
         updated_at: new Date(row.updated_at).toISOString(),
       };
     } catch (e) {
+      handlePgError(e);
       console.warn('PG getCode failed, fallback to memory:', e);
     }
   }
@@ -108,6 +111,7 @@ export async function consumeCode(
       }
       return { result: 'mismatch', attempts };
     } catch (e) {
+      handlePgError(e);
       console.warn('PG consumeCode failed, fallback to memory:', e);
     }
   }

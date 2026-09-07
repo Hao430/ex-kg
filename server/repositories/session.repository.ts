@@ -3,6 +3,7 @@ import { getPool } from '../core/pool.js';
 import { initDbSchema } from '../core/schema.js';
 import { inMemoryStore } from '../core/memory-store.js';
 import type { SessionRecord, UserRecord } from '../core/records.js';
+import { handlePgError } from '../core/db-guard.js';
 
 export async function createSession(data: {
   userId: string;
@@ -35,6 +36,7 @@ export async function createSession(data: {
       );
       return session;
     } catch (e) {
+      handlePgError(e);
       console.warn('PG createSession failed, stored in memory:', e);
     }
   }
@@ -87,6 +89,7 @@ export async function findSession(token: string): Promise<{ session: SessionReco
         return { session, user };
       }
     } catch (e) {
+      handlePgError(e);
       console.warn('PG findSession fallback to in-memory:', e);
     }
   }
@@ -110,6 +113,7 @@ export async function deleteSession(token: string): Promise<boolean> {
     try {
       await p.query('DELETE FROM sessions WHERE token = $1', [token]);
     } catch (e) {
+      handlePgError(e);
       console.warn('PG deleteSession failed:', e);
     }
   }
@@ -125,6 +129,7 @@ export async function deleteUserSessions(userId: string): Promise<number> {
       const res = await p.query('DELETE FROM sessions WHERE user_id = $1', [userId]);
       count = res.rowCount || 0;
     } catch (e) {
+      handlePgError(e);
       console.warn('PG deleteUserSessions failed:', e);
     }
   }
@@ -151,6 +156,7 @@ export async function cleanupExpiredSessions(): Promise<number> {
       const res = await p.query('DELETE FROM sessions WHERE expires_at < NOW()');
       count = res.rowCount || 0;
     } catch (e) {
+      handlePgError(e);
       console.warn('PG cleanupExpiredSessions failed, falling back to memory only:', e);
     }
   }

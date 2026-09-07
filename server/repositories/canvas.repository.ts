@@ -4,6 +4,7 @@ import { initDbSchema } from '../core/schema.js';
 import { inMemoryStore } from '../core/memory-store.js';
 import { AppError, ConflictError, ForbiddenError, NotFoundError } from '../lib/errors.js';
 import type { CanvasRecord } from '../core/records.js';
+import { handlePgError } from '../core/db-guard.js';
 
 /**
  * 画布访问权限（H1 安全加固，2026-09-07）：严格属主制——读/写/删一律属主本人或 admin。
@@ -61,6 +62,7 @@ export async function listCanvases(userId?: string, isAdmin = false): Promise<Ca
         edgeCount: r.edge_count,
       }));
     } catch (e) {
+      handlePgError(e);
       console.warn('PG listCanvases fallback to in-memory:', e);
     }
   }
@@ -184,6 +186,7 @@ export async function getCanvas(canvasId: string, userId?: string, isAdmin = fal
         edgeCount: edges.length,
       };
     } catch (e) {
+      handlePgError(e);
       console.warn(`PG getCanvas(${canvasId}) fallback to memory:`, e);
     }
   }
@@ -479,6 +482,7 @@ export async function deleteCanvas(canvasId: string, userId: string, isAdmin = f
       await client.query('ROLLBACK');
       // 业务错误（如 403）必须穿透，不得降级落内存分支造成 200 假成功
       if (e instanceof AppError) throw e;
+      handlePgError(e);
       console.warn(`PG deleteCanvas(${canvasId}) fallback to in-memory:`, e);
     } finally {
       client.release();
@@ -513,6 +517,7 @@ export async function getCanvasOwnerInfo(
       const res = await p.query('SELECT user_id FROM canvases WHERE id = $1 AND deleted_at IS NULL', [canvasId]);
       return { exists: res.rows.length > 0, ownerId: res.rows[0]?.user_id ?? null };
     } catch (e) {
+      handlePgError(e);
       console.warn('PG getCanvasOwnerInfo fallback to in-memory:', e);
     }
   }
@@ -532,6 +537,7 @@ export async function countCanvasNodes(canvasId: string): Promise<number> {
       ]);
       return res.rows[0].count;
     } catch (e) {
+      handlePgError(e);
       console.warn('PG countCanvasNodes fallback to in-memory:', e);
     }
   }
@@ -563,6 +569,7 @@ export async function searchNodes(queryText: string, canvasId?: string, userId?:
       const res = await p.query(sql, params);
       return res.rows;
     } catch (e) {
+      handlePgError(e);
       console.warn('PG searchNodes failed:', e);
     }
   }

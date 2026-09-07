@@ -2,6 +2,7 @@ import { getPool } from '../core/pool.js';
 import { initDbSchema } from '../core/schema.js';
 import { inMemoryStore } from '../core/memory-store.js';
 import type { UserRecord } from '../core/records.js';
+import { handlePgError } from '../core/db-guard.js';
 
 export async function listAdminUsers(params: {
   page?: number;
@@ -57,6 +58,7 @@ export async function listAdminUsers(params: {
         total,
       };
     } catch (e) {
+      handlePgError(e);
       console.warn('PG listAdminUsers fallback to in-memory:', e);
     }
   }
@@ -137,6 +139,7 @@ export async function getAdminOverview(): Promise<{
         modelDistribution,
       };
     } catch (e) {
+      handlePgError(e);
       console.warn('PG getAdminOverview fallback:', e);
     }
   }

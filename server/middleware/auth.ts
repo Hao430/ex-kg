@@ -29,6 +29,20 @@ export const loginRateLimiter = rateLimit({
 });
 
 /**
+ * Rate limiter for quota query: 60 req/min per IP（读接口，供前端余量展示轮询，Spec J2）
+ */
+export const quotaRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: '配额查询过于频繁，请稍后再试',
+    code: 'RATE_LIMIT_EXCEEDED',
+  },
+});
+
+/**
  * Rate limiter for resend-verification: 3 req/10min per user（防邮件轰炸，Spec D3 审计）
  */
 export const resendVerificationRateLimiter = rateLimit({
