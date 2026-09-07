@@ -13,6 +13,7 @@ import {
   Download,
   FileText,
   FileJson,
+  ImageDown,
   StickyNote,
   RotateCcw,
   Check,
@@ -53,6 +54,7 @@ interface TopbarProps {
   onFitView: () => void;
   onExportJson: () => void;
   onExportMarkdown: () => void;
+  onExportPng: () => void;
   onResetBoard: () => void;
   onGoToLanding?: () => void;
   theme?: 'light' | 'dark';
@@ -76,6 +78,7 @@ export const Topbar: React.FC<TopbarProps> = ({
   onFitView,
   onExportJson,
   onExportMarkdown,
+  onExportPng,
   onResetBoard,
   onGoToLanding,
   theme = 'light',
@@ -390,6 +393,20 @@ export const Topbar: React.FC<TopbarProps> = ({
                   <span>居中视野</span>
                 </button>
               </div>
+
+              <button
+                onClick={() => {
+                  onExportPng();
+                  setShowCanvasMoreMenu(false);
+                }}
+                className="w-full text-left px-2.5 py-2 text-xs flex items-center gap-2.5 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl transition-colors"
+              >
+                <ImageDown className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
+                <div>
+                  <div className="font-medium">导出 PNG 图片</div>
+                  <div className="text-[10px] text-slate-400">可分享的思维全景图（含水印）</div>
+                </div>
+              </button>
 
               <button
                 onClick={() => {

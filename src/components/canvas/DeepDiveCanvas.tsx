@@ -27,6 +27,7 @@ import { SelectionPopup } from './SelectionPopup';
 import { ChatNodeData, TextSelectionPayload, GroundingMetadata } from '../../types';
 import { getLayoutedElements } from '../../lib/layout';
 import { buildAncestorContext } from '../../lib/context';
+import { onSyncState } from '../../lib/sync-queue';
 import { saveBoard, loadBoardList, StoredBoard, deduplicateNodes, deduplicateEdges } from '../../lib/storage';
 import { NodeActionsContext, NodeActionsContextValue } from '../../context/NodeActionsContext';
 import { useAuth } from '../../context/AuthContext';
@@ -121,18 +122,50 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
   nodesRef.current = nodes;
   edgesRef.current = edges;
 
-  // Free Tier AI Node Limit Check (10 AI nodes per canvas for free users)
+  // Spec J2：服务端余量单一事实源（GET /api/quota，口径含 suggested 与后端拦截完全一致）。
+  // null = 余量未知（VIP/Admin 不受限、查询失败或未同步）——此时前端不做本地拦截，由服务端 chat 403 兜底。
+  const [serverNodeRemaining, setServerNodeRemaining] = useState<number | null>(null);
+  const refreshServerQuota = useCallback(async () => {
+    if (!canvasId || isVip) {
+      setServerNodeRemaining(null);
+      return;
+    }
+    try {
+      const res = await fetch(`/api/quota?canvasId=${encodeURIComponent(canvasId)}`, {
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        setServerNodeRemaining(null);
+        return;
+      }
+      const body = await res.json();
+      setServerNodeRemaining(body?.node ? body.node.remaining : null);
+    } catch {
+      setServerNodeRemaining(null);
+    }
+  }, [canvasId, isVip]);
+
+  useEffect(() => {
+    refreshServerQuota();
+    // 自动保存成功（服务端节点计数已更新）后刷新余量，保证展示与后端判定同源
+    const off = onSyncState((state, boardId) => {
+      if (state === 'saved' && boardId === canvasId) refreshServerQuota();
+    });
+    return off;
+  }, [refreshServerQuota, canvasId]);
+
+  // Free Tier AI Node Limit Check（余量来源：服务端 /api/quota，J2 起不再本地计数）
   const checkAiQuota = useCallback((): boolean => {
     if (isVip) return true;
-    const currentAiNodes = nodesRef.current.filter(
-      (n) => n.type === 'chat' && (n.data as any)?.status !== 'suggested'
-    ).length;
-    if (currentAiNodes >= 10) {
-      openRechargeModal('当前画板已达到免费版 10 个 AI 节点上限。升级 Pro 畅享无限节点深度探索与推演！');
-      return false;
+    if (serverNodeRemaining !== null) {
+      if (serverNodeRemaining <= 0) {
+        openRechargeModal('当前画板的 AI 推理节点额度已用完。升级 Pro 畅享无限节点深度探索与推演！');
+        return false;
+      }
+      return true;
     }
     return true;
-  }, [isVip, openRechargeModal]);
+  }, [isVip, openRechargeModal, serverNodeRemaining]);
 
   // Auto-save sync back to parent
   useEffect(() => {

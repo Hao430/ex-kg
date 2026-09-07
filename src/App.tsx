@@ -19,6 +19,7 @@ import {
   fetchBoardListFromServer,
   StoredBoard,
 } from './lib/storage';
+import { exportCanvasAsPng } from './lib/canvas-image-export';
 import { DeepDiveBoardMeta } from './types';
 import { onSyncState } from './lib/sync-queue';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -438,6 +439,16 @@ function MainApp() {
     showToast('已导出 Markdown 研报大纲');
   };
 
+  // Spec K1（B2）：PNG 图片导出——html-to-image 捕获画布 + 品牌水印；失败时 toast 中文原因
+  const handleExportPng = async () => {
+    const result = await exportCanvasAsPng(currentNodesRef.current, boardName);
+    if (result.ok) {
+      showToast('已导出 PNG 画板图片，可直接分享');
+    } else {
+      showToast(result.error || '图片导出失败，请重试');
+    }
+  };
+
   const handleResetBoard = () => {
     if (window.confirm('确定要清空当前画板的所有节点吗？此操作无法撤销。')) {
       localStorage.removeItem(`deepdive_board_${currentBoardId}`);
@@ -582,6 +593,7 @@ function MainApp() {
         onFitView={() => triggerFitViewRef.current?.()}
         onExportJson={handleExportJson}
         onExportMarkdown={handleExportMarkdown}
+        onExportPng={handleExportPng}
         onResetBoard={handleResetBoard}
         onGoToLanding={handleGoToLanding}
         theme={theme}
