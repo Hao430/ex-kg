@@ -1,0 +1,47 @@
+# Spec K4（跟踪清单 B3）：Umami 自托管统计服务部署配置。
+#
+# 使用（需宿主机已装 Docker）：
+#   docker compose -f docker-compose.umami.yml up -d
+#   1) 浏览器打开 http://<host>:3001 → 默认账号 admin / umami（首次登录后立即改密）
+#   2) Umami 后台 Settings → Websites 新建站点「枝想」，复制 website id
+#   3) 把 id 与统计地址写进应用 .env：
+#        VITE_UMAMI_SRC=https://<统计域名或 http://<host>:3001/script.js>
+#        VITE_UMAMI_WEBSITE_ID=<website id>
+#   4) 重启应用前端（VITE_ 变量构建期注入，需重新 npm run build / dev）
+#
+# 生产建议：Umami 前置 Nginx/Caddy 反代并配 HTTPS，避免混合内容阻断 script.js。
+
+services:
+  umami:
+    image: ghcr.io/umami-software/umami:postgresql-latest
+    container_name: arborize-umami
+    ports:
+      - '3001:3000' # 应用主端口 3000 已占用，统计服务用 3001
+    environment:
+      DATABASE_TYPE: postgresql
+      DATABASE_URL: postgresql://umami:umami@umami-db:5432/umami
+      # APP_SECRET：会话签名密钥，上线前必须替换为随机长串（openssl rand -base64 32）
+      APP_SECRET: replace-me-with-random-secret
+    depends_on:
+      umami-db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  umami-db:
+    image: postgres:16-alpine
+    container_name: arborize-umami-db
+    environment:
+      POSTGRES_DB: umami
+      POSTGRES_USER: umami
+      POSTGRES_PASSWORD: umami
+    volumes:
+      - umami-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U umami -d umami']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  umami-db-data:

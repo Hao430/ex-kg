@@ -32,6 +32,7 @@ import { saveBoard, loadBoardList, StoredBoard, deduplicateNodes, deduplicateEdg
 import { NodeActionsContext, NodeActionsContextValue } from '../../context/NodeActionsContext';
 import { useAuth } from '../../context/AuthContext';
 import { useRenderMonitor } from '../../hooks/useRenderMonitor';
+import { trackEvent, trackOnce } from '../../lib/analytics';
 import { AlertCircle, Sparkles, X, FolderPlus, AlertTriangle, Trash2 } from 'lucide-react';
 
 let globalIdCounter = 0;
@@ -159,6 +160,8 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
     if (isVip) return true;
     if (serverNodeRemaining !== null) {
       if (serverNodeRemaining <= 0) {
+        // K4 事件 10：配额墙触达（免费版转化漏斗核心指标；remaining 为计数非 PII）
+        trackEvent('quota_wall', { remaining: serverNodeRemaining });
         openRechargeModal('当前画板的 AI 推理节点额度已用完。升级 Pro 畅享无限节点深度探索与推演！');
         return false;
       }
@@ -296,6 +299,8 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       options?: { model?: string; enableWebSearch?: boolean }
     ) => {
       if (!checkAiQuota()) return;
+      // K4 事件 6：每画板首次发起 AI 生成（终身一次去重，衡量激活深度）
+      if (canvasId) trackOnce(`ai_first_${canvasId}`, 'ai_generate_first');
 
       const targetNode = nodesRef.current.find((n) => n.id === nodeId);
       const existingData = targetNode?.data as unknown as ChatNodeData | undefined;

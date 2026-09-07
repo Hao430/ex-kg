@@ -23,6 +23,7 @@ import { exportCanvasAsPng } from './lib/canvas-image-export';
 import { DeepDiveBoardMeta } from './types';
 import { onSyncState } from './lib/sync-queue';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { trackEvent } from './lib/analytics';
 import { AuthModal } from './components/auth/AuthModal';
 import { RechargeModal } from './components/ui/RechargeModal';
 import { AdminDashboardModal } from './components/admin/AdminDashboardModal';
@@ -394,6 +395,7 @@ function MainApp() {
           edges: [],
         };
         saveBoard(newBoard);
+        trackEvent('board_create'); // K4 事件 5：画板创建（不携带画板名，避免 PII）
         const updatedList = loadBoardList();
         setBoards(updatedList);
         setCurrentBoardId(newId);
@@ -416,6 +418,7 @@ function MainApp() {
   };
 
   const handleExportJson = () => {
+    trackEvent('export', { format: 'json' }); // K4 事件 8：导出点击
     const currentBoard: StoredBoard = {
       id: currentBoardId,
       name: boardName,
@@ -428,6 +431,7 @@ function MainApp() {
   };
 
   const handleExportMarkdown = () => {
+    trackEvent('export', { format: 'markdown' }); // K4 事件 8：导出点击
     const currentBoard: StoredBoard = {
       id: currentBoardId,
       name: boardName,
@@ -441,6 +445,7 @@ function MainApp() {
 
   // Spec K1（B2）：PNG 图片导出——html-to-image 捕获画布 + 品牌水印；失败时 toast 中文原因
   const handleExportPng = async () => {
+    trackEvent('export', { format: 'png' }); // K4 事件 8：导出点击
     const result = await exportCanvasAsPng(currentNodesRef.current, boardName);
     if (result.ok) {
       showToast('已导出 PNG 画板图片，可直接分享');

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Compass,
   Sparkles,
@@ -36,6 +36,7 @@ import {
   User,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { trackEvent } from '../../lib/analytics';
 
 interface LandingPageProps {
   onEnterCanvas: (presetTopic?: string) => void;
@@ -54,6 +55,11 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   const [demoExpanded, setDemoExpanded] = useState<boolean>(false);
   const [demoStep, setDemoStep] = useState<number>(1);
   const [openFaq, setOpenFaq] = useState<number | null>(null);
+
+  // K4 事件 1：落地页浏览（SPA 内 landing↔canvas 切换会重挂载，重复计数即为真实回访）
+  useEffect(() => {
+    trackEvent('landing_view');
+  }, []);
 
   const scenarios = [
     {

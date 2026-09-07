@@ -18,6 +18,7 @@ import {
 import { motion } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import { Sparkles, ArrowRight } from 'lucide-react';
+import { trackEvent } from '../../lib/analytics';
 import '@xyflow/react/dist/style.css';
 
 /** 快照节点数据形状（保存链路已按 I 组口径白名单化，直接渲染） */
@@ -116,6 +117,7 @@ const SharePageInner: React.FC<{ shareCode: string }> = ({ shareCode }) => {
           animated: false,
         }));
         setState({ status: 'ready', title: body.title || '枝想画板分享', nodes, edges, viewCount: body.viewCount || 0 });
+        trackEvent('share_view'); // K4 事件 9：分享页浏览成功（传播链路）
       } catch {
         if (!cancelled) setState({ status: 'error', message: '加载失败，请稍后重试' });
       }

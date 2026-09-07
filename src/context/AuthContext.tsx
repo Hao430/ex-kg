@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { AuthUser, FeedbackPayload } from '../types';
+import { trackEvent } from '../lib/analytics';
 
 interface AuthContextType {
   user: AuthUser | null;
@@ -99,6 +100,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       setUser(data.user);
       void refreshUser(); // 拉取 entitlements（Spec B3/B4）
+      trackEvent('login_success'); // K4 事件 4：登录成功（不携带任何账号标识）
       setAuthModalOpen(false);
       return { success: true };
     } catch (e: any) {
@@ -121,6 +123,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       setUser(data.user);
       void refreshUser(); // 拉取 entitlements（Spec B3/B4）
+      trackEvent('register_success'); // K4 事件 3：注册成功（漏斗关键节点）
       setAuthModalOpen(false);
       return { success: true };
     } catch (e: any) {
@@ -141,6 +144,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!res.ok) {
         return { success: false, error: data?.error || '发送失败，请稍后重试' };
       }
+      trackEvent('register_code_sent'); // K4 事件 2：注册验证码发送成功（进入注册漏斗）
       return { success: true, message: data?.message || '验证码已发送，请查收' };
     } catch (e: any) {
       return { success: false, error: e?.message || '网络连接异常' };

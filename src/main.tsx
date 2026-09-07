@@ -3,8 +3,13 @@ import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import { ResetPasswordPage, VerifyEmailPage } from './components/auth/ResetPasswordPage.tsx';
 import { SharePage } from './components/share/SharePage.tsx';
+import { initAnalytics, trackOnce } from './lib/analytics.ts';
 import './index.css';
 import 'katex/dist/katex.min.css';
+
+// Spec K4（B3）：Umami 自托管埋点——启动注入（VITE_UMAMI_SRC/WEBSITE_ID 未配置时 no-op），
+// 每日活跃在主应用内去重上报（分享页等独立页不计入，其浏览量由 share_view 事件单独统计）。
+initAnalytics();
 
 // Root fix for ResizeObserver loop completed with undelivered notifications in React Flow
 if (typeof window !== 'undefined' && window.ResizeObserver) {
@@ -64,3 +69,6 @@ createRoot(document.getElementById('root')!).render(
     {StandalonePage ? <StandalonePage /> : <App />}
   </StrictMode>
 );
+
+// 每日活跃（K4 事件 7）：仅主应用（含落地页/画布），localStorage 按日去重
+if (!StandalonePage) trackOnce('daily_active', 'daily_active', undefined, true);
