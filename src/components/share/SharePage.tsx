@@ -35,7 +35,7 @@ const ShareNode: React.FC<NodeProps> = ({ data }) => {
   const d = data as unknown as ShareNodeData;
   if (d.isNote) {
     return (
-      <div className="w-[260px] rounded-2xl border border-amber-300/70 dark:border-amber-600/50 bg-amber-50 dark:bg-amber-950/60 p-4 shadow-lg">
+      <div className="w-[220px] sm:w-[240px] md:w-[260px] rounded-2xl border border-amber-300/70 dark:border-amber-600/50 bg-amber-50 dark:bg-amber-950/60 p-4 shadow-lg">
         <div className="text-xs font-bold text-amber-700 dark:text-amber-300 mb-1.5">便签</div>
         <div className="text-xs text-amber-900 dark:text-amber-100 whitespace-pre-wrap break-words leading-relaxed">
           {d.noteContent || d.title || '（空便签）'}
@@ -44,7 +44,7 @@ const ShareNode: React.FC<NodeProps> = ({ data }) => {
     );
   }
   return (
-    <div className="w-[300px] rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 shadow-xl">
+    <div className="w-[240px] sm:w-[270px] md:w-[300px] rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 shadow-xl">
       {d.question && (
         <div className="text-sm font-bold text-slate-900 dark:text-slate-100 mb-2 break-words leading-snug">
           {d.title && d.title !== d.question && (
@@ -156,10 +156,11 @@ const SharePageInner: React.FC<{ shareCode: string }> = ({ shareCode }) => {
       )}
       {state.status === 'ready' && (
         <>
-          <div className="px-5 pt-4">
-            <h1 className="text-lg font-bold text-slate-900 dark:text-white truncate">{state.title}</h1>
+          <div className="px-4 sm:px-5 pt-4">
+            <h1 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white truncate">{state.title}</h1>
           </div>
-          <div className="flex-1 min-h-[480px]">
+          {/* flex-1 + min-h-0：画布占满剩余高度（移动端不引入 480px 硬兜底导致的页面滚动） */}
+          <div className="flex-1 min-h-0">
             <ReactFlowProvider>
               <ReactFlow
                 nodes={state.nodes}
@@ -169,6 +170,7 @@ const SharePageInner: React.FC<{ shareCode: string }> = ({ shareCode }) => {
                 nodesConnectable={false}
                 elementsSelectable={false}
                 edgesFocusable={false}
+                // 移动端手势：React Flow 默认支持单指拖拽平移 + 双指捏合缩放（zoomOnPinch）
                 proOptions={{ hideAttribution: true }}
                 fitView
                 fitViewOptions={{ padding: 0.2 }}
@@ -180,9 +182,10 @@ const SharePageInner: React.FC<{ shareCode: string }> = ({ shareCode }) => {
             </ReactFlowProvider>
           </div>
           {/* 底部品牌传播条（K2 v1 为静态引导；注册自动克隆列入后续迭代） */}
-          <footer className="px-5 py-3 border-t border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/80 backdrop-blur flex items-center justify-between gap-3">
+          <footer className="px-4 sm:px-5 py-3 border-t border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/80 backdrop-blur flex items-center justify-between gap-3">
             <div className="text-[11px] text-slate-400">
-              由 枝想 生成 · 已被浏览 {state.viewCount} 次
+              由 枝想 生成
+              <span className="hidden sm:inline"> · 已被浏览 {state.viewCount} 次</span>
             </div>
             <motion.a
               href="/"
