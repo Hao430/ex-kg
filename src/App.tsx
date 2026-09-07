@@ -12,6 +12,7 @@ import {
   loadBoardList,
   loadBoard,
   saveBoard,
+  deleteBoard,
   exportBoardToJson,
   exportBoardToMarkdown,
   fetchBoardFromServer,
@@ -226,6 +227,45 @@ function MainApp() {
     },
     [currentBoardId, boardName, boardReady]
   );
+
+  // 删除画板：confirm → 服务端 DELETE（若已登录）+ 本地清理；删当前画板时切到剩余第一个或空白画布
+  const handleDeleteBoard = async (targetId: string) => {
+    const target = boards.find((b) => b.id === targetId);
+    if (!target) return;
+    if (!window.confirm(`确定要删除画板「${target.name}」吗？该操作无法撤销。`)) return;
+
+    // 防止待触发的防抖自动保存把已删除的画板重新写回本地
+    if (saveTimeoutRef.current) {
+      window.clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+
+    await deleteBoard(targetId);
+    const remaining = boards.filter((b) => b.id !== targetId);
+    setBoards(remaining);
+    showToast(`已删除画板「${target.name}」`);
+
+    if (targetId !== currentBoardId) return;
+    if (remaining.length > 0) {
+      const nextId = remaining[0].id;
+      setCurrentBoardId(nextId);
+      let loaded: StoredBoard | null = null;
+      if (user) loaded = await fetchBoardFromServer(nextId);
+      if (!loaded) loaded = loadBoard(nextId);
+      if (loaded) applyLoadedBoard(loaded);
+      else setBoardReady(true);
+    } else {
+      // 全部删除：初始化空白画布（对齐 Spec A2 新账号语义）
+      setCurrentBoardId('default-board');
+      setBoardName('未命名思维画布');
+      setInitialNodes([]);
+      setInitialEdges([]);
+      currentNodesRef.current = [];
+      currentEdgesRef.current = [];
+      setNodeCount(0);
+      setBoardReady(true);
+    }
+  };
 
   const handleRenameBoard = (newName: string) => {
     setBoardName(newName);
@@ -502,6 +542,7 @@ function MainApp() {
         currentBoardId={currentBoardId}
         onSwitchBoard={(id) => void handleSwitchBoard(id)}
         onNewBoard={handleNewBoard}
+        onDeleteBoard={(id) => void handleDeleteBoard(id)}
         onAddRootNode={() => triggerAddRootRef.current?.()}
         onAddNoteNode={() => triggerAddNoteRef.current?.()}
         onAutoLayout={() => {

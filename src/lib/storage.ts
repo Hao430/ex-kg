@@ -293,6 +293,26 @@ export async function fetchBoardListFromServer(): Promise<DeepDiveBoardMeta[] | 
   }
 }
 
+/**
+ * 删除画板：已登录时调 DELETE /api/canvases/:id（服务端为真源，租户校验）；
+ * 无论服务端结果（含本地草稿从未同步的 404）都清理本地缓存与索引。
+ */
+export async function deleteBoard(boardId: string): Promise<void> {
+  try {
+    await fetch(`/api/canvases/${encodeURIComponent(boardId)}`, {
+      method: 'DELETE',
+      credentials: 'include',
+    });
+  } catch (e) {
+    // 网络失败同样继续清理本地（下次登录服务端列表为准，未删掉的远端画板会重新出现）
+  }
+  try {
+    localStorage.removeItem(`${STORAGE_BOARD_PREFIX}${boardId}`);
+    localStorage.removeItem(`${LEGACY_STORAGE_BOARD_PREFIX}${boardId}`);
+    saveBoardList(loadBoardList().filter((b) => b.id !== boardId));
+  } catch (e) {}
+}
+
 export function exportBoardToJson(board: StoredBoard): void {
   const jsonStr = JSON.stringify(board, null, 2);
   const blob = new Blob([jsonStr], { type: 'application/json' });

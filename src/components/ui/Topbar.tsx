@@ -33,6 +33,7 @@ import {
   User,
   MessageSquarePlus,
   Settings,
+  Trash2,
 } from 'lucide-react';
 import { DeepDiveBoardMeta } from '../../types';
 import { useAuth } from '../../context/AuthContext';
@@ -45,6 +46,7 @@ interface TopbarProps {
   currentBoardId: string;
   onSwitchBoard: (boardId: string) => void;
   onNewBoard: () => void;
+  onDeleteBoard: (boardId: string) => void;
   onAddRootNode: () => void;
   onAddNoteNode: () => void;
   onAutoLayout: () => void;
@@ -67,6 +69,7 @@ export const Topbar: React.FC<TopbarProps> = ({
   currentBoardId,
   onSwitchBoard,
   onNewBoard,
+  onDeleteBoard,
   onAddRootNode,
   onAddNoteNode,
   onAutoLayout,
@@ -208,21 +211,34 @@ export const Topbar: React.FC<TopbarProps> = ({
               </div>
               <div className="max-h-52 overflow-y-auto mt-1">
                 {boards.map((b) => (
-                  <button
+                  <div
                     key={b.id}
                     onClick={() => {
                       onSwitchBoard(b.id);
                       setShowBoardMenu(false);
                     }}
-                    className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-colors ${
+                    className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-colors cursor-pointer ${
                       b.id === currentBoardId
                         ? 'text-indigo-600 dark:text-indigo-400 font-semibold bg-indigo-50/60 dark:bg-indigo-950/40'
                         : 'text-slate-700 dark:text-slate-300'
                     }`}
                   >
                     <span className="truncate flex-1 mr-2">{b.name}</span>
-                    {b.id === currentBoardId && <Check className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />}
-                  </button>
+                    <span className="flex items-center gap-0.5 shrink-0">
+                      {b.id === currentBoardId && <Check className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDeleteBoard(b.id);
+                          setShowBoardMenu(false);
+                        }}
+                        aria-label={`删除画板 ${b.name}`}
+                        className="p-1 rounded-lg text-slate-300 dark:text-slate-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </span>
+                  </div>
                 ))}
               </div>
               <div className="border-t border-slate-100 dark:border-slate-800 mt-1.5 pt-1.5 px-2">
