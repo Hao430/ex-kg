@@ -33,6 +33,7 @@ import { NodeActionsContext, NodeActionsContextValue } from '../../context/NodeA
 import { useAuth } from '../../context/AuthContext';
 import { useRenderMonitor } from '../../hooks/useRenderMonitor';
 import { trackEvent, trackOnce } from '../../lib/analytics';
+import { markChecklistStep } from '../../lib/checklist';
 import { AlertCircle, Sparkles, X, FolderPlus, AlertTriangle, Trash2 } from 'lucide-react';
 
 let globalIdCounter = 0;
@@ -301,6 +302,8 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       if (!checkAiQuota()) return;
       // K4 事件 6：每画板首次发起 AI 生成（终身一次去重，衡量激活深度）
       if (canvasId) trackOnce(`ai_first_${canvasId}`, 'ai_generate_first');
+      // K5/D1：checklist 第 3 步（发起过一次 AI 生成）
+      markChecklistStep('generate');
 
       const targetNode = nodesRef.current.find((n) => n.id === nodeId);
       const existingData = targetNode?.data as unknown as ChatNodeData | undefined;
@@ -692,6 +695,8 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
   const handleBranch = useCallback(
     (sourceNodeId: string, triggerPhrase?: string) => {
       if (!checkAiQuota()) return;
+      // K5/D1：checklist 第 2 步（划词/节点分支）
+      markChecklistStep('branch');
       createChildChatNode({
         sourceNodeId,
         question: triggerPhrase

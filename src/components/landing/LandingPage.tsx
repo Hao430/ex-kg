@@ -37,6 +37,8 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { trackEvent } from '../../lib/analytics';
+import { SCENARIO_SAMPLE_INDEX, SAMPLE_BOARDS } from '../../lib/sample-boards';
+import { SampleBoardViewer } from '../sample/SampleBoardViewer';
 
 interface LandingPageProps {
   onEnterCanvas: (presetTopic?: string) => void;
@@ -60,6 +62,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   useEffect(() => {
     trackEvent('landing_view');
   }, []);
+
+  // Spec K5（D1）：示例画布查看器（场景卡「查看示例画布」入口，纯前端只读内容）
+  const [sampleViewerOpen, setSampleViewerOpen] = useState(false);
+  const [sampleIndex, setSampleIndex] = useState(0);
 
   const scenarios = [
     {
@@ -808,13 +814,25 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 ))}
               </div>
 
-              <button
-                onClick={() => onEnterCanvas(scenarios[activeScenario].sampleTopic)}
-                className="flex items-center gap-2 px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md shadow-blue-500/30 transition-all hover:scale-[1.02]"
-              >
-                <span>以此场景开启探索: 「{scenarios[activeScenario].sampleTopic}」</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
+              <div className="flex flex-wrap items-center gap-3 mb-8">
+                <button
+                  onClick={() => onEnterCanvas(scenarios[activeScenario].sampleTopic)}
+                  className="flex items-center gap-2 px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md shadow-blue-500/30 transition-all hover:scale-[1.02]"
+                >
+                  <span>以此场景开启探索: 「{scenarios[activeScenario].sampleTopic}」</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => {
+                    setSampleIndex(SCENARIO_SAMPLE_INDEX[activeScenario] ?? 0);
+                    setSampleViewerOpen(true);
+                  }}
+                  className="flex items-center gap-2 px-5 py-3 rounded-xl border border-white/[0.14] bg-white/[0.04] hover:bg-white/[0.08] text-slate-200 text-xs font-semibold transition-all"
+                >
+                  <BookOpen className="w-3.5 h-3.5" />
+                  <span>查看示例画布</span>
+                </button>
+              </div>
             </div>
 
             <div className="w-full md:w-64 p-6 rounded-2xl bg-white/[0.03] border border-white/[0.08] text-center shrink-0">
@@ -936,6 +954,14 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           <span className="text-slate-600">© 2026 枝想Arborize. All rights reserved.</span>
         </div>
       </footer>
+
+      {/* Spec K5（D1）：示例画布只读查看器（场景卡入口，初始定位当前场景对应示例） */}
+      {sampleViewerOpen && (
+        <SampleBoardViewer
+          initialIndex={sampleIndex}
+          onClose={() => setSampleViewerOpen(false)}
+        />
+      )}
     </div>
   );
 };

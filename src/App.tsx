@@ -24,6 +24,9 @@ import { DeepDiveBoardMeta } from './types';
 import { onSyncState } from './lib/sync-queue';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { trackEvent } from './lib/analytics';
+import { markChecklistStep } from './lib/checklist';
+import { SampleBoardViewer } from './components/sample/SampleBoardViewer';
+import { StarterChecklist } from './components/canvas/StarterChecklist';
 import { AuthModal } from './components/auth/AuthModal';
 import { RechargeModal } from './components/ui/RechargeModal';
 import { AdminDashboardModal } from './components/admin/AdminDashboardModal';
@@ -76,6 +79,9 @@ function MainApp() {
   const [nodeCount, setNodeCount] = useState<number>(1);
 
   const { isVip, openRechargeModal, user, resendVerification } = useAuth();
+
+  // Spec K5（D1）：示例画布只读查看器开关（Topbar「示例画布」入口）
+  const [sampleViewerOpen, setSampleViewerOpen] = useState(false);
 
   // Global Dark Mode state ('light' | 'dark')
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -396,6 +402,7 @@ function MainApp() {
         };
         saveBoard(newBoard);
         trackEvent('board_create'); // K4 事件 5：画板创建（不携带画板名，避免 PII）
+        markChecklistStep('board'); // K5/D1：checklist 第 1 步
         const updatedList = loadBoardList();
         setBoards(updatedList);
         setCurrentBoardId(newId);
@@ -419,6 +426,7 @@ function MainApp() {
 
   const handleExportJson = () => {
     trackEvent('export', { format: 'json' }); // K4 事件 8：导出点击
+    markChecklistStep('export'); // K5/D1：checklist 第 4 步
     const currentBoard: StoredBoard = {
       id: currentBoardId,
       name: boardName,
@@ -432,6 +440,7 @@ function MainApp() {
 
   const handleExportMarkdown = () => {
     trackEvent('export', { format: 'markdown' }); // K4 事件 8：导出点击
+    markChecklistStep('export'); // K5/D1：checklist 第 4 步
     const currentBoard: StoredBoard = {
       id: currentBoardId,
       name: boardName,
@@ -446,6 +455,7 @@ function MainApp() {
   // Spec K1（B2）：PNG 图片导出——html-to-image 捕获画布 + 品牌水印；失败时 toast 中文原因
   const handleExportPng = async () => {
     trackEvent('export', { format: 'png' }); // K4 事件 8：导出点击
+    markChecklistStep('export'); // K5/D1：checklist 第 4 步
     const result = await exportCanvasAsPng(currentNodesRef.current, boardName);
     if (result.ok) {
       showToast('已导出 PNG 画板图片，可直接分享');
@@ -601,6 +611,7 @@ function MainApp() {
         onExportPng={handleExportPng}
         onResetBoard={handleResetBoard}
         onGoToLanding={handleGoToLanding}
+        onOpenSamples={() => setSampleViewerOpen(true)}
         theme={theme}
         syncState={syncState}
         onToggleTheme={toggleTheme}
@@ -623,7 +634,14 @@ function MainApp() {
             canvasId={currentBoardId}
           />
         </ReactFlowProvider>
+        {/* Spec K5（D1）：空态新手 4 步 checklist（全完成/手动关闭后不再显示） */}
+        <StarterChecklist hasBoards={boards.length > 0} />
       </main>
+
+      {/* Spec K5（D1）：示例画布只读查看器（纯前端静态内容，不占用户配额） */}
+      {sampleViewerOpen && (
+        <SampleBoardViewer onClose={() => setSampleViewerOpen(false)} />
+      )}
 
       {/* Floating Status Toast */}
       {toastMessage && (

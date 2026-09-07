@@ -57,6 +57,8 @@ interface TopbarProps {
   onExportPng: () => void;
   onResetBoard: () => void;
   onGoToLanding?: () => void;
+  /** 打开示例画布查看器（Spec K5/D1 冷启动引导） */
+  onOpenSamples?: () => void;
   theme?: 'light' | 'dark';
   onToggleTheme?: () => void;
   nodeCount?: number;
@@ -81,6 +83,7 @@ export const Topbar: React.FC<TopbarProps> = ({
   onExportPng,
   onResetBoard,
   onGoToLanding,
+  onOpenSamples,
   theme = 'light',
   onToggleTheme,
   nodeCount,
@@ -246,7 +249,19 @@ export const Topbar: React.FC<TopbarProps> = ({
                   </div>
                 ))}
               </div>
-              <div className="border-t border-slate-100 dark:border-slate-800 mt-1.5 pt-1.5 px-2">
+              <div className="border-t border-slate-100 dark:border-slate-800 mt-1.5 pt-1.5 px-2 space-y-0.5">
+                {onOpenSamples && (
+                  <button
+                    onClick={() => {
+                      onOpenSamples();
+                      setShowBoardMenu(false);
+                    }}
+                    className="w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 text-xs text-slate-500 dark:text-slate-400 font-medium hover:bg-slate-50 dark:hover:bg-slate-800/60 rounded-xl transition-colors"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    示例画布 · 看看怎么用
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     onNewBoard();
