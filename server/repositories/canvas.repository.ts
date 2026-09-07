@@ -2,20 +2,17 @@ import pg from 'pg';
 import { getPool } from '../core/pool.js';
 import { initDbSchema } from '../core/schema.js';
 import { inMemoryStore } from '../core/memory-store.js';
-import { ConflictError, ForbiddenError } from '../lib/errors.js';
+import { AppError, ConflictError, ForbiddenError, NotFoundError } from '../lib/errors.js';
 import type { CanvasRecord } from '../core/records.js';
 
 /**
- * 「可认领画板」判定（原 getCanvas/saveCanvas/deleteCanvas 中重复 3-4 份的规则）。
- * 通过显式开关保留各调用点的原有判定集，不做权限放宽：
- * - getCanvas：默认集（default-board/default-canvas/seed_ 前缀/demo 属主/guest 属主）
- * - saveCanvas：默认集 + board- 前缀 + 无属主 + 请求者为 guest
- * - deleteCanvas：默认集 + board- 前缀
+ * 画布访问权限（H1 安全加固，2026-09-07）：严格属主制——读/写/删一律属主本人或 admin。
+ * 唯一放行是全局共享默认画板：所有用户首屏共用同一行（default-board/default-canvas），
+ * 因此不可删除（软删会导致所有用户对该 id 永久 404，全局默认板锁死）。
+ * 已废弃的历史放行：board- 前缀、seed_ 前缀、demo-user-1 属主、guest_* 属主（游客模式已删除）。
  */
-interface ClaimableOptions {
-  includeBoardPrefix?: boolean;
-  includeNoOwner?: boolean;
-  includeRequesterGuest?: boolean;
+export function isSharedDefaultCanvas(canvasId: string): boolean {
+  return canvasId === 'default-board' || canvasId === 'default-canvas';
 }
 
 /** 将行数组按 size 分块，供批量多值 INSERT 控制单条 SQL 参数数量 */
@@ -27,28 +24,12 @@ function chunkRows<T>(rows: T[], size: number): T[][] {
   return out;
 }
 
-export function isClaimableCanvas(
-  canvasId: string,
-  ownerId: string | null | undefined,
-  requesterId: string | undefined,
-  opts: ClaimableOptions = {}
-): boolean {
-  if (canvasId === 'default-board' || canvasId === 'default-canvas') return true;
-  if (canvasId.startsWith('seed_')) return true;
-  if (opts.includeBoardPrefix && canvasId.startsWith('board-')) return true;
-  if (ownerId === 'demo-user-1') return true;
-  if (typeof ownerId === 'string' && ownerId.startsWith('guest_')) return true;
-  if (opts.includeNoOwner && !ownerId) return true;
-  if (opts.includeRequesterGuest && typeof requesterId === 'string' && requesterId.startsWith('guest_')) return true;
-  return false;
-}
-
 export async function listCanvases(userId?: string, isAdmin = false): Promise<CanvasRecord[]> {
   const p = getPool();
   if (p) {
     try {
       await initDbSchema();
-      const whereClause = isAdmin || !userId ? '' : 'WHERE c.user_id = $1';
+      const whereClause = isAdmin || !userId ? 'WHERE c.deleted_at IS NULL' : 'WHERE c.deleted_at IS NULL AND c.user_id = $1';
       const values = isAdmin || !userId ? [] : [userId];
 
       const res = await p.query(
@@ -86,7 +67,7 @@ export async function listCanvases(userId?: string, isAdmin = false): Promise<Ca
 
   // In-memory
   return Array.from(inMemoryStore.canvases.values())
-    .filter((c) => isAdmin || !userId || c.user_id === userId)
+    .filter((c) => !c.deleted_at && (isAdmin || !userId || c.user_id === userId))
     .map((c) => ({
       ...c,
       nodeCount: c.nodes?.length || 0,
@@ -95,19 +76,57 @@ export async function listCanvases(userId?: string, isAdmin = false): Promise<Ca
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 }
 
+/**
+ * 内存画布节点归一化（#9，对齐 PG getCanvas 分支的 data 重建规则）：
+ * 内存 CanvasRecord.nodes 保存的是前端传入的原始 Node，缺省字段与 PG 重建输出不一致；
+ * grounding 直通不补默认 []，custom 字段解构展开保留（与 PG custom_data 展开一致）。
+ */
+export function normalizeMemoryNode(node: any, defaultModel: string): any {
+  const d = node?.data || {};
+  const {
+    title: _t, question: _q, answer: _a, content: _c, noteContent: _nc, note: _n,
+    messages: _m, status: _st, isCollapsed: _ic, branchTriggerPhrase: _btp,
+    enableWebSearch: _ews, color: _col, depth: _dep, model: _mod,
+    grounding: _gr, parentId: _pid,
+    ...customFields
+  } = d;
+  const answer = d.answer || '';
+  const noteText = d.content || d.noteContent || d.note || '';
+  return {
+    ...node,
+    type: node?.type || 'chat',
+    data: {
+      title: d.title || d.question || (node?.type === 'note' ? '便签' : '思考节点'),
+      depth: typeof d.depth === 'number' ? d.depth : 0,
+      question: d.question || '',
+      answer,
+      content: noteText,
+      noteContent: noteText,
+      messages: Array.isArray(d.messages) ? d.messages : [],
+      status: d.status || (answer ? 'idle' : 'suggested'),
+      model: d.model || defaultModel,
+      parentId: d.parentId ?? null,
+      grounding: d.grounding,
+      isCollapsed: d.isCollapsed ?? false,
+      branchTriggerPhrase: d.branchTriggerPhrase || '',
+      enableWebSearch: d.enableWebSearch !== false,
+      color: d.color || '',
+      ...customFields,
+    },
+  };
+}
+
 export async function getCanvas(canvasId: string, userId?: string, isAdmin = false): Promise<CanvasRecord | null> {
   const p = getPool();
   if (p) {
     try {
       await initDbSchema();
-      const cRes = await p.query('SELECT * FROM canvases WHERE id = $1', [canvasId]);
+      const cRes = await p.query('SELECT * FROM canvases WHERE id = $1 AND deleted_at IS NULL', [canvasId]);
       if (cRes.rows.length === 0) return null;
 
       const c = cRes.rows[0];
-      // Multi-tenant check: if not admin and canvas belongs to someone else, check if adoptable/public
-      const isPublicOrAdoptable = isClaimableCanvas(canvasId, c.user_id, userId);
-
-      if (userId && !isAdmin && c.user_id !== userId && !isPublicOrAdoptable) {
+      // Multi-tenant check: strict ownership — only owner or admin (shared default canvas is the sole exception)
+      if (userId && !isAdmin && c.user_id !== userId && !isSharedDefaultCanvas(canvasId)) {
         return null;
       }
 
@@ -170,14 +189,11 @@ export async function getCanvas(canvasId: string, userId?: string, isAdmin = fal
   }
 
   const canvas = inMemoryStore.canvases.get(canvasId);
-  if (!canvas) return null;
-  if (userId && !isAdmin && canvas.user_id && canvas.user_id !== userId) {
-    const isPublicOrAdoptable = isClaimableCanvas(canvasId, canvas.user_id, userId);
-    if (!isPublicOrAdoptable) {
-      return null;
-    }
+  if (!canvas || canvas.deleted_at) return null;
+  if (userId && !isAdmin && canvas.user_id !== userId && !isSharedDefaultCanvas(canvasId)) {
+    return null;
   }
-  return canvas;
+  return { ...canvas, nodes: (canvas.nodes || []).map((n) => normalizeMemoryNode(n, canvas.defaultModel)) };
 }
 
 export async function saveCanvas(
@@ -219,16 +235,16 @@ export async function saveCanvas(
       await initDbSchema();
       await client.query('BEGIN');
 
-      // Check ownership if canvas exists
-      const existing = await client.query('SELECT user_id, updated_at FROM canvases WHERE id = $1', [data.id]);
+      // Check ownership if canvas exists（含软删行：占主键，禁止 upsert 复活）
+      const existing = await client.query('SELECT user_id, updated_at, deleted_at FROM canvases WHERE id = $1', [data.id]);
       const existingUserId = existing.rows.length > 0 ? existing.rows[0].user_id : null;
-      const isAdoptable = isClaimableCanvas(data.id, existingUserId, userId, {
-        includeBoardPrefix: true,
-        includeNoOwner: true,
-        includeRequesterGuest: true,
-      });
 
-      if (existing.rows.length > 0 && !isAdmin && existingUserId !== userId && !isAdoptable) {
+      if (existing.rows.length > 0 && existing.rows[0].deleted_at) {
+        throw new NotFoundError('画板不存在或已删除');
+      }
+
+      // 严格属主：仅属主本人或 admin 可写（共享默认画板除外）
+      if (existing.rows.length > 0 && !isAdmin && existingUserId !== userId && !isSharedDefaultCanvas(data.id)) {
         throw new ForbiddenError('无权修改其他用户的画板', 'CANVAS_FORBIDDEN');
       }
 
@@ -236,7 +252,7 @@ export async function saveCanvas(
         assertNoConflict(existing.rows[0].updated_at);
       }
 
-      const assignedUserId = (isAdoptable || existing.rows.length === 0) ? userId : (existingUserId || userId);
+      const assignedUserId = existingUserId || userId;
 
       upsertRes = await client.query(
         `INSERT INTO canvases (id, user_id, title, description, viewport_x, viewport_y, viewport_zoom, default_model, updated_at)
@@ -249,6 +265,7 @@ export async function saveCanvas(
            viewport_zoom = EXCLUDED.viewport_zoom,
            default_model = EXCLUDED.default_model,
            updated_at = NOW()
+         WHERE canvases.deleted_at IS NULL
          RETURNING created_at, updated_at`,
         [
           data.id,
@@ -261,6 +278,11 @@ export async function saveCanvas(
           data.defaultModel || '',
         ]
       );
+
+      if (upsertRes.rowCount === 0) {
+        // 并发窄窗口：SELECT 之后该行被其他连接软删，ON CONFLICT 的 WHERE 未命中
+        throw new NotFoundError('画板不存在或已删除');
+      }
 
       // Clean & Re-insert Nodes（批量多值 INSERT，分块控制参数数量）
       await client.query('DELETE FROM nodes WHERE canvas_id = $1', [data.id]);
@@ -397,13 +419,11 @@ export async function saveCanvas(
   // In-memory store
   const existing = inMemoryStore.canvases.get(data.id);
   const existingUserId = existing?.user_id || null;
-  const isAdoptable = isClaimableCanvas(data.id, existingUserId, userId, {
-    includeBoardPrefix: true,
-    includeNoOwner: true,
-    includeRequesterGuest: true,
-  });
 
-  if (existing && !isAdmin && existingUserId !== userId && !isAdoptable) {
+  if (existing?.deleted_at) {
+    throw new NotFoundError('画板不存在或已删除');
+  }
+  if (existing && !isAdmin && existingUserId !== userId && !isSharedDefaultCanvas(data.id)) {
     throw new ForbiddenError('无权修改其他用户的画板', 'CANVAS_FORBIDDEN');
   }
   if (existing) {
@@ -412,7 +432,7 @@ export async function saveCanvas(
 
   const record: CanvasRecord = {
     id: data.id,
-    user_id: isAdoptable ? userId : (existing?.user_id || userId),
+    user_id: existingUserId || userId,
     title: data.title,
     description: data.description,
     viewport: vp,
@@ -430,38 +450,50 @@ export async function saveCanvas(
 }
 
 export async function deleteCanvas(canvasId: string, userId: string, isAdmin = false): Promise<boolean> {
+  // 共享默认画板禁删：软删会让所有用户对该 id 永久 404，全局默认板锁死
+  if (isSharedDefaultCanvas(canvasId)) {
+    throw new ForbiddenError('默认画板不可删除', 'CANVAS_FORBIDDEN');
+  }
+
   const p = getPool();
   if (p) {
+    const client = await p.connect();
     try {
       await initDbSchema();
-      const check = await p.query('SELECT user_id FROM canvases WHERE id = $1', [canvasId]);
-      if (check.rows.length === 0) return false;
-      const existingUserId = check.rows[0].user_id;
-      const isAdoptableOrGuest = isClaimableCanvas(canvasId, existingUserId, userId, {
-        includeBoardPrefix: true,
-      });
-
-      if (!isAdmin && existingUserId !== userId && !isAdoptableOrGuest) {
+      await client.query('BEGIN');
+      const check = await client.query('SELECT user_id FROM canvases WHERE id = $1 AND deleted_at IS NULL', [canvasId]);
+      if (check.rows.length === 0) {
+        await client.query('COMMIT');
+        return false; // 不存在或已软删，幂等返回
+      }
+      if (!isAdmin && check.rows[0].user_id !== userId) {
         throw new ForbiddenError('无权删除此画板', 'CANVAS_FORBIDDEN');
       }
-      await p.query('DELETE FROM canvases WHERE id = $1', [canvasId]);
+      // 软删主行 + 子表即时物理清理（对齐原物理 DELETE 的 CASCADE 语义）
+      await client.query('UPDATE canvases SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL', [canvasId]);
+      await client.query('DELETE FROM nodes WHERE canvas_id = $1', [canvasId]);
+      await client.query('DELETE FROM edges WHERE canvas_id = $1', [canvasId]);
+      await client.query('COMMIT');
       return true;
     } catch (e) {
-      console.warn(`PG deleteCanvas(${canvasId}) failed:`, e);
+      await client.query('ROLLBACK');
+      // 业务错误（如 403）必须穿透，不得降级落内存分支造成 200 假成功
+      if (e instanceof AppError) throw e;
+      console.warn(`PG deleteCanvas(${canvasId}) fallback to in-memory:`, e);
+    } finally {
+      client.release();
     }
   }
 
   const canvas = inMemoryStore.canvases.get(canvasId);
-  if (!canvas) return false;
-  const existingUserId = canvas.user_id;
-  const isAdoptableOrGuest = isClaimableCanvas(canvasId, existingUserId, userId, {
-    includeBoardPrefix: true,
-  });
-
-  if (!isAdmin && existingUserId !== userId && !isAdoptableOrGuest) {
+  if (!canvas || canvas.deleted_at) return false;
+  if (!isAdmin && canvas.user_id !== userId) {
     throw new ForbiddenError('无权删除此画板', 'CANVAS_FORBIDDEN');
   }
-  return inMemoryStore.canvases.delete(canvasId);
+  canvas.deleted_at = new Date().toISOString();
+  canvas.nodes = [];
+  canvas.edges = [];
+  return true;
 }
 
 /** 画布是否存在（供配额判定区分新建/更新） */
@@ -478,14 +510,14 @@ export async function getCanvasOwnerInfo(
   if (p) {
     try {
       await initDbSchema();
-      const res = await p.query('SELECT user_id FROM canvases WHERE id = $1', [canvasId]);
+      const res = await p.query('SELECT user_id FROM canvases WHERE id = $1 AND deleted_at IS NULL', [canvasId]);
       return { exists: res.rows.length > 0, ownerId: res.rows[0]?.user_id ?? null };
     } catch (e) {
       console.warn('PG getCanvasOwnerInfo fallback to in-memory:', e);
     }
   }
   const canvas = inMemoryStore.canvases.get(canvasId);
-  return { exists: Boolean(canvas), ownerId: canvas?.user_id ?? null };
+  return { exists: Boolean(canvas && !canvas.deleted_at), ownerId: canvas?.user_id ?? null };
 }
 
 /** 画布内 AI 推理节点（chat 类型）数量 */
@@ -516,13 +548,13 @@ export async function searchNodes(queryText: string, canvasId?: string, userId?:
         ? `SELECT n.id, n.canvas_id, n.question as title, n.question, n.answer, n.note as note_content, n.depth, n.model_used as model, n.created_at
            FROM nodes n
            JOIN canvases c ON c.id = n.canvas_id
-           WHERE n.canvas_id = $1 AND ($2::uuid IS NULL OR c.user_id = $2)
+           WHERE n.canvas_id = $1 AND c.deleted_at IS NULL AND ($2::uuid IS NULL OR c.user_id = $2)
              AND (n.question ILIKE $3 OR n.answer ILIKE $3 OR n.note ILIKE $3)
            LIMIT 30`
         : `SELECT n.id, n.canvas_id, n.question as title, n.question, n.answer, n.note as note_content, n.depth, n.model_used as model, n.created_at
            FROM nodes n
            JOIN canvases c ON c.id = n.canvas_id
-           WHERE ($1::uuid IS NULL OR c.user_id = $1)
+           WHERE c.deleted_at IS NULL AND ($1::uuid IS NULL OR c.user_id = $1)
              AND (n.question ILIKE $2 OR n.answer ILIKE $2 OR n.note ILIKE $2)
            LIMIT 30`;
       const params = canvasId
@@ -538,6 +570,7 @@ export async function searchNodes(queryText: string, canvasId?: string, userId?:
   const q = queryText.toLowerCase();
   const results: any[] = [];
   for (const canvas of inMemoryStore.canvases.values()) {
+    if (canvas.deleted_at) continue;
     if (canvasId && canvas.id !== canvasId) continue;
     if (userId && canvas.user_id !== userId) continue;
     for (const node of canvas.nodes || []) {

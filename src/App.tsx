@@ -28,6 +28,30 @@ import { AdminDashboardModal } from './components/admin/AdminDashboardModal';
 import { UserProfileModal } from './components/ui/UserProfileModal';
 import { FeedbackModal } from './components/ui/FeedbackModal';
 
+/**
+ * 新画布引导（H2）：注入一个待填写的主题根节点，避免新用户/新建画板面对纯空白画布。
+ * 节点 question 为空 → ChatCardNode 渲染首个提问表单（「输入你想探索的议题」+ 推荐议题 pills），
+ * 与 Topbar「添加主题节点」（DeepDiveCanvas.handleAddRootNode）的空根卡形态一致。
+ */
+function createStarterRootNode(): Node[] {
+  return [
+    {
+      id: `root-${Date.now()}`,
+      type: 'chat',
+      position: { x: 120, y: 160 },
+      draggable: false,
+      data: {
+        title: '新探索主题',
+        depth: 0,
+        question: '',
+        answer: '',
+        status: 'idle',
+        model: '',
+      },
+    },
+  ];
+}
+
 function MainApp() {
   const [viewMode, setViewMode] = useState<'landing' | 'canvas'>(() => {
     try {
@@ -172,17 +196,17 @@ function MainApp() {
         setBoards(activeList);
         activeId = activeList[0].id;
       } else {
-        // Spec B: 新账号/无任何画布时初始为空白画布(不再注入 default-board 量子演示画布)
+        // Spec B: 新账号/无任何画布时初始为「新画布 + 待填写主题」引导节点（不再注入量子演示画布）
         const defaultMeta: DeepDiveBoardMeta = {
           id: 'default-board',
           name: '未命名思维画布',
           updatedAt: Date.now(),
-          nodeCount: 0,
+          nodeCount: 1,
         };
         setBoards([defaultMeta]);
-        setInitialNodes([]);
+        setInitialNodes(createStarterRootNode());
         setInitialEdges([]);
-        setNodeCount(0);
+        setNodeCount(1);
         setBoardReady(true);
         return;
       }
@@ -240,7 +264,11 @@ function MainApp() {
       saveTimeoutRef.current = null;
     }
 
-    await deleteBoard(targetId);
+    const result = await deleteBoard(targetId);
+    if (!result.ok) {
+      showToast('删除失败，请稍后重试');
+      return;
+    }
     const remaining = boards.filter((b) => b.id !== targetId);
     setBoards(remaining);
     showToast(`已删除画板「${target.name}」`);
@@ -255,14 +283,15 @@ function MainApp() {
       if (loaded) applyLoadedBoard(loaded);
       else setBoardReady(true);
     } else {
-      // 全部删除：初始化空白画布（对齐 Spec A2 新账号语义）
+      // 全部删除：初始化「新画布 + 待填写主题」引导节点（对齐新账号语义）
       setCurrentBoardId('default-board');
       setBoardName('未命名思维画布');
-      setInitialNodes([]);
+      const starter = createStarterRootNode();
+      setInitialNodes(starter);
       setInitialEdges([]);
-      currentNodesRef.current = [];
+      currentNodesRef.current = starter;
       currentEdgesRef.current = [];
-      setNodeCount(0);
+      setNodeCount(1);
       setBoardReady(true);
     }
   };
@@ -303,11 +332,12 @@ function MainApp() {
     }
     const newId = `board-${Date.now()}`;
     const newName = `探索课题 #${boards.length + 1}`;
+    const starterNodes = createStarterRootNode();
     const emptyBoard: StoredBoard = {
       id: newId,
       name: newName,
       updatedAt: Date.now(),
-      nodes: [],
+      nodes: starterNodes,
       edges: [],
     };
     saveBoard(emptyBoard);
@@ -315,11 +345,11 @@ function MainApp() {
     setBoards(updatedList);
     setCurrentBoardId(newId);
     setBoardName(newName);
-    setInitialNodes([]);
+    setInitialNodes(starterNodes);
     setInitialEdges([]);
-    currentNodesRef.current = [];
+    currentNodesRef.current = starterNodes;
     currentEdgesRef.current = [];
-    setNodeCount(0);
+    setNodeCount(1);
     showToast(`已创建新思考画板「${newName}」`);
   };
 
@@ -573,6 +603,7 @@ function MainApp() {
             triggerAddRootRef={triggerAddRootRef}
             triggerAddNoteRef={triggerAddNoteRef}
             theme={theme}
+            canvasId={currentBoardId}
           />
         </ReactFlowProvider>
       </main>

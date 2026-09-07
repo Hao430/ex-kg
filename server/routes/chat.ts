@@ -28,6 +28,10 @@ const ChatSchema = z.object({
   systemInstruction: z.string().optional(),
 });
 
+/** 单次回答来源/检索词上限（防节点数据膨胀；前端面板 max-h-56 滚动兜底） */
+export const MAX_GROUNDING_SOURCES = 30;
+export const MAX_GROUNDING_QUERIES = 10;
+
 // Lazy GoogleGenAI initialization
 let genaiClient: GoogleGenAI | null = null;
 function getGenAI(): GoogleGenAI {
@@ -172,6 +176,7 @@ chatRouter.post(
       const searchInstruction = `\n\n【实时联网检索与权威来源索引规则】
 系统已全面启用实时联网搜索与知识推演。请结合权威信息进行精准分析。
 正文中凡是引用外部客观事实、统计数据之处，请在句末使用连续的数字方括号角标（例如 [1]、[2]）精确标引来源。
+角标编号规则：[n] 中的 n 必须与本次回答「参考来源」列表中来源的编号一一对应，按检索返回的顺序从 [1] 开始连续编号；凡未出现在来源列表中的编号一律不得使用，严禁虚构或跳号。
 回答总字数仍须严格保持在 600 字以内，结尾必须另起一行保留 ---SUGGESTIONS--- 分隔符与后续思考问题。`;
 
       const effectiveSystemInstruction = baseSystemInstruction + searchInstruction;
@@ -227,7 +232,7 @@ chatRouter.post(
         }
 
         let accumulatedResponseText = '';
-        const accumulatedSources: { index: number; title: string; uri: string; domain: string }[] = [];
+        const accumulatedSources: { index: number; title: string; uri: string; domain: string; snippet?: string }[] = [];
         const seenUris = new Set<string>();
         const accumulatedQueries: string[] = [];
         const seenQueries = new Set<string>();
@@ -237,17 +242,23 @@ chatRouter.post(
           const list = Array.isArray(q) ? q : typeof q === 'string' ? [q] : [];
           for (const item of list) {
             if (typeof item === 'string' && item.trim() && !seenQueries.has(item.trim())) {
+              if (accumulatedQueries.length >= MAX_GROUNDING_QUERIES) return;
               seenQueries.add(item.trim());
               accumulatedQueries.push(item.trim());
             }
           }
         };
 
+        // 防御式提取来源：千问 Responses API 官方文档未完整公开 action.sources 元素字段，
+        // 按 url/uri/link、title/name/site_name、snippet/summary/content 依次回退读取
         const collectSources = (sources: unknown) => {
           if (!Array.isArray(sources)) return;
           for (const s of sources) {
-            const uri = typeof (s as any)?.url === 'string' ? (s as any).url : '';
+            const pick = (...keys: string[]) =>
+              keys.map((k) => (s as any)?.[k]).find((v) => typeof v === 'string' && v.trim()) || '';
+            const uri = pick('url', 'uri', 'link');
             if (uri && !seenUris.has(uri)) {
+              if (accumulatedSources.length >= MAX_GROUNDING_SOURCES) return;
               seenUris.add(uri);
               let domain = '';
               try {
@@ -255,11 +266,14 @@ chatRouter.post(
               } catch {
                 domain = uri;
               }
+              const title = pick('title', 'name', 'site_name') || domain || `参考来源 [${accumulatedSources.length + 1}]`;
+              const snippet = pick('snippet', 'summary', 'content');
               accumulatedSources.push({
                 index: accumulatedSources.length + 1,
-                title: domain || `参考来源 [${accumulatedSources.length + 1}]`,
+                title,
                 uri,
                 domain,
+                ...(snippet ? { snippet } : {}),
               });
             }
           }
@@ -444,6 +458,7 @@ chatRouter.post(
               if (Array.isArray(metadata.webSearchQueries)) {
                 for (const q of metadata.webSearchQueries) {
                   if (typeof q === 'string' && q.trim() && !seenQueries.has(q.trim())) {
+                    if (accumulatedQueries.length >= MAX_GROUNDING_QUERIES) break;
                     seenQueries.add(q.trim());
                     accumulatedQueries.push(q.trim());
                   }
@@ -454,6 +469,7 @@ chatRouter.post(
                 for (const chunk of metadata.groundingChunks) {
                   const web = chunk?.web;
                   if (web?.uri && typeof web.uri === 'string' && !seenUris.has(web.uri)) {
+                    if (accumulatedSources.length >= MAX_GROUNDING_SOURCES) break;
                     seenUris.add(web.uri);
                     let domain = '';
                     try {

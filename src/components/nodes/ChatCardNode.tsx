@@ -45,6 +45,33 @@ function preprocessLaTeX(content: string): string {
     .replace(/\\\(([\s\S]*?)\\\)/g, (_, math) => `$${math.trim()}$`);
 }
 
+/**
+ * 角标链接化（#4b 来源索引）：把正文中指向真实来源的 [n] 角标替换为内部锚点链接
+ * `[n](#src-n)`，由下方 markdownComponents 的 a 定制渲染为可点击上标徽章。
+ * 规则：
+ * - 仅纯数字 1~2 位角标（天然排除 [^1] 脚注），(?!\() 排除已是链接的 [1](url)；
+ * - n 超过来源数（maxIndex）不替换，防止模型幻觉编号产生假跳转；
+ * - 数学公式（$...$ / $$...$$）与代码块（```）段内跳过，避免污染语法。
+ */
+export function linkifyCitations(content: string, maxIndex: number): string {
+  if (!content || maxIndex < 1) return content;
+  const replaceIn = (segment: string) =>
+    segment.replace(/\[(\d{1,2})\](?!\()/g, (match, num: string) => {
+      const n = Number(num);
+      return n >= 1 && n <= maxIndex ? `[${n}](#src-${n})` : match;
+    });
+  // 按 数学公式 / 代码块 分段，仅对普通文本段执行替换
+  return content
+    .split(/(\$\$[\s\S]*?\$\$|\$[^$\n]*?\$|```[\s\S]*?```|`[^`\n]*?`)/g)
+    .map((seg, i) => (i % 2 === 1 ? seg : replaceIn(seg)))
+    .join('');
+}
+
+/** 来源链接协议白名单（#8）：仅 http(s) 可作为跳转 href，其余渲染为纯文本 */
+export function isSafeSourceUri(uri: string | undefined | null): boolean {
+  return typeof uri === 'string' && /^https?:\/\//i.test(uri);
+}
+
 // ---------------------------------------------------------------------------
 // Markdown 渲染配置（性能：模块级常量，避免每次渲染重建引用导致
 // ReactMarkdown 无法复用解析结果；components 映射与插件数组均稳定）
@@ -135,6 +162,8 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleValue, setTitleValue] = useState(nodeData.title || '思维节点');
   const [showSources, setShowSources] = useState(true);
+  /** #4b：点击正文角标后短暂高亮的来源编号（1.5s 自动清除） */
+  const [highlightSource, setHighlightSource] = useState<number | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const renderWarning = useRenderMonitor(`ChatNode_${id}`);
@@ -174,7 +203,54 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
   }, [currentAnswerText, nodeData.status]);
   const renderedAnswer = nodeData.status === 'generating' && throttledAnswer !== null ? throttledAnswer : currentAnswerText;
 
-  const processedAnswer = useMemo(() => preprocessLaTeX(renderedAnswer), [renderedAnswer]);
+  const processedAnswer = useMemo(
+    () => linkifyCitations(preprocessLaTeX(renderedAnswer), nodeData.grounding?.sources?.length || 0),
+    [renderedAnswer, nodeData.grounding?.sources?.length]
+  );
+
+  // #4b：点击正文上标角标 → 展开来源面板并滚动高亮对应项
+  const handleCitationClick = (n: number) => {
+    setShowSources(true);
+    setHighlightSource(n);
+    requestAnimationFrame(() => {
+      document.getElementById(`chat-src-${id}-${n}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+    setTimeout(() => setHighlightSource(null), 1500);
+  };
+
+  // #4b/#8：markdown a 组件定制——#src- 内部锚点渲染为上标徽章；
+  // 非 http(s) 协议渲染为纯文本（防 javascript: 等伪协议）；其余保持外链样式。
+  // useMemo 稳定引用，避免破坏 ReactMarkdown 解析缓存（见 MARKDOWN_COMPONENTS 注释）。
+  const markdownComponents = useMemo(
+    () => ({
+      ...MARKDOWN_COMPONENTS,
+      a: ({ href, children }: any) => {
+        if (typeof href === 'string' && href.startsWith('#src-')) {
+          const n = Number(href.slice(5));
+          if (Number.isInteger(n)) {
+            return (
+              <sup
+                onClick={(e) => {
+                  e.preventDefault();
+                  handleCitationClick(n);
+                }}
+                title={`查看来源 [${n}]`}
+                className="cursor-pointer select-none mx-0.5 px-1 rounded text-[9px] font-bold leading-none align-super bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-600 hover:text-white transition-colors"
+              >
+                {n}
+              </sup>
+            );
+          }
+        }
+        if (typeof href === 'string' && !/^https?:\/\//i.test(href)) {
+          return <span className="text-slate-700 dark:text-slate-300">{children}</span>;
+        }
+        return MARKDOWN_COMPONENTS.a({ href, children });
+      },
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [id]
+  );
 
   const handleCopy = () => {
     const qText = nodeData.question ? `[提问]\n${nodeData.question}\n\n` : '';
@@ -538,7 +614,7 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
                 <ReactMarkdown
                   remarkPlugins={REMARK_PLUGINS}
                   rehypePlugins={REHYPE_PLUGINS}
-                  components={MARKDOWN_COMPONENTS}
+                  components={markdownComponents}
                 >
                   {processedAnswer}
                 </ReactMarkdown>
@@ -571,32 +647,58 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
                       {/* Source Items Grid */}
                       {showSources && (
                         <div className="nodrag p-2.5 pt-1 grid grid-cols-1 gap-1.5 border-t border-indigo-100/80 dark:border-slate-700/60 max-h-56 overflow-y-auto overscroll-contain">
-                          {nodeData.grounding.sources.map((src) => (
-                            <Tooltip key={`${src.uri}-${src.index}`} content={`点击直达权威来源: ${src.uri}`} side="top">
-                              <a
-                                href={src.uri}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="flex items-start gap-2 p-2 rounded-lg bg-white dark:bg-slate-900/90 border border-slate-200/70 dark:border-slate-700/70 hover:border-indigo-400 dark:hover:border-indigo-500 hover:shadow-xs transition-all group cursor-pointer"
+                          {nodeData.grounding.sources.map((src) => {
+                            // #8 协议白名单：仅 http(s) 渲染为跳转链接，其余为纯文本展示
+                            const isHttpLink = isSafeSourceUri(src.uri);
+                            const Wrapper: any = isHttpLink ? 'a' : 'div';
+                            const linkProps = isHttpLink
+                              ? { href: src.uri, target: '_blank', rel: 'noopener noreferrer' }
+                              : {};
+                            return (
+                              <Tooltip
+                                key={`${src.uri}-${src.index}`}
+                                content={isHttpLink ? `点击直达权威来源: ${src.uri}` : `来源: ${src.title}`}
+                                side="top"
                               >
-                                <span className="shrink-0 w-4 h-4 rounded-md bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-mono text-[10px] font-bold flex items-center justify-center mt-0.5 group-hover:bg-indigo-600 group-hover:text-white transition-colors">
-                                  {src.index}
-                                </span>
-                                <div className="flex-1 min-w-0">
-                                  <p className="text-[11px] font-medium text-slate-800 dark:text-slate-200 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 truncate leading-snug">
-                                    {src.title}
-                                  </p>
-                                  <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-slate-400 dark:text-slate-500">
-                                    <span className="truncate">{src.domain}</span>
-                                    <span>•</span>
-                                    <span className="inline-flex items-center gap-0.5 text-indigo-600 dark:text-indigo-400 group-hover:underline">
-                                      直达出处 <ExternalLink className="w-2.5 h-2.5" />
-                                    </span>
+                                <Wrapper
+                                  {...linkProps}
+                                  id={`chat-src-${id}-${src.index}`}
+                                  className={`flex items-start gap-2 p-2 rounded-lg bg-white dark:bg-slate-900/90 border transition-all group ${
+                                    isHttpLink ? 'cursor-pointer ' : ''
+                                  }${
+                                    highlightSource === src.index
+                                      ? 'border-indigo-500 ring-2 ring-indigo-400/60 shadow-sm'
+                                      : 'border-slate-200/70 dark:border-slate-700/70 hover:border-indigo-400 dark:hover:border-indigo-500 hover:shadow-xs'
+                                  }`}
+                                >
+                                  <span className="shrink-0 w-4 h-4 rounded-md bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-mono text-[10px] font-bold flex items-center justify-center mt-0.5 group-hover:bg-indigo-600 group-hover:text-white transition-colors">
+                                    {src.index}
+                                  </span>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-[11px] font-medium text-slate-800 dark:text-slate-200 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 truncate leading-snug">
+                                      {src.title}
+                                    </p>
+                                    {src.snippet && (
+                                      <p className="mt-0.5 text-[10px] text-slate-500 dark:text-slate-400 line-clamp-2 leading-snug">
+                                        {src.snippet}
+                                      </p>
+                                    )}
+                                    <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-slate-400 dark:text-slate-500">
+                                      <span className="truncate">{src.domain}</span>
+                                      {isHttpLink && (
+                                        <>
+                                          <span>•</span>
+                                          <span className="inline-flex items-center gap-0.5 text-indigo-600 dark:text-indigo-400 group-hover:underline">
+                                            直达出处 <ExternalLink className="w-2.5 h-2.5" />
+                                          </span>
+                                        </>
+                                      )}
+                                    </div>
                                   </div>
-                                </div>
-                              </a>
-                            </Tooltip>
-                          ))}
+                                </Wrapper>
+                              </Tooltip>
+                            );
+                          })}
                         </div>
                       )}
                     </div>

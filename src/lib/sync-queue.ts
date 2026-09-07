@@ -90,6 +90,15 @@ export function enqueue(boardId: string): void {
   attachOnlineListener();
 }
 
+/**
+ * 删除画板时移除其待同步任务（H1 竞态修复）：防止删除后自动保存把画板写回远端复活。
+ * in-flight 的保存结果由 runOne 的 pending.has 检查丢弃；后端对已删除画布的 save
+ * 也会拒绝（软删防复活），双保险。
+ */
+export function dequeue(boardId: string): void {
+  pending.delete(boardId);
+}
+
 /** 断网恢复后立即补传；等待本次全部执行完成（runOne 内部不会抛出） */
 export async function flush(): Promise<void> {
   if (pending.size === 0 || !executor) return;

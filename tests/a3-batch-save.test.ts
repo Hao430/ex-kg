@@ -153,7 +153,7 @@ describe('A3 批量保存事务化（功能回归保护）', () => {
         id: 'r0', type: 'chat', position: { x: 5, y: 6 },
         data: {
           title: '富字段根', question: 'q', answer: 'a',
-          grounding: { sources: [{ title: 't', url: 'https://x' }], queries: ['k'] },
+          grounding: { sources: [{ index: 1, title: 't', uri: 'https://x', domain: 'x' }], queries: ['k'] },
           customTag: '自定义扩展字段',
           depth: 2,
         },
@@ -169,7 +169,7 @@ describe('A3 批量保存事务化（功能回归保护）', () => {
     const canvas = await getCanvas('a3-rich');
     const r0 = canvas.nodes.find((n: any) => n.id === 'r0');
     const r1 = canvas.nodes.find((n: any) => n.id === 'r1');
-    assert.deepEqual(r0.data.grounding, { sources: [{ title: 't', url: 'https://x' }], queries: ['k'] });
+    assert.deepEqual(r0.data.grounding, { sources: [{ index: 1, title: 't', uri: 'https://x', domain: 'x' }], queries: ['k'] });
     assert.equal(r0.data.customTag, '自定义扩展字段');
     assert.equal(r1.data.parentId, 'r0');
     assert.equal(canvas.edges[0].animated, true);

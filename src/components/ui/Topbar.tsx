@@ -226,17 +226,19 @@ export const Topbar: React.FC<TopbarProps> = ({
                     <span className="truncate flex-1 mr-2">{b.name}</span>
                     <span className="flex items-center gap-0.5 shrink-0">
                       {b.id === currentBoardId && <Check className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDeleteBoard(b.id);
-                          setShowBoardMenu(false);
-                        }}
-                        aria-label={`删除画板 ${b.name}`}
-                        className="p-1 rounded-lg text-slate-300 dark:text-slate-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      {b.id !== 'default-board' && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteBoard(b.id);
+                            setShowBoardMenu(false);
+                          }}
+                          aria-label={`删除画板 ${b.name}`}
+                          className="p-1 rounded-lg text-slate-300 dark:text-slate-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </span>
                   </div>
                 ))}

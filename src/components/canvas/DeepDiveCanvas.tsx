@@ -80,6 +80,8 @@ interface DeepDiveCanvasProps {
   theme?: 'light' | 'dark';
   defaultModel?: string;
   defaultEnableWebSearch?: boolean;
+  /** 当前画板 id：随 /api/chat 请求体上报，供审计归因与画布级节点配额校验 */
+  canvasId?: string;
 }
 
 export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
@@ -93,6 +95,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
   theme = 'light',
   defaultModel = '',
   defaultEnableWebSearch = true,
+  canvasId,
 }) => {
   const [nodes, setNodes, onNodesChange] = useNodesState(
     initialNodes || []
@@ -323,6 +326,8 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
             messages: ancestorContext,
             model: activeModel,
             enableWebSearch: activeWebSearch,
+            canvasId: canvasId ?? null,
+            nodeId,
           }),
           signal: abortController.signal
         });
@@ -393,6 +398,8 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
                 }
                 if (parsed.reset) {
                   rawAccumulatedText = '';
+                  // 模型容灾换流：旧流来源一并作废，避免「文本无来源、列表留旧来源」错位
+                  receivedGrounding = undefined;
                   setNodes((nds) =>
                     nds.map((n) => {
                       if (n.id !== nodeId) return n;

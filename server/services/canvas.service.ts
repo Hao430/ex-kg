@@ -5,7 +5,6 @@ import {
   deleteCanvas,
   searchNodes,
   getCanvasOwnerInfo,
-  isClaimableCanvas,
 } from '../repositories/canvas.repository.js';
 import { NotFoundError } from '../lib/errors.js';
 import { assertCanCreateBoard } from './quota.service.js';
@@ -30,19 +29,11 @@ export async function saveUserCanvas(
   userId: string,
   isAdmin: boolean
 ): Promise<CanvasRecord> {
-  // Spec B1：新建或**认领**画板都计入画板数配额（认领会把归属转移给请求者，审计修复）；
-  // 更新自己的画板不受限
+  // Spec B1（H1 修订）：严格属主制下「认领」语义消亡（唯一可写的他人画板是共享默认板，归属不再转移），
+  // 配额退化为纯新建计数；更新自己的画板不受限
   if (!isAdmin) {
     const info = await getCanvasOwnerInfo(data.id);
-    const adopts =
-      !info.exists ||
-      (info.ownerId !== userId &&
-        isClaimableCanvas(data.id, info.ownerId, userId, {
-          includeBoardPrefix: true,
-          includeNoOwner: true,
-          includeRequesterGuest: true,
-        }));
-    if (!info.exists || adopts) {
+    if (!info.exists) {
       const user = await findUserById(userId);
       if (user) await assertCanCreateBoard(user);
     }

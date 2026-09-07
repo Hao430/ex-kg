@@ -94,6 +94,8 @@ export interface CanvasRecord {
   edgeCount?: number;
   nodes?: any[];
   edges?: any[];
+  /** 画布软删除时间戳（非空 = 已删除；与 F4 用户注销 deleted_at 口径一致） */
+  deleted_at?: string | null;
 }
 
 export interface AuditLogRecord {

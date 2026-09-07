@@ -5,7 +5,7 @@
 
 import { Node, Edge } from '@xyflow/react';
 import { DeepDiveBoardMeta, ChatNodeData } from '../types';
-import { enqueue, setSyncExecutor } from './sync-queue';
+import { enqueue, dequeue, setSyncExecutor } from './sync-queue';
 
 const STORAGE_BOARDS_INDEX_KEY = 'deepdive_boards_index_v1';
 const LEGACY_STORAGE_BOARDS_INDEX_KEY = 'rabbithole_boards_index_v1';
@@ -294,23 +294,32 @@ export async function fetchBoardListFromServer(): Promise<DeepDiveBoardMeta[] | 
 }
 
 /**
- * 删除画板：已登录时调 DELETE /api/canvases/:id（服务端为真源，租户校验）；
- * 无论服务端结果（含本地草稿从未同步的 404）都清理本地缓存与索引。
+ * 删除画板（H1 竞态修复）：服务端为真源——仅当删除被确认（2xx）或画布从未同步/已不存在（404）
+ * 才清理本地缓存、索引并移除待同步任务；403/5xx/断网时保留本地并返回失败，
+ * 由调用方提示用户（否则远端画板会在下次拉取列表时「复活」，与「无法撤销」承诺矛盾）。
  */
-export async function deleteBoard(boardId: string): Promise<void> {
+export async function deleteBoard(boardId: string): Promise<{ ok: boolean; status?: number }> {
+  let status = 0;
+  let networkFail = false;
   try {
-    await fetch(`/api/canvases/${encodeURIComponent(boardId)}`, {
+    const res = await fetch(`/api/canvases/${encodeURIComponent(boardId)}`, {
       method: 'DELETE',
       credentials: 'include',
     });
+    status = res.status;
   } catch (e) {
-    // 网络失败同样继续清理本地（下次登录服务端列表为准，未删掉的远端画板会重新出现）
+    networkFail = true;
   }
+  if (networkFail || (status >= 300 && status !== 404)) {
+    return { ok: false, status: networkFail ? 0 : status };
+  }
+  dequeue(boardId); // 移除待同步任务，杜绝删除后自动保存把画板写回远端
   try {
     localStorage.removeItem(`${STORAGE_BOARD_PREFIX}${boardId}`);
     localStorage.removeItem(`${LEGACY_STORAGE_BOARD_PREFIX}${boardId}`);
     saveBoardList(loadBoardList().filter((b) => b.id !== boardId));
   } catch (e) {}
+  return { ok: true };
 }
 
 export function exportBoardToJson(board: StoredBoard): void {
