@@ -16,6 +16,7 @@ import {
 } from '../services/admin.service.js';
 import { getAiModelConfig } from '../services/ai.service.js';
 import { asyncHandler } from '../lib/async-handler.js';
+import { checkDbStatus } from '../core/db-status.js';
 import { validate } from '../lib/validate.js';
 import { authMiddleware, requireAdmin } from '../middleware/auth.js';
 import { GoogleGenAI } from '@google/genai';
@@ -29,10 +30,12 @@ adminRouter.use(requireAdmin);
 /**
  * GET /api/admin/overview
  * Operation dashboard metrics (total users, tokens, canvases, models)
+ * 附带 database（checkDbStatus）：底座存储状态供前端「底座数据存储与事务状态」面板消费
  */
 adminRouter.get('/overview', asyncHandler(async (_req: Request, res: Response) => {
   const overview = await getAdminOverview();
-  res.json({ success: true, overview });
+  const database = await checkDbStatus();
+  res.json({ success: true, overview, database });
 }));
 
 /**
