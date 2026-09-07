@@ -1,7 +1,7 @@
 -- ==============================================================================
 -- 枝想 Arborize 企业级生产数据库全量建表与索引脚本 (PostgreSQL 14+)
--- 架构版本: v3.0.1-production (一期收官)
--- 表总数: 19 张 (其中 8 张为一期预留空壳，二期激活；算力点数体系已废弃移除)
+-- 架构版本: v3.1.0-production (注册验证码先行重设计)
+-- 表总数: 20 张 (其中 8 张为一期预留空壳，二期激活；算力点数体系已废弃移除)
 -- 支持特性: 强制登录多租户、多轮推演画布、服务端配额校验、订阅订单 (Mock 支付)、
 --          邮箱验证与找回密码、注销软删除 30 天冷却、全链路审计与 GIN 全文检索
 -- 事实源声明: 运行时建表以 server/core/schema.ts 为准（启动时自动执行含增量迁移），
@@ -85,6 +85,18 @@ CREATE TABLE IF NOT EXISTS user_audit_logs (
   user_agent TEXT DEFAULT '',
   details JSONB DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+-- 1.5 注册邮箱验证码表 (Email Verification Codes - 验证码先行注册，2026-09 重设计)
+-- 验证先行才建号：sign-up 校验通过（消费成功即删行）后账号出生即 email_verified=true。
+-- email 主键 = 一邮箱一码；连错 5 次（attempts）作废；10 分钟过期；重新发送覆盖旧码并归零 attempts。
+CREATE TABLE IF NOT EXISTS email_verification_codes (
+  email VARCHAR(255) PRIMARY KEY,
+  code VARCHAR(6) NOT NULL,
+  attempts INT DEFAULT 0 NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
 -- ==============================================================================
