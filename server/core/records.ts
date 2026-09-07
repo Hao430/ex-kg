@@ -108,6 +108,15 @@ export interface AuditLogRecord {
   created_at: string;
 }
 
+/** 注册邮箱验证码（验证先行才建号；6 位数字 10 分钟有效，连错 5 次作废；email 唯一，一邮箱一码） */
+export interface EmailCodeRecord {
+  email: string;
+  code: string;
+  attempts: number;
+  expires_at: string;
+  updated_at: string;
+}
+
 export interface DbStatus {
   connected: boolean;
   type: 'postgresql' | 'in-memory-fallback';

@@ -6,7 +6,8 @@ interface AuthContextType {
   loading: boolean;
   isVip: boolean;
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string; remainingMinutes?: number }>;
-  register: (email: string, password: string, name?: string) => Promise<{ success: boolean; error?: string }>;
+  register: (email: string, password: string, name: string | undefined, code: string) => Promise<{ success: boolean; error?: string }>;
+  sendRegisterCode: (email: string) => Promise<{ success: boolean; message?: string; error?: string }>;
   logout: () => Promise<void>;
   updateProfile: (data: { name?: string; avatar?: string }) => Promise<{ success: boolean; error?: string }>;
   changePassword: (oldPassword: string, newPassword: string) => Promise<{ success: boolean; error?: string }>;
@@ -105,13 +106,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const register = async (email: string, password: string, name?: string) => {
+  // 注册（验证码先行：需先 sendRegisterCode 获取 6 位验证码，后端校验通过才建号，出生即 email_verified=true）
+  const register = async (email: string, password: string, name: string | undefined, code: string) => {
     try {
       const res = await fetch('/api/auth/sign-up', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ email, password, name }),
+        body: JSON.stringify({ email, password, name, code }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -121,6 +123,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       void refreshUser(); // 拉取 entitlements（Spec B3/B4）
       setAuthModalOpen(false);
       return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e?.message || '网络连接异常' };
+    }
+  };
+
+  // 发送注册邮箱验证码（409 已注册 / 429 冷却限流 / 400 校验失败的消息直接透出）
+  const sendRegisterCode = async (email: string) => {
+    try {
+      const res = await fetch('/api/auth/send-register-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        return { success: false, error: data?.error || '发送失败，请稍后重试' };
+      }
+      return { success: true, message: data?.message || '验证码已发送，请查收' };
     } catch (e: any) {
       return { success: false, error: e?.message || '网络连接异常' };
     }
@@ -263,6 +284,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isVip,
         login,
         register,
+        sendRegisterCode,
         logout,
         updateProfile,
         changePassword,

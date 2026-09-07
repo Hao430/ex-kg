@@ -80,6 +80,34 @@ export async function sendVerificationEmail(to: string, verifyUrl: string): Prom
 }
 
 /**
+ * 发送注册邮箱验证码邮件（6 位数字码，10 分钟内有效）。干跑/发信失败处理同验证邮件。
+ */
+export async function sendVerificationCodeEmail(to: string, code: string): Promise<void> {
+  const subject = '枝想 注册验证码';
+  const text = `欢迎加入 枝想！您的注册验证码为：${code}（10 分钟内有效）。\n如非本人操作，请忽略此邮件。`;
+  const html = `<p>欢迎加入 枝想！</p><p>您的注册验证码为：</p><p style="font-size:24px;letter-spacing:8px;font-weight:bold;">${code}</p><p>验证码 10 分钟内有效。如非本人操作，请忽略此邮件。</p>`;
+
+  try {
+    if (isDryRun()) {
+      outbox.unshift({ to, subject, text, html });
+      if (outbox.length > OUTBOX_LIMIT) outbox.pop();
+      console.log(`[mailer:dry-run] 注册验证码邮件（${to}）：${code}`);
+      return;
+    }
+
+    await getTransporter().sendMail({
+      from: process.env.SMTP_USER,
+      to,
+      subject,
+      text,
+      html,
+    });
+  } catch (e) {
+    console.warn('注册验证码邮件发送失败（不影响主流程）:', e);
+  }
+}
+
+/**
  * Spec F1：发送找回密码邮件（链接 1h 有效）。干跑/发信失败处理同验证邮件。
  */
 export async function sendPasswordResetEmail(to: string, resetUrl: string): Promise<void> {

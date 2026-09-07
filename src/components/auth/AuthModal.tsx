@@ -1,12 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { LogIn, UserPlus, Sparkles, Key, Mail, AlertCircle, X, CheckCircle2, ArrowLeft } from 'lucide-react';
+import { LogIn, UserPlus, Sparkles, Key, Mail, AlertCircle, X, CheckCircle2, ArrowLeft, ShieldCheck } from 'lucide-react';
 
 export const AuthModal: React.FC = () => {
-  const { authModalOpen, authModalMode, closeAuthModal, login, register, openAuthModal } = useAuth();
+  const { authModalOpen, authModalMode, closeAuthModal, login, register, sendRegisterCode, openAuthModal } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
+  // 注册验证码（验证先行才建号）
+  const [code, setCode] = useState('');
+  const [codeSending, setCodeSending] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [lockoutMinutes, setLockoutMinutes] = useState<number | null>(null);
@@ -19,8 +23,17 @@ export const AuthModal: React.FC = () => {
       setForgotSent(false);
       setError(null);
       setLockoutMinutes(null);
+      setCode('');
+      setCooldown(0);
     }
   }, [authModalOpen, authModalMode]);
+
+  // 60s 重发倒计时
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [cooldown]);
 
   if (!authModalOpen) return null;
 
@@ -50,6 +63,25 @@ export const AuthModal: React.FC = () => {
     }
   };
 
+  const handleSendCode = async () => {
+    setError(null);
+    if (!email || !email.includes('@')) {
+      setError('请先填写有效的邮箱地址');
+      return;
+    }
+    setCodeSending(true);
+    try {
+      const res = await sendRegisterCode(email.trim());
+      if (res.success) {
+        setCooldown(60);
+      } else {
+        setError(res.error || '发送失败，请稍后重试');
+      }
+    } finally {
+      setCodeSending(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -57,7 +89,7 @@ export const AuthModal: React.FC = () => {
     setLockoutMinutes(null);
 
     if (isSignUp) {
-      const res = await register(email, password, name);
+      const res = await register(email, password, name || undefined, code);
       setSubmitting(false);
       if (!res.success) {
         setError(res.error || '注册失败');
@@ -273,6 +305,38 @@ export const AuthModal: React.FC = () => {
                 />
               </div>
             </div>
+
+            {isSignUp && (
+              <div>
+                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                  邮箱验证码
+                </label>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <ShieldCheck className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      required
+                      maxLength={6}
+                      value={code}
+                      onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
+                      placeholder="6 位数字验证码"
+                      autoComplete="one-time-code"
+                      className="w-full pl-9 pr-3 py-2 text-sm bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800 dark:text-slate-100 placeholder-slate-400 tracking-widest"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleSendCode()}
+                    disabled={cooldown > 0 || codeSending}
+                    className="shrink-0 px-3 py-2 text-xs font-medium text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800/60 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 rounded-xl transition-colors disabled:opacity-50"
+                  >
+                    {codeSending ? '发送中…' : cooldown > 0 ? `${cooldown}s 后重发` : '发送验证码'}
+                  </button>
+                </div>
+              </div>
+            )}
 
             <button
               type="submit"

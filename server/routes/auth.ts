@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { deleteSession, findSession } from '../repositories/session.repository.js';
 import { recordAuditLog } from '../repositories/audit.repository.js';
-import { signUp, signIn, updateProfile, resendVerification, requestPasswordReset, resetPassword, changeOwnPassword, deleteOwnAccount } from '../services/auth.service.js';
+import { signUp, signIn, updateProfile, resendVerification, requestPasswordReset, resetPassword, changeOwnPassword, deleteOwnAccount, sendRegisterCode } from '../services/auth.service.js';
 import { markEmailVerifiedByToken } from '../repositories/user.repository.js';
 import { ValidationError } from '../lib/errors.js';
 import { subscribeUserPlan, isPaymentEnabled } from '../services/billing.service.js';
@@ -11,7 +11,7 @@ import { asyncHandler } from '../lib/async-handler.js';
 import { validate } from '../lib/validate.js';
 import { effectiveEntitlements } from '../services/quota.service.js';
 import type { Response as ExpressResponse } from 'express';
-import { authMiddleware, loginRateLimiter, signupRateLimiter, resendVerificationRateLimiter, forgotPasswordRateLimiter } from '../middleware/auth.js';
+import { authMiddleware, loginRateLimiter, signupRateLimiter, resendVerificationRateLimiter, forgotPasswordRateLimiter, sendRegisterCodeRateLimiter } from '../middleware/auth.js';
 
 export const authRouter = Router();
 
@@ -19,7 +19,12 @@ export const authRouter = Router();
 const SignUpSchema = z.object({
   email: z.string().email('请输入有效的邮箱地址'),
   password: z.string().min(6, '密码长度至少为 6 位'),
+  code: z.string().regex(/^\d{6}$/, '请输入 6 位数字验证码'),
   name: z.string().max(50).optional(),
+});
+
+const SendRegisterCodeSchema = z.object({
+  email: z.string().email('请输入有效的邮箱地址'),
 });
 
 const SignInSchema = z.object({
@@ -94,14 +99,26 @@ function publicUser(user: {
 }
 
 /**
+ * POST /api/auth/send-register-code（公开）
+ * 发送注册邮箱验证码（6 位数字，10 分钟有效；每邮箱 60s 冷却 + 每 IP 5/h 限流）。
+ * 邮箱已注册 → 409 EMAIL_EXISTS（与 sign-up 查重口径一致）。
+ */
+authRouter.post('/send-register-code', sendRegisterCodeRateLimiter, asyncHandler(async (req: Request, res: Response) => {
+  const { email } = validate(SendRegisterCodeSchema, req.body);
+  await sendRegisterCode(email);
+  res.json({ success: true, message: '验证码已发送至您的邮箱，10 分钟内有效' });
+}));
+
+/**
  * POST /api/auth/sign-up
- * Register a new user & auto session cookie
+ * Register a new user & auto session cookie（需先通过 send-register-code 获取验证码）
  */
 authRouter.post('/sign-up', signupRateLimiter, asyncHandler(async (req: Request, res: Response) => {
-  const { email, password, name } = validate(SignUpSchema, req.body);
+  const { email, password, code, name } = validate(SignUpSchema, req.body);
   const { user, token } = await signUp({
     email,
     password,
+    code,
     name,
     ip: req.ip,
     userAgent: req.headers['user-agent'],

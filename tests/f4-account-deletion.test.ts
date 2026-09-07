@@ -7,6 +7,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createApp } from '../server/app.js';
 import { cleanupDeletedUsers } from '../server/repositories/user.repository.js';
+import { getOutboxForTest } from '../server/lib/mailer.js';
 
 let server: http.Server;
 let base = '';
@@ -23,6 +24,23 @@ async function waitSeeds(tries = 50): Promise<void> {
     await new Promise((r) => setTimeout(r, 100));
   }
   throw new Error('seed users not ready');
+}
+
+/** 注册验证码先行：发码 → 从 outbox 取码 → sign-up */
+async function registerViaCode(email: string, password: string, name?: string): Promise<Response> {
+  await fetch(`${base}/api/auth/send-register-code`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+  const mail = getOutboxForTest().find((m) => m.to === email && m.subject === '枝想 注册验证码');
+  assert.ok(mail, `应发出验证码邮件（${email}）`);
+  const code = (mail.text || mail.html || '').match(/\b(\d{6})\b/)![1];
+  return fetch(`${base}/api/auth/sign-up`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password, name, code }),
+  });
 }
 
 describe('F4 注销流程', () => {
@@ -44,11 +62,7 @@ describe('F4 注销流程', () => {
   after(() => new Promise<void>((resolve) => server.close(() => resolve())));
 
   test('自助注销：DELETE /api/auth/account → 200 且踢下线', async () => {
-    await fetch(`${base}/api/auth/sign-up`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'f4-del@example.com', password: 'Pass123456', name: 'F4' }),
-    });
+    await registerViaCode('f4-del@example.com', 'Pass123456', 'F4');
     const login = await fetch(`${base}/api/auth/sign-in`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -76,11 +90,7 @@ describe('F4 注销流程', () => {
   });
 
   test('同邮箱可重新注册（partial 唯一索引语义）', async () => {
-    const res = await fetch(`${base}/api/auth/sign-up`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'f4-del@example.com', password: 'Pass123456' }),
-    });
+    const res = await registerViaCode('f4-del@example.com', 'Pass123456');
     assert.equal(res.status, 201);
 
     // 重新注册 = 新账号新 id（非原地复活），后续用例使用新账号会话
@@ -95,11 +105,7 @@ describe('F4 注销流程', () => {
   test('Admin restore 已注销账号 → 200 且可重新登录', async () => {
     // 注销前账号的 userId 已知语义：restore 用邮箱反查已注销用户不可行——restore 接受 id。
     // f4-del 原账号 id 未知，用直接注册再注销的方式拿 id：
-    const signUp = await fetch(`${base}/api/auth/sign-up`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'f4-restore@example.com', password: 'Pass123456' }),
-    });
+    const signUp = await registerViaCode('f4-restore@example.com', 'Pass123456');
     assert.equal(signUp.status, 201);
     const suBody = await signUp.json() as any;
     const targetId = suBody.user.id as string;

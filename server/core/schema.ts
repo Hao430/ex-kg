@@ -372,6 +372,18 @@ export async function initDbSchema(): Promise<boolean> {
       );
     `);
 
+    // 7.12 Email Verification Codes (注册邮箱验证码：验证先行才建号，email 唯一，一邮箱一码)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS email_verification_codes (
+        email VARCHAR(255) PRIMARY KEY,
+        code VARCHAR(6) NOT NULL,
+        attempts INT DEFAULT 0 NOT NULL,
+        expires_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+    `);
+
     // 8. Indices
 
     // 新增 PM 视角优化索引

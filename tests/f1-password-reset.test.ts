@@ -24,6 +24,23 @@ async function waitSeeds(tries = 50): Promise<void> {
   throw new Error('seed users not ready');
 }
 
+/** 注册验证码先行：发码 → 从 outbox 取码 → sign-up */
+async function registerViaCode(email: string, password: string, name?: string): Promise<Response> {
+  await fetch(`${base}/api/auth/send-register-code`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+  const mail = getOutboxForTest().find((m) => m.to === email && m.subject === '枝想 注册验证码');
+  assert.ok(mail, `应发出验证码邮件（${email}）`);
+  const code = (mail.text || mail.html || '').match(/\b(\d{6})\b/)![1];
+  return fetch(`${base}/api/auth/sign-up`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password, name, code }),
+  });
+}
+
 describe('F1 找回密码', () => {
   before(async () => {
     const app = createApp();
@@ -34,11 +51,7 @@ describe('F1 找回密码', () => {
     await waitSeeds();
 
     // 创建独立账号并留一份旧会话（验证踢下线）
-    await fetch(`${base}/api/auth/sign-up`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'f1-reset@example.com', password: 'OldPass123', name: 'F1' }),
-    });
+    await registerViaCode('f1-reset@example.com', 'OldPass123', 'F1');
     const login = await fetch(`${base}/api/auth/sign-in`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

@@ -6,11 +6,29 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createApp } from '../server/app.js';
+import { getOutboxForTest } from '../server/lib/mailer.js';
 
 let server: http.Server;
 let base = '';
 let userCookie = '';
 let adminCookie = '';
+
+/** 注册验证码先行：发码 → 从 outbox 取码 → sign-up */
+async function registerViaCode(email: string, password: string, name?: string): Promise<Response> {
+  await fetch(`${base}/api/auth/send-register-code`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+  const mail = getOutboxForTest().find((m) => m.to === email && m.subject === '枝想 注册验证码');
+  assert.ok(mail, `应发出验证码邮件（${email}）`);
+  const code = (mail.text || mail.html || '').match(/\b(\d{6})\b/)![1];
+  return fetch(`${base}/api/auth/sign-up`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password, name, code }),
+  });
+}
 
 async function waitSeeds(tries = 50): Promise<void> {
   for (let i = 0; i < tries; i++) {
@@ -49,11 +67,7 @@ describe('C 清理算力点数体系', () => {
   after(() => new Promise<void>((resolve) => server.close(() => resolve())));
 
   test('注册响应与 /me 均无 credits_balance', async () => {
-    const signUp = await fetch(`${base}/api/auth/sign-up`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'c-test@example.com', password: 'Pass123456', name: 'C用例' }),
-    });
+    const signUp = await registerViaCode('c-test@example.com', 'Pass123456', 'C用例');
     assert.equal(signUp.status, 201);
     const suBody = await signUp.json() as any;
     assert.equal(suBody.user?.credits_balance, undefined);

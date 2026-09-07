@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createApp } from '../server/app.js';
+import { getOutboxForTest } from '../server/lib/mailer.js';
 
 let server: http.Server;
 let base = '';
@@ -21,6 +22,23 @@ async function waitSeeds(tries = 50): Promise<void> {
     await new Promise((r) => setTimeout(r, 100));
   }
   throw new Error('seed users not ready');
+}
+
+/** 注册验证码先行：发码 → 从 outbox 取码 → sign-up */
+async function registerViaCode(email: string, password: string, name?: string): Promise<Response> {
+  await fetch(`${base}/api/auth/send-register-code`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+  const mail = getOutboxForTest().find((m) => m.to === email && m.subject === '枝想 注册验证码');
+  assert.ok(mail, `应发出验证码邮件（${email}）`);
+  const code = (mail.text || mail.html || '').match(/\b(\d{6})\b/)![1];
+  return fetch(`${base}/api/auth/sign-up`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password, name, code }),
+  });
 }
 
 async function signIn(email: string, password: string): Promise<string> {
@@ -50,11 +68,7 @@ describe('修改密码 change-password', () => {
     await waitSeeds();
 
     // 创建独立账号并建立两个会话（验证踢下线含当前会话）
-    await fetch(`${base}/api/auth/sign-up`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'f7-changepw@example.com', password: 'OldPass123', name: 'F7' }),
-    });
+    await registerViaCode('f7-changepw@example.com', 'OldPass123', 'F7');
   });
   after(() => new Promise<void>((resolve) => server.close(() => resolve())));
 

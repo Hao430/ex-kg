@@ -59,6 +59,21 @@ export const signupRateLimiter = rateLimit({
 });
 
 /**
+ * Rate limiter for send-register-code: 5 req/hour per IP（注册验证码防邮件轰炸）
+ */
+export const sendRegisterCodeRateLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => ipKeyGenerator(req.ip || 'anonymous'),
+  message: {
+    error: '验证码发送过于频繁，请 1 小时后重试',
+    code: 'RATE_LIMIT_EXCEEDED',
+  },
+});
+
+/**
  * Rate limiter for forgot-password: 5 req/hour per IP（Spec F1，独立实例防邮件轰炸）
  */
 export const forgotPasswordRateLimiter = rateLimit({
