@@ -17,6 +17,7 @@ import {
 import { motion } from 'framer-motion';
 import { Sparkles, ArrowRight } from 'lucide-react';
 import { trackEvent } from '../../lib/analytics';
+import { recordCloneIntent } from '../../lib/share-clone';
 import { shareNodeTypes } from './ShareReadOnlyNode';
 import '@xyflow/react/dist/style.css';
 
@@ -132,7 +133,7 @@ const SharePageInner: React.FC<{ shareCode: string }> = ({ shareCode }) => {
               </ReactFlow>
             </ReactFlowProvider>
           </div>
-          {/* 底部品牌传播条（K2 v1 为静态引导；注册自动克隆列入后续迭代） */}
+          {/* 底部品牌传播条：CTA 点击记录克隆意图（Spec K6/B1），注册/登录后自动克隆该画布 */}
           <footer className="px-4 sm:px-5 py-3 border-t border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/80 backdrop-blur flex items-center justify-between gap-3">
             <div className="text-[11px] text-slate-400">
               由 枝想 生成
@@ -141,6 +142,7 @@ const SharePageInner: React.FC<{ shareCode: string }> = ({ shareCode }) => {
             <motion.a
               href="/"
               whileHover={{ scale: 1.03 }}
+              onClick={() => recordCloneIntent(shareCode)}
               className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 text-white text-xs font-semibold shadow-lg"
             >
               用 AI 深挖我的问题

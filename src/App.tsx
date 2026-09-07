@@ -20,11 +20,13 @@ import {
   StoredBoard,
 } from './lib/storage';
 import { exportCanvasAsPng } from './lib/canvas-image-export';
-import { DeepDiveBoardMeta } from './types';
+import { DeepDiveBoardMeta, ChatNodeData } from './types';
 import { onSyncState } from './lib/sync-queue';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { trackEvent } from './lib/analytics';
 import { markChecklistStep } from './lib/checklist';
+import { isShareCloned, markShareCloned, takeCloneIntent } from './lib/share-clone';
+import { deduplicateNodes, deduplicateEdges } from './lib/storage';
 import { SampleBoardViewer } from './components/sample/SampleBoardViewer';
 import { StarterChecklist } from './components/canvas/StarterChecklist';
 import { AuthModal } from './components/auth/AuthModal';
@@ -423,6 +425,77 @@ function MainApp() {
     } catch (e) {}
     setViewMode('landing');
   };
+
+  // Spec K6（B1 方案 B）：分享画布一键克隆。
+  // 用户在分享页点过 CTA（deepdive_clone_code 意图记录）后，登录/注册成功
+  // 且本地画板就绪时执行：拉公开快照 → 构造 StoredBoard → saveBoard 走既有
+  // 同步队列（服务端 assertCanCreateBoard 配额拦截 + 客户端预检双保险）→
+  // 直接切入克隆画布，制造「注册即拥有第一个画板」的激活时刻。
+  const tryCloneSharedBoard = async () => {
+    const intent = takeCloneIntent(); // 读后即焚，天然幂等（StrictMode/重复登录不重放）
+    if (!intent) return;
+    if (isShareCloned(intent.code)) return; // 同一分享本机只克隆一次
+
+    let body: any;
+    try {
+      const res = await fetch(`/api/shares/${encodeURIComponent(intent.code)}`);
+      if (!res.ok) {
+        showToast('分享内容已失效，未能克隆画板');
+        return;
+      }
+      body = await res.json();
+    } catch {
+      return; // 网络失败静默放弃（意图已消费，用户可手动重访分享页）
+    }
+
+    // 画板配额客户端预检（与 handleEnterCanvas 同口径；服务端 save 仍有硬拦截）
+    if (!isVip && loadBoardList().length >= 3) {
+      openRechargeModal('免费版用户最多支持创建 3 个独立画板，升级 Pro 会员解锁无限画板后再来克隆吧！');
+      return;
+    }
+
+    // 快照节点 → 画布节点：数据为属主画布保存时的白名单形状，直通即可；
+    // 仅归一化遗留的 generating 态（分享者中途生成就分享的极端情况），避免克隆后永久转圈
+    const nodes = deduplicateNodes(body.nodes || []).map((n: Node) => {
+      if (n.type !== 'chat') return n;
+      const d = n.data as unknown as ChatNodeData;
+      if (d.status !== 'generating') return n;
+      return { ...n, data: { ...d, status: 'idle' as const, errorMessage: undefined } };
+    });
+    const edges = deduplicateEdges(body.edges || []);
+    if (nodes.length === 0) {
+      showToast('分享内容为空，未能克隆画板');
+      return;
+    }
+
+    const boardId = `board-${Date.now()}`;
+    const boardName = String(body.title || '克隆的分享画板').slice(0, 60);
+    saveBoard({ id: boardId, name: boardName, updatedAt: Date.now(), nodes, edges });
+    markShareCloned(intent.code);
+
+    const updatedList = loadBoardList();
+    setBoards(updatedList);
+    setCurrentBoardId(boardId);
+    setBoardName(boardName);
+    setInitialNodes(nodes);
+    setInitialEdges(edges);
+    currentNodesRef.current = nodes;
+    currentEdgesRef.current = edges;
+
+    try {
+      sessionStorage.setItem('deepdive_active_view', 'canvas');
+    } catch (e) {}
+    setViewMode('canvas');
+    trackEvent('share_clone'); // K4 扩展事件：克隆转化（无 PII，不含画板名）
+    showToast(`已将分享画板《${boardName}》克隆到我的画板`);
+  };
+
+  // 克隆钩子：用户就绪（登录/注册完成）且本地画板数据就绪后执行一次
+  useEffect(() => {
+    if (!boardReady || !user) return;
+    void tryCloneSharedBoard();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [boardReady, user]);
 
   const handleExportJson = () => {
     trackEvent('export', { format: 'json' }); // K4 事件 8：导出点击
