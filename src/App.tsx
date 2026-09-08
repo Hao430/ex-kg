@@ -25,9 +25,16 @@ import { onSyncState } from './lib/sync-queue';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { trackEvent } from './lib/analytics';
 import { markChecklistStep } from './lib/checklist';
-import { isShareCloned, markShareCloned, takeCloneIntent } from './lib/share-clone';
+import {
+  isShareCloned,
+  markShareCloned,
+  peekCloneIntent,
+  takeCloneFreshFlag,
+  takeCloneIntent,
+} from './lib/share-clone';
 import { deduplicateNodes, deduplicateEdges } from './lib/storage';
 import { SampleBoardViewer } from './components/sample/SampleBoardViewer';
+import { ShareLinkModal } from './components/ui/ShareLinkModal';
 import { StarterChecklist } from './components/canvas/StarterChecklist';
 import { AuthModal } from './components/auth/AuthModal';
 import { RechargeModal } from './components/ui/RechargeModal';
@@ -129,6 +136,47 @@ function MainApp() {
   const triggerFitViewRef = useRef<(() => void) | null>(null);
   const triggerAddRootRef = useRef<(() => void) | null>(null);
   const triggerAddNoteRef = useRef<(() => void) | null>(null);
+  const triggerExportPngRef = useRef<
+    ((title: string) => Promise<{ ok: boolean; error?: string }>) | null
+  >(null);
+
+  // Spec K2：分享链接弹窗（创建/重建提示/撤销）
+  const [shareDialog, setShareDialog] = useState<{ url: string; recreated: boolean } | null>(null);
+
+  const handleShareLink = async () => {
+    try {
+      const res = await fetch(`/api/canvases/${encodeURIComponent(currentBoardId)}/share`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      const body = await res.json().catch(() => null);
+      if (res.ok && body?.shareCode) {
+        setShareDialog({ url: String(body.url), recreated: Boolean(body.recreated) });
+      } else {
+        showToast(body?.error || '分享创建失败，请重试');
+      }
+    } catch {
+      showToast('网络异常，分享创建失败');
+    }
+  };
+
+  const handleRevokeShare = async () => {
+    try {
+      const res = await fetch(`/api/canvases/${encodeURIComponent(currentBoardId)}/share`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (res.ok) {
+        setShareDialog(null);
+        showToast('已停止分享，原链接即刻失效');
+      } else {
+        const body = await res.json().catch(() => null);
+        showToast(body?.error || '停止分享失败，请重试');
+      }
+    } catch {
+      showToast('网络异常，操作失败');
+    }
+  };
 
   const currentNodesRef = useRef<Node[]>([]);
   const currentEdgesRef = useRef<Edge[]>([]);
@@ -278,9 +326,13 @@ function MainApp() {
       window.clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = null;
     }
+    // 冻结自动保存：删除/切换加载完成前，任何节点变更不得写入任何画板
+    //（否则加载窗口内被删内容会经挂载 effect + handleCanvasChange 污染下一块画板）
+    setBoardReady(false);
 
     const result = await deleteBoard(targetId);
     if (!result.ok) {
+      setBoardReady(true); // 删除失败：停留在原画布，恢复编辑能力
       showToast('删除失败，请稍后重试');
       return;
     }
@@ -288,15 +340,33 @@ function MainApp() {
     setBoards(remaining);
     showToast(`已删除画板「${target.name}」`);
 
-    if (targetId !== currentBoardId) return;
+    if (targetId !== currentBoardId) {
+      setBoardReady(true); // 删除的是非当前画板：当前画布不受影响
+      return;
+    }
     if (remaining.length > 0) {
       const nextId = remaining[0].id;
-      setCurrentBoardId(nextId);
+      const seq = ++loadSeqRef.current;
       let loaded: StoredBoard | null = null;
       if (user) loaded = await fetchBoardFromServer(nextId);
+      if (seq !== loadSeqRef.current) return; // 期间用户已手动切换画板，丢弃本次结果
       if (!loaded) loaded = loadBoard(nextId);
-      if (loaded) applyLoadedBoard(loaded);
-      else setBoardReady(true);
+      if (loaded) {
+        // setCurrentBoardId 与 setInitialNodes 同批提交（applyLoadedBoard）：
+        // key remount 拿到的就是新内容——先切 id 后加载数据会让画布显示被删内容
+        applyLoadedBoard(loaded);
+      } else {
+        // 服务端与本地均无内容：给引导节点，绝不复用被删画布的内容
+        setCurrentBoardId(nextId);
+        setBoardName(remaining[0].name);
+        const starter = createStarterRootNode();
+        setInitialNodes(starter);
+        setInitialEdges([]);
+        currentNodesRef.current = starter;
+        currentEdgesRef.current = [];
+        setNodeCount(1);
+        setBoardReady(true);
+      }
     } else {
       // 全部删除：初始化「新画布 + 待填写主题」引导节点（对齐新账号语义）
       setCurrentBoardId('default-board');
@@ -459,24 +529,36 @@ function MainApp() {
   // 且本地画板就绪时执行：拉公开快照 → 构造 StoredBoard → saveBoard 走既有
   // 同步队列（服务端 assertCanCreateBoard 配额拦截 + 客户端预检双保险）→
   // 直接切入克隆画布，制造「注册即拥有第一个画板」的激活时刻。
-  const tryCloneSharedBoard = async () => {
-    const intent = takeCloneIntent(); // 读后即焚，天然幂等（StrictMode/重复登录不重放）
+  //
+  // 意图生命周期（K6 修复）：peek 不焚毁——配额预检失败/网络失败保留意图，
+  // 充值成功/删板腾位（boards.length/isVip 变化触发重试）后自动克隆；
+  // 仅克隆成功 markShareCloned 后或分享确认失效时才焚毁。
+  const tryCloneSharedBoard = async (): Promise<void> => {
+    const intent = peekCloneIntent(); // 只读不焚毁
     if (!intent) return;
-    if (isShareCloned(intent.code)) return; // 同一分享本机只克隆一次
+    if (isShareCloned(intent.code)) {
+      takeCloneIntent(); // 已克隆过：清理残留意图
+      return;
+    }
 
     let body: any;
     try {
-      const res = await fetch(`/api/shares/${encodeURIComponent(intent.code)}`);
+      // countViews=0：克隆是转化动作而非浏览，不递增浏览计数
+      const res = await fetch(
+        `/api/shares/${encodeURIComponent(intent.code)}?countViews=0`
+      );
       if (!res.ok) {
         showToast('分享内容已失效，未能克隆画板');
+        takeCloneIntent(); // 分享已失效：意图作废
         return;
       }
       body = await res.json();
     } catch {
-      return; // 网络失败静默放弃（意图已消费，用户可手动重访分享页）
+      return; // 网络失败：意图保留，待下次就绪自动重试
     }
 
-    // 画板配额客户端预检（与 handleEnterCanvas 同口径；服务端 save 仍有硬拦截）
+    // 画板配额客户端预检（与 handleEnterCanvas 同口径；服务端 save 仍有硬拦截）。
+    // 预检失败意图保留：充值成功（isVip 变化）或删板腾位（boards.length 变化）后本钩子自动重试
     if (!isVip && loadBoardList().length >= 3) {
       openRechargeModal('免费版用户最多支持创建 3 个独立画板，升级 Pro 会员解锁无限画板后再来克隆吧！');
       return;
@@ -500,6 +582,7 @@ function MainApp() {
     const boardName = String(body.title || '克隆的分享画板').slice(0, 60);
     saveBoard({ id: boardId, name: boardName, updatedAt: Date.now(), nodes, edges });
     markShareCloned(intent.code);
+    takeCloneIntent(); // 克隆成功：焚毁意图
 
     const updatedList = loadBoardList();
     setBoards(updatedList);
@@ -511,20 +594,25 @@ function MainApp() {
     currentEdgesRef.current = edges;
     setNodeCount(nodes.length); // 同步 Topbar 计数，否则沿用旧画板的值直到首次编辑
 
-    try {
-      sessionStorage.setItem('deepdive_active_view', 'canvas');
-    } catch (e) {}
-    setViewMode('canvas');
+    // 仅「本次会话刚点过 CTA」才切入画布视图（激活时刻）；
+    // 陈旧意图（7 天内登录的其他场景）不打断用户当前浏览，画板已在列表中
+    if (takeCloneFreshFlag()) {
+      try {
+        sessionStorage.setItem('deepdive_active_view', 'canvas');
+      } catch (e) {}
+      setViewMode('canvas');
+    }
     trackEvent('share_clone'); // K4 扩展事件：克隆转化（无 PII，不含画板名）
     showToast(`已将分享画板《${boardName}》克隆到我的画板`);
   };
 
-  // 克隆钩子：用户就绪（登录/注册完成）且本地画板数据就绪后执行一次
+  // 克隆钩子：用户就绪（登录/注册完成）且本地画板数据就绪后执行；
+  // boards.length/isVip 变化（充值成功/删板腾位）时重试被配额拦下的克隆意图
   useEffect(() => {
     if (!boardReady || !user) return;
     void tryCloneSharedBoard();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [boardReady, user]);
+  }, [boardReady, user, boards.length, isVip]);
 
   const handleExportJson = () => {
     trackEvent('export', { format: 'json' }); // K4 事件 8：导出点击
@@ -554,11 +642,14 @@ function MainApp() {
     showToast('已导出 Markdown 研报大纲');
   };
 
-  // Spec K1（B2）：PNG 图片导出——html-to-image 捕获画布 + 品牌水印；失败时 toast 中文原因
+  // Spec K1（B2）：PNG 图片导出——html-to-image 捕获画布 + 品牌水印；失败时 toast 中文原因。
+  // 经 DeepDiveCanvas 的 trigger ref 走「临时关闭虚拟化全量渲染」路径，修复导出图丢连线
   const handleExportPng = async () => {
     trackEvent('export', { format: 'png' }); // K4 事件 8：导出点击
     markChecklistStep('export'); // K5/D1：checklist 第 4 步
-    const result = await exportCanvasAsPng(currentNodesRef.current, boardName);
+    const result = triggerExportPngRef.current
+      ? await triggerExportPngRef.current(boardName)
+      : await exportCanvasAsPng(currentNodesRef.current, boardName); // 兜底：ref 未接线时旧路径
     if (result.ok) {
       showToast('已导出 PNG 画板图片，可直接分享');
     } else {
@@ -711,6 +802,7 @@ function MainApp() {
         onExportJson={handleExportJson}
         onExportMarkdown={handleExportMarkdown}
         onExportPng={handleExportPng}
+        onShareLink={() => void handleShareLink()}
         onResetBoard={handleResetBoard}
         onGoToLanding={handleGoToLanding}
         onOpenSamples={() => setSampleViewerOpen(true)}
@@ -735,6 +827,7 @@ function MainApp() {
             theme={theme}
             canvasId={currentBoardId}
             boardNeedsAutoName={isDefaultBoardName(boardName)}
+            triggerExportPngRef={triggerExportPngRef}
           />
         </ReactFlowProvider>
         {/* Spec K5（D1）：空态新手 4 步 checklist（全完成/手动关闭后不再显示） */}
@@ -744,6 +837,16 @@ function MainApp() {
       {/* Spec K5（D1）：示例画布只读查看器（纯前端静态内容，不占用户配额） */}
       {sampleViewerOpen && (
         <SampleBoardViewer onClose={() => setSampleViewerOpen(false)} />
+      )}
+
+      {/* Spec K2：分享链接弹窗（创建/重建提示/撤销） */}
+      {shareDialog && (
+        <ShareLinkModal
+          url={shareDialog.url}
+          recreated={shareDialog.recreated}
+          onRevoke={() => void handleRevokeShare()}
+          onClose={() => setShareDialog(null)}
+        />
       )}
 
       {/* Floating Status Toast */}
