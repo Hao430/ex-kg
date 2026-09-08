@@ -127,12 +127,12 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
   nodesRef.current = nodes;
   edgesRef.current = edges;
 
-  // Spec J2：服务端余量单一事实源（GET /api/quota，口径含 suggested 与后端拦截完全一致）。
+  // Spec J2：服务端配额单一事实源（GET /api/quota，口径含 suggested 与后端拦截完全一致）。
   // null = 余量未知（VIP/Admin 不受限、查询失败或未同步）——此时前端不做本地拦截，由服务端 chat 403 兜底。
-  const [serverNodeRemaining, setServerNodeRemaining] = useState<number | null>(null);
+  const [serverNodeQuota, setServerNodeQuota] = useState<{ limit: number; remaining: number } | null>(null);
   const refreshServerQuota = useCallback(async () => {
     if (!canvasId || isVip) {
-      setServerNodeRemaining(null);
+      setServerNodeQuota(null);
       return;
     }
     try {
@@ -140,13 +140,18 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
         credentials: 'include',
       });
       if (!res.ok) {
-        setServerNodeRemaining(null);
+        setServerNodeQuota(null);
         return;
       }
       const body = await res.json();
-      setServerNodeRemaining(body?.node ? body.node.remaining : null);
+      const node = body?.node;
+      setServerNodeQuota(
+        node && typeof node.limit === 'number' && typeof node.remaining === 'number'
+          ? { limit: node.limit, remaining: node.remaining }
+          : null
+      );
     } catch {
-      setServerNodeRemaining(null);
+      setServerNodeQuota(null);
     }
   }, [canvasId, isVip]);
 
@@ -162,10 +167,14 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
   // Free Tier AI Node Limit Check（余量来源：服务端 /api/quota，J2 起不再本地计数）
   const checkAiQuota = useCallback((): boolean => {
     if (isVip) return true;
-    if (serverNodeRemaining !== null) {
-      if (serverNodeRemaining <= 0) {
+    if (serverNodeQuota !== null) {
+      // 乐观余量：用本地实时 chat 节点数（含 suggested，与后端同口径）对齐 limit，
+      // 消除「编辑后到防抖保存完成前」的滞后窗口——删除节点余量立即可见，新增也即时计入
+      const localUsed = nodesRef.current.filter((n) => (n.type || 'chat') === 'chat').length;
+      const effectiveRemaining = Math.max(0, serverNodeQuota.limit - localUsed);
+      if (effectiveRemaining <= 0) {
         // K4 事件 10：配额墙触达（免费版转化漏斗核心指标；remaining 为计数非 PII）
-        trackEvent('quota_wall', { remaining: serverNodeRemaining });
+        trackEvent('quota_wall', { remaining: effectiveRemaining });
         // Spec K7：传入画板上下文，升级弹窗可展示当前画板真实节点余量
         openRechargeModal('当前画板的 AI 推理节点额度已用完。升级 Pro 畅享无限节点深度探索与推演！', canvasId ?? undefined);
         return false;
@@ -173,7 +182,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       return true;
     }
     return true;
-  }, [isVip, openRechargeModal, serverNodeRemaining]);
+  }, [isVip, openRechargeModal, serverNodeQuota, canvasId]);
 
   // Auto-save sync back to parent（拖动期间跳过逐帧上报，dragstop 一次性上报终态，避免每帧重排防抖定时器）
   const isDraggingRef = useRef(false);

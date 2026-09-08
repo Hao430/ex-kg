@@ -113,7 +113,7 @@ export async function getAdminOverview(): Promise<{
         `SELECT COUNT(DISTINCT user_id) as count FROM sessions WHERE created_at >= NOW() - INTERVAL '7 days'`
       );
       const vipRes = await p.query(`SELECT COUNT(*) as count FROM users WHERE role = 'vip'`);
-      const cRes = await p.query('SELECT COUNT(*) as count FROM canvases');
+      const cRes = await p.query('SELECT COUNT(*) as count FROM canvases WHERE deleted_at IS NULL');
       const todayTokensRes = await p.query(
         `SELECT COALESCE(SUM(total_tokens), 0) as total FROM ai_request_logs WHERE created_at >= CURRENT_DATE AND status = 'success'`
       );
@@ -148,7 +148,8 @@ export async function getAdminOverview(): Promise<{
   // TODO(A3): 内存模式 overview 的 modelDistribution/activeUsers7d 为演示伪造数据，二期接入真实统计
   const totalUsers = inMemoryStore.users.size;
   const vipUsers = Array.from(inMemoryStore.users.values()).filter((u) => u.role === 'vip').length;
-  const totalCanvases = inMemoryStore.canvases.size;
+  // 与 listCanvases 同口径：排除软删画布（含软删会让管理端数字只增不减）
+  const totalCanvases = Array.from(inMemoryStore.canvases.values()).filter((c) => !c.deleted_at).length;
   const successLogs = inMemoryStore.aiRequestLogs.filter((l) => l.status === 'success');
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);

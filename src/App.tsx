@@ -509,6 +509,7 @@ function MainApp() {
     setInitialEdges(edges);
     currentNodesRef.current = nodes;
     currentEdgesRef.current = edges;
+    setNodeCount(nodes.length); // 同步 Topbar 计数，否则沿用旧画板的值直到首次编辑
 
     try {
       sessionStorage.setItem('deepdive_active_view', 'canvas');
