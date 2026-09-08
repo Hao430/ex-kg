@@ -72,6 +72,21 @@ export const adminLogReadRateLimiter = rateLimit({
 });
 
 /**
+ * Rate limiter for auto-title generation: 20 req/min per user（自动命名非关键路径，防滥用刷 LLM）
+ */
+export const autoTitleRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => (req.user ? `user_${req.user.id}` : ipKeyGenerator(req.ip || 'anonymous')),
+  message: {
+    error: '命名请求过于频繁，请稍后再试',
+    code: 'RATE_LIMIT_EXCEEDED',
+  },
+});
+
+/**
  * Rate limiter for public share read: 60 req/min per IP（公开端点，防枚举扫描，Spec K1）
  */
 export const publicShareReadLimiter = rateLimit({

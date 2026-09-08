@@ -8,9 +8,11 @@ import {
   searchUserNodes,
 } from '../services/canvas.service.js';
 import { asyncHandler } from '../lib/async-handler.js';
-import { authMiddleware, shareActionRateLimiter } from '../middleware/auth.js';
+import { authMiddleware, shareActionRateLimiter, autoTitleRateLimiter } from '../middleware/auth.js';
 import { validate } from '../lib/validate.js';
 import { createShareForCanvas, revokeShareForCanvas } from '../services/share.service.js';
+import { generateAutoTitles } from '../services/title.service.js';
+import { recordAiRequestLog } from '../services/ai.service.js';
 
 export const canvasesRouter = Router();
 
@@ -90,6 +92,50 @@ canvasesRouter.post('/:id/save', asyncHandler(async (req: Request, res: Response
   res.json({
     success: true,
     canvas: { ...canvasMeta, nodeCount: nodes?.length ?? 0, edgeCount: edges?.length ?? 0 },
+  });
+}));
+
+/**
+ * POST /api/canvases/:id/auto-title（自动命名）
+ * 根据「用户提问 + 回答摘录」生成节点标题与画板名（一次 LLM 调用产出两者）。
+ * 非关键路径：LLM 失败静默返回 null，前端保留现有截断标题；调用落 ai_request_logs 归因。
+ * 画布可能尚未同步（首节点完成先于首次自动保存），故不做画布存在性/属主校验，仅要求登录。
+ */
+const AutoTitleSchema = z.object({
+  nodeId: z.string().max(64).optional(),
+  question: z.string().min(1, '提问内容不能为空').max(2000),
+  answer: z.string().max(4000).optional().default(''),
+  includeBoard: z.boolean().optional().default(false),
+});
+
+canvasesRouter.post('/:id/auto-title', autoTitleRateLimiter, asyncHandler(async (req: Request, res: Response) => {
+  const user = req.user!;
+  const body = validate(AutoTitleSchema, req.body);
+  const startTime = Date.now();
+
+  const { result, meta } = await generateAutoTitles({
+    question: body.question,
+    answer: body.answer,
+    includeBoard: body.includeBoard,
+  });
+
+  await recordAiRequestLog({
+    userId: user.id,
+    canvasId: req.params.id,
+    nodeId: body.nodeId || null,
+    modelName: meta.modelName,
+    totalTokens: meta.totalTokens,
+    latencyMs: Date.now() - startTime,
+    status: meta.ok ? 'success' : 'error',
+    errorMessage: meta.error || null,
+    groundingChunksCount: 0,
+    provider: `${meta.provider}-title`,
+  });
+
+  res.json({
+    success: true,
+    nodeTitle: result.nodeTitle,
+    boardTitle: body.includeBoard ? result.boardTitle : null,
   });
 }));
 

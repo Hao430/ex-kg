@@ -59,6 +59,11 @@ function createStarterRootNode(): Node[] {
   ];
 }
 
+/** 自动命名：视为「默认名」的画板名（命中才允许 LLM 自动命名，之后永不覆盖） */
+const DEFAULT_BOARD_NAMES = ['未命名思维画布', '未命名思维探索', '新建思维画布'];
+const isDefaultBoardName = (name: string): boolean =>
+  DEFAULT_BOARD_NAMES.includes(name) || /^探索课题 #\d+$/.test(name);
+
 function MainApp() {
   const [viewMode, setViewMode] = useState<'landing' | 'canvas'>(() => {
     try {
@@ -319,6 +324,29 @@ function MainApp() {
     setBoards(loadBoardList());
     showToast(`画板已重命名为「${newName}」`);
   };
+
+  // 自动命名：画布首节点完成后，DeepDiveCanvas 经事件回传 LLM 生成的画板名。
+  // 双重「只命名一次」保险：画板名已非默认名（含用户手动改过）则直接忽略
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ boardId?: string; title?: string }>).detail || {};
+      if (!detail.title || detail.boardId !== currentBoardId) return;
+      if (!isDefaultBoardName(boardName)) return;
+      const safe = detail.title.slice(0, 15);
+      setBoardName(safe);
+      saveBoard({
+        id: currentBoardId,
+        name: safe,
+        updatedAt: Date.now(),
+        nodes: currentNodesRef.current,
+        edges: currentEdgesRef.current,
+      });
+      setBoards(loadBoardList());
+      showToast(`画板已自动命名为「${safe}」`);
+    };
+    window.addEventListener('deepdive:board-autotitle', handler);
+    return () => window.removeEventListener('deepdive:board-autotitle', handler);
+  }, [currentBoardId, boardName]);
 
   const handleSwitchBoard = async (targetId: string) => {
     if (targetId === currentBoardId) return;
@@ -705,6 +733,7 @@ function MainApp() {
             triggerAddNoteRef={triggerAddNoteRef}
             theme={theme}
             canvasId={currentBoardId}
+            boardNeedsAutoName={isDefaultBoardName(boardName)}
           />
         </ReactFlowProvider>
         {/* Spec K5（D1）：空态新手 4 步 checklist（全完成/手动关闭后不再显示） */}

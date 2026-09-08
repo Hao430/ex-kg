@@ -85,6 +85,8 @@ interface DeepDiveCanvasProps {
   defaultEnableWebSearch?: boolean;
   /** 当前画板 id：随 /api/chat 请求体上报，供审计归因与画布级节点配额校验 */
   canvasId?: string;
+  /** 自动命名：画板名仍为默认名（未命名/探索课题 #N）时为 true，首节点完成后附带生成画板名 */
+  boardNeedsAutoName?: boolean;
 }
 
 export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
@@ -99,6 +101,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
   defaultModel = '',
   defaultEnableWebSearch = true,
   canvasId,
+  boardNeedsAutoName = false,
 }) => {
   const [nodes, setNodes, onNodesChange] = useNodesState(
     initialNodes || []
@@ -307,6 +310,57 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       setEdges(edgesRef.current);
     },
     [defaultModel, defaultEnableWebSearch, setNodes, setEdges]
+  );
+
+  // 自动命名（只命名一次）：节点生成成功后独立调用 LLM 命名端点。
+  // 手动改过标题（titleManual）或已消耗命名机会（autoTitled）的节点跳过；
+  // 画板名仅在 App 侧仍为默认名时由 boardNeedsAutoName 触发附带生成，经事件回传 App 采纳。
+  const autoTitleNode = useCallback(
+    async (nodeId: string, question: string, answer: string) => {
+      const target = nodesRef.current.find((n) => n.id === nodeId);
+      const d = target?.data as unknown as ChatNodeData | undefined;
+      if (!d || d.titleManual || d.autoTitled) return;
+      try {
+        const res = await fetch(
+          `/api/canvases/${encodeURIComponent(canvasId || 'local')}/auto-title`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({
+              nodeId,
+              question: question.slice(0, 2000),
+              answer: answer.slice(0, 3000),
+              includeBoard: Boolean(canvasId && boardNeedsAutoName),
+            }),
+          }
+        );
+        if (!res.ok) return; // 失败不置标志：下次生成可重试命名
+        const body = await res.json();
+        const nodeTitle = typeof body?.nodeTitle === 'string' ? body.nodeTitle.trim() : '';
+        setNodes((nds) =>
+          nds.map((n) => {
+            if (n.id !== nodeId) return n;
+            const nd = n.data as unknown as ChatNodeData;
+            return {
+              ...n,
+              data: { ...nd, autoTitled: true, ...(nodeTitle ? { title: nodeTitle } : {}) },
+            };
+          })
+        );
+        const boardTitle = typeof body?.boardTitle === 'string' ? body.boardTitle.trim() : '';
+        if (boardTitle && canvasId && boardNeedsAutoName) {
+          window.dispatchEvent(
+            new CustomEvent('deepdive:board-autotitle', {
+              detail: { boardId: canvasId, title: boardTitle },
+            })
+          );
+        }
+      } catch {
+        // 网络失败：保留截断标题，标志不置位，下次生成可重试
+      }
+    },
+    [canvasId, boardNeedsAutoName, setNodes]
   );
 
   // Core generator for answering a question in a single node
@@ -548,6 +602,9 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
 
         // Auto-spawn suggested question nodes using the fresh finalizedNodes
         spawnSuggestedNodes(nodeId, parsedSuggestions, currentDepth, finalizedNodes);
+
+        // 自动命名（fire-and-forget，不阻塞卡片就绪；只命名一次）
+        void autoTitleNode(nodeId, questionText, finalAnswer);
       } catch (err: any) {
         console.error('Error generating AI response:', err);
         const friendlyMessage = sanitizeErrorMessage(err);
@@ -569,7 +626,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
         });
       }
     },
-    [defaultModel, defaultEnableWebSearch, setNodes, spawnSuggestedNodes]
+    [defaultModel, defaultEnableWebSearch, setNodes, spawnSuggestedNodes, autoTitleNode]
   );
 
   // Shared helper: create a child chat node + edge under a source node, auto-layout, pan camera to the new node, start generation
@@ -809,7 +866,8 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
           if (n.id !== nodeId) return n;
           return {
             ...n,
-            data: { ...n.data, title },
+            // 手动改名置 titleManual：自动命名永不覆盖用户手起的标题
+            data: { ...n.data, title, titleManual: true },
           };
         })
       );

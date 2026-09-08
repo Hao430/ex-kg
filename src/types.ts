@@ -41,6 +41,9 @@ export interface ChatNodeData {
   suggestionsSpawned?: boolean;
   enableWebSearch?: boolean;
   grounding?: GroundingMetadata;
+  /** 自动命名：手动改过标题后永不被 LLM 命名覆盖；autoTitled = 已消耗唯一一次自动命名机会 */
+  titleManual?: boolean;
+  autoTitled?: boolean;
 }
 
 export interface NoteNodeData {
