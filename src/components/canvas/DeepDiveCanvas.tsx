@@ -26,6 +26,7 @@ import { NoteCardNode } from '../nodes/NoteCardNode';
 import { SelectionPopup } from './SelectionPopup';
 import { ChatNodeData, TextSelectionPayload, GroundingMetadata } from '../../types';
 import { getLayoutedElements } from '../../lib/layout';
+import { exportCanvasAsPng } from '../../lib/canvas-image-export';
 import { buildAncestorContext } from '../../lib/context';
 import { onSyncState } from '../../lib/sync-queue';
 import { saveBoard, loadBoardList, StoredBoard, deduplicateNodes, deduplicateEdges } from '../../lib/storage';
@@ -87,6 +88,10 @@ interface DeepDiveCanvasProps {
   canvasId?: string;
   /** 自动命名：画板名仍为默认名（未命名/探索课题 #N）时为 true，首节点完成后附带生成画板名 */
   boardNeedsAutoName?: boolean;
+  /** PNG 导出触发器：App 侧调用，画布内部先关虚拟化全量渲染再捕获（修复导出图丢连线） */
+  triggerExportPngRef?: React.MutableRefObject<
+    ((title: string) => Promise<{ ok: boolean; error?: string }>) | null
+  >;
 }
 
 export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
@@ -102,6 +107,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
   defaultEnableWebSearch = true,
   canvasId,
   boardNeedsAutoName = false,
+  triggerExportPngRef,
 }) => {
   const [nodes, setNodes, onNodesChange] = useNodesState(
     initialNodes || []
@@ -1158,6 +1164,9 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
   );
 
   // Expose trigger refs to parent
+  // Spec K1 修复：导出前临时关闭 onlyRenderVisibleElements 全量渲染（虚拟化会让
+  // 视口外的节点/边不在 DOM，捕获出的图片丢连线），捕获完成恢复
+  const [exportFullRender, setExportFullRender] = useState(false);
   useEffect(() => {
     if (triggerAutoLayoutRef) triggerAutoLayoutRef.current = () => applyLayout();
     if (triggerFitViewRef)
@@ -1165,6 +1174,21 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
         reactFlowInstance.fitView({ padding: 0.2, duration: 500 });
     if (triggerAddRootRef) triggerAddRootRef.current = handleAddRootNode;
     if (triggerAddNoteRef) triggerAddNoteRef.current = handleAddNoteNode;
+    if (triggerExportPngRef) {
+      triggerExportPngRef.current = async (title: string) => {
+        setExportFullRender(true);
+        try {
+          // 等两帧 + 余量，确保 React 完成全量 DOM 挂载后再捕获
+          await new Promise<void>((r) =>
+            requestAnimationFrame(() => requestAnimationFrame(() => r()))
+          );
+          await new Promise<void>((r) => setTimeout(r, 80));
+          return await exportCanvasAsPng(nodesRef.current, title);
+        } finally {
+          setExportFullRender(false);
+        }
+      };
+    }
   }, [
     applyLayout,
     reactFlowInstance,
@@ -1174,6 +1198,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
     triggerFitViewRef,
     triggerAddRootRef,
     triggerAddNoteRef,
+    triggerExportPngRef,
   ]);
 
   // Text selection handler: detect selection inside chat card to pop up "钻入兔子洞" capsule
@@ -1352,7 +1377,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
           onSelectionDragStart={handleSelectionDragStart}
           onSelectionDragStop={handleSelectionDragStop}
           nodeTypes={nodeTypes}
-          onlyRenderVisibleElements
+          onlyRenderVisibleElements={!exportFullRender}
           nodesDraggable={true}
           nodesConnectable={true}
           elementsSelectable={true}
