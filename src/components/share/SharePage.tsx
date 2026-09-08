@@ -15,7 +15,7 @@ import {
   type Edge,
 } from '@xyflow/react';
 import { motion } from 'framer-motion';
-import { Sparkles, ArrowRight } from 'lucide-react';
+import { Sparkles, ArrowRight, Sun, Moon } from 'lucide-react';
 import { trackEvent } from '../../lib/analytics';
 import { recordCloneIntent } from '../../lib/share-clone';
 import { shareNodeTypes } from './ShareReadOnlyNode';
@@ -24,19 +24,35 @@ import '@xyflow/react/dist/style.css';
 /** 只读卡片节点与 nodeTypes 已抽取为共享模块 ShareReadOnlyNode.tsx（K5 示例画布复用） */
 
 
-/** 主题跟随系统：给根元素挂 dark class，与主应用 Tailwind dark: 变体一致 */
-function useSystemTheme(): void {
+/**
+ * 主题状态：优先读 localStorage（与主应用共用 deepdive_theme 键，访客进入主应用后偏好延续），
+ * 无记录时跟随系统；切换即持久化并同步 html.dark class（与 App.tsx 同口径）。
+ */
+function useShareTheme(): { theme: 'light' | 'dark'; toggleTheme: () => void } {
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    try {
+      const saved = localStorage.getItem('deepdive_theme');
+      if (saved === 'light' || saved === 'dark') return saved;
+      if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        return 'dark';
+      }
+    } catch {}
+    return 'light';
+  });
+
   useEffect(() => {
-    const mq = window.matchMedia('(prefers-color-scheme: dark)');
-    const apply = () => document.documentElement.classList.toggle('dark', mq.matches);
-    apply();
-    mq.addEventListener('change', apply);
-    return () => mq.removeEventListener('change', apply);
-  }, []);
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    try {
+      localStorage.setItem('deepdive_theme', theme);
+    } catch {}
+  }, [theme]);
+
+  const toggleTheme = () => setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
+  return { theme, toggleTheme };
 }
 
 const SharePageInner: React.FC<{ shareCode: string }> = ({ shareCode }) => {
-  useSystemTheme();
+  const { theme, toggleTheme } = useShareTheme();
   const [state, setState] = useState<
     { status: 'loading' } | { status: 'error'; message: string } | { status: 'ready'; title: string; nodes: Node[]; edges: Edge[]; viewCount: number }
   >({ status: 'loading' });
@@ -102,12 +118,30 @@ const SharePageInner: React.FC<{ shareCode: string }> = ({ shareCode }) => {
           </div>
           <span className="font-bold text-slate-900 dark:text-white tracking-tight">枝想</span>
         </div>
-        <a
-          href="/"
-          className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline"
-        >
-          前往枝想探索 →
-        </a>
+        <div className="flex items-center gap-3">
+          <button
+            id="share-theme-toggle-btn"
+            onClick={toggleTheme}
+            aria-label={theme === 'dark' ? '切换浅色模式' : '切换深色模式'}
+            className={`p-2 rounded-xl border cursor-pointer transition-all ${
+              theme === 'dark'
+                ? 'bg-slate-800/90 hover:bg-slate-700 text-amber-300 border-slate-700/80 shadow-inner'
+                : 'bg-slate-100 hover:bg-slate-200/80 text-slate-700 border-slate-200/80'
+            }`}
+          >
+            {theme === 'dark' ? (
+              <Moon className="w-3.5 h-3.5 text-amber-300 fill-amber-300/20" />
+            ) : (
+              <Sun className="w-3.5 h-3.5 text-amber-500" />
+            )}
+          </button>
+          <a
+            href="/"
+            className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline"
+          >
+            前往枝想探索 →
+          </a>
+        </div>
       </header>
 
       {state.status === 'loading' && (
@@ -166,6 +200,18 @@ const SharePageInner: React.FC<{ shareCode: string }> = ({ shareCode }) => {
           </footer>
         </>
       )}
+
+      {/* ICP 备案链接（工信部要求：置于页面底部、可点击跳转查询系统） */}
+      <footer className="px-4 py-2 border-t border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/80 backdrop-blur text-center shrink-0">
+        <a
+          href="https://beian.miit.gov.cn/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-[11px] text-slate-400 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+        >
+          湘ICP备2025125191号-2
+        </a>
+      </footer>
     </div>
   );
 };

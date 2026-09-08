@@ -922,36 +922,49 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       </section>
 
       {/* Modern Footer */}
-      <footer className="relative z-10 border-t border-white/[0.08] py-12 px-6 max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-6 text-xs text-slate-400">
-        <div className="flex items-center gap-3">
-          <div className="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center text-white">
-            <Compass className="w-4 h-4" />
+      <footer className="relative z-10 border-t border-white/[0.08] px-6 max-w-7xl mx-auto">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-6 py-12 text-xs text-slate-400">
+          <div className="flex items-center gap-3">
+            <div className="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center text-white">
+              <Compass className="w-4 h-4" />
+            </div>
+            <span className="font-bold text-slate-200">Arborize Cognitive Canvas</span>
+            <span className="text-slate-600">|</span>
+            <span>无限画布式 AI 深度思维与分支探索认知平台</span>
           </div>
-          <span className="font-bold text-slate-200">Arborize Cognitive Canvas</span>
-          <span className="text-slate-600">|</span>
-          <span>无限画布式 AI 深度思维与分支探索认知平台</span>
+
+          <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2">
+            <button
+              onClick={() => onEnterCanvas()}
+              className="hover:text-white transition-colors"
+            >
+              直接进入画布
+            </button>
+            <a
+              href="#features"
+              className="hover:text-white transition-colors"
+            >
+              功能特性
+            </a>
+            <a
+              href="#scenarios"
+              className="hover:text-white transition-colors"
+            >
+              探索方案
+            </a>
+            <span className="text-slate-600">© 2026 枝想Arborize. All rights reserved.</span>
+          </div>
         </div>
 
-        <div className="flex items-center gap-6">
-          <button
-            onClick={() => onEnterCanvas()}
-            className="hover:text-white transition-colors"
-          >
-            直接进入画布
-          </button>
+        <div className="pb-8 text-center">
           <a
-            href="#features"
-            className="hover:text-white transition-colors"
+            href="https://beian.miit.gov.cn/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[11px] text-slate-500 hover:text-white transition-colors"
           >
-            功能特性
+            湘ICP备2025125191号-2
           </a>
-          <a
-            href="#scenarios"
-            className="hover:text-white transition-colors"
-          >
-            探索方案
-          </a>
-          <span className="text-slate-600">© 2026 枝想Arborize. All rights reserved.</span>
         </div>
       </footer>
 
