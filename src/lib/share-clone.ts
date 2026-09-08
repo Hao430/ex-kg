@@ -12,12 +12,15 @@
 const CLONE_KEY = 'deepdive_clone_code';
 const CLONED_CODES_KEY = 'deepdive_cloned_codes';
 const CLONE_INTENT_TTL_MS = 7 * 24 * 3600 * 1000;
+/** CTA 本次会话新鲜标记：克隆成功后仅在「刚点过 CTA」时才切入画布视图，不打断落地页浏览 */
+const CLONE_FRESH_KEY = 'deepdive_clone_fresh';
 
 /** CTA 点击时记录克隆意图（含时间戳，过期自动失效） */
 export function recordCloneIntent(shareCode: string): void {
   if (!shareCode) return;
   try {
     localStorage.setItem(CLONE_KEY, JSON.stringify({ code: shareCode, ts: Date.now() }));
+    sessionStorage.setItem(CLONE_FRESH_KEY, '1');
   } catch {}
 }
 
@@ -25,21 +28,50 @@ export interface CloneIntent {
   code: string;
 }
 
-/**
- * 取出克隆意图（读后即焚）。超过 7 天或数据损坏返回 null。
- * App 在「用户已登录且画板就绪」时调用一次。
- */
-export function takeCloneIntent(): CloneIntent | null {
+function readIntent(): CloneIntent | null {
   try {
     const raw = localStorage.getItem(CLONE_KEY);
     if (!raw) return null;
-    localStorage.removeItem(CLONE_KEY);
     const parsed = JSON.parse(raw) as { code?: string; ts?: number };
     if (!parsed?.code || typeof parsed.ts !== 'number') return null;
     if (Date.now() - parsed.ts > CLONE_INTENT_TTL_MS) return null;
     return { code: parsed.code };
   } catch {
     return null;
+  }
+}
+
+/**
+ * 读取但不焚毁克隆意图（Spec K6 修复）：配额预检失败/网络失败时意图保留，
+ * 充值成功、删板腾位或下次就绪后可自动重试；仅在克隆成功（markShareCloned 后）
+ * 或分享确认失效时才 takeCloneIntent() 焚毁。
+ */
+export function peekCloneIntent(): CloneIntent | null {
+  return readIntent();
+}
+
+/**
+ * 取出克隆意图（读后即焚）。超过 7 天或数据损坏返回 null。
+ * 仅在克隆成功后调用，作为清理。
+ */
+export function takeCloneIntent(): CloneIntent | null {
+  try {
+    localStorage.removeItem(CLONE_KEY);
+  } catch {}
+  return readIntent();
+}
+
+/**
+ * 是否「本次会话刚点过 CTA」（fresh 标记，读后即焚）。
+ * 克隆成功时仅 fresh 才切入画布视图，避免打断正在浏览落地页的已登录用户。
+ */
+export function takeCloneFreshFlag(): boolean {
+  try {
+    if (sessionStorage.getItem(CLONE_FRESH_KEY) !== '1') return false;
+    sessionStorage.removeItem(CLONE_FRESH_KEY);
+    return true;
+  } catch {
+    return false;
   }
 }
 

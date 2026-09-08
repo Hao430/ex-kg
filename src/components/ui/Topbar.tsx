@@ -35,6 +35,7 @@ import {
   MessageSquarePlus,
   Settings,
   Trash2,
+  Link2,
 } from 'lucide-react';
 import { DeepDiveBoardMeta } from '../../types';
 import { useAuth } from '../../context/AuthContext';
@@ -55,6 +56,8 @@ interface TopbarProps {
   onExportJson: () => void;
   onExportMarkdown: () => void;
   onExportPng: () => void;
+  /** 生成本画板的只读分享链接（Spec K2） */
+  onShareLink?: () => void;
   onResetBoard: () => void;
   onGoToLanding?: () => void;
   /** 打开示例画布查看器（Spec K5/D1 冷启动引导） */
@@ -81,6 +84,7 @@ export const Topbar: React.FC<TopbarProps> = ({
   onExportJson,
   onExportMarkdown,
   onExportPng,
+  onShareLink,
   onResetBoard,
   onGoToLanding,
   onOpenSamples,
@@ -408,6 +412,20 @@ export const Topbar: React.FC<TopbarProps> = ({
                   <span>居中视野</span>
                 </button>
               </div>
+
+              <button
+                onClick={() => {
+                  onShareLink?.();
+                  setShowCanvasMoreMenu(false);
+                }}
+                className="w-full text-left px-2.5 py-2 text-xs flex items-center gap-2.5 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl transition-colors"
+              >
+                <Link2 className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                <div>
+                  <div className="font-medium">分享链接</div>
+                  <div className="text-[10px] text-slate-400">生成只读分享页，访客可一键克隆</div>
+                </div>
+              </button>
 
               <button
                 onClick={() => {

@@ -45,7 +45,16 @@ const SharePageInner: React.FC<{ shareCode: string }> = ({ shareCode }) => {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`/api/shares/${encodeURIComponent(shareCode)}`);
+        // 浏览计数会话去重：同会话内刷新/回看不重复计数（K2 修复：views_count 虚高）
+        let countedThisSession = false;
+        try {
+          const key = `deepdive_share_viewed_${shareCode}`;
+          countedThisSession = sessionStorage.getItem(key) === '1';
+          if (!countedThisSession) sessionStorage.setItem(key, '1');
+        } catch {}
+        const res = await fetch(
+          `/api/shares/${encodeURIComponent(shareCode)}?countViews=${countedThisSession ? '0' : '1'}`
+        );
         if (!res.ok) {
           if (!cancelled) setState({ status: 'error', message: '分享不存在或已失效' });
           return;
@@ -59,12 +68,18 @@ const SharePageInner: React.FC<{ shareCode: string }> = ({ shareCode }) => {
           position: n.position || { x: 0, y: 0 },
           data: { ...n.data, isNote: (n.type || 'chat') === 'note' },
         }));
+        // 边样式直通快照（与属主编排一致），仅做形状兜底——不再硬编码覆盖
         const edges: Edge[] = (body.edges || []).map((e: any) => ({
           id: e.id || `${e.source}->${e.target}`,
           source: e.source,
           target: e.target,
-          type: 'smoothstep',
-          animated: false,
+          sourceHandle: e.sourceHandle || undefined,
+          targetHandle: e.targetHandle || undefined,
+          type: e.type || 'default',
+          animated: Boolean(e.animated),
+          style: e.style || undefined,
+          markerEnd: e.markerEnd || undefined,
+          label: e.label || undefined,
         }));
         setState({ status: 'ready', title: body.title || '枝想画板分享', nodes, edges, viewCount: body.viewCount || 0 });
         trackEvent('share_view'); // K4 事件 9：分享页浏览成功（传播链路）

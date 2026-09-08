@@ -20,12 +20,18 @@ const ShareCodeSchema = z.object({
     .regex(/^[A-Za-z0-9_-]+$/, '分享码格式错误'),
 });
 
+// countViews=0：克隆钩子等非浏览场景读取快照时不递增浏览计数（防统计虚高）
+const ShareQuerySchema = z.object({
+  countViews: z.string().optional(),
+});
+
 sharesRouter.get(
   '/:shareCode',
   publicShareReadLimiter,
   asyncHandler(async (req: Request, res: Response) => {
     const { shareCode } = validate(ShareCodeSchema, req.params);
-    const view = await getShareView(shareCode);
+    const { countViews } = validate(ShareQuerySchema, req.query);
+    const view = await getShareView(shareCode, countViews !== '0');
     res.json(view);
   })
 );

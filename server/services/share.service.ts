@@ -25,12 +25,12 @@ export interface ShareViewPayload {
   viewCount: number;
 }
 
-/** 创建（或幂等重建）画布分享，返回 shareCode 与公开访问 URL */
+/** 创建（或幂等重建）画布分享，返回 shareCode 与公开访问 URL；recreated=重建了已撤销分享（换新 code，旧链接失效） */
 export async function createShareForCanvas(
   user: UserRecord,
   canvasId: string,
   appUrl: string
-): Promise<{ shareCode: string; url: string }> {
+): Promise<{ shareCode: string; url: string; recreated: boolean }> {
   const info = await getCanvasOwnerInfo(canvasId);
   if (!info.exists) {
     throw new NotFoundError('画布不存在');
@@ -50,18 +50,22 @@ export async function createShareForCanvas(
     nodes: canvas.nodes || [],
     edges: canvas.edges || [],
   };
-  const { record } = await upsertShare(canvasId, snapshot);
+  const { record, recreatedRevoked } = await upsertShare(canvasId, snapshot);
 
   await recordAuditLog({
     userId: user.id,
     action: 'share_create',
     targetType: 'canvas',
     targetId: canvasId,
-    details: { shareCode: record.share_code },
+    details: { shareCode: record.share_code, recreatedRevoked },
   });
 
   const base = appUrl.replace(/\/+$/, '');
-  return { shareCode: record.share_code, url: `${base}/share/${record.share_code}` };
+  return {
+    shareCode: record.share_code,
+    url: `${base}/share/${record.share_code}`,
+    recreated: recreatedRevoked,
+  };
 }
 
 /** 撤销分享（软撤） */
@@ -88,9 +92,9 @@ export async function revokeShareForCanvas(user: UserRecord, canvasId: string): 
   });
 }
 
-/** 公开读取分享快照（无效统一 404，不泄露撤销/删除/不存在的原因差异） */
-export async function getShareView(code: string): Promise<ShareViewPayload> {
-  const record = await findActiveShareByCode(code);
+/** 公开读取分享快照（无效统一 404，不泄露撤销/删除/不存在的原因差异）；countViews 控制浏览计数 */
+export async function getShareView(code: string, countViews = true): Promise<ShareViewPayload> {
+  const record = await findActiveShareByCode(code, countViews);
   if (!record || !record.snapshot) {
     throw new NotFoundError('分享不存在或已失效');
   }
