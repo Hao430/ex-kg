@@ -83,6 +83,7 @@ export const AdminDashboardModal: React.FC = () => {
     temperature: 0.7,
     max_tokens: 4096,
     custom_system_prompt: '',
+    force_web_search: true,
   });
   const [rawApiKeyInput, setRawApiKeyInput] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
@@ -315,6 +316,7 @@ export const AdminDashboardModal: React.FC = () => {
           temperature: modelConfig.temperature,
           max_tokens: modelConfig.max_tokens,
           custom_system_prompt: modelConfig.custom_system_prompt,
+          force_web_search: modelConfig.force_web_search !== false,
         }),
       });
       const d = await res.json();
@@ -896,6 +898,37 @@ export const AdminDashboardModal: React.FC = () => {
                         className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
                       />
                     </div>
+                  </div>
+
+                  {/* Spec I：强制联网开关（默认开，来源索引 100% 存在） */}
+                  <div className="flex items-center justify-between gap-4 pt-2 border-t border-slate-100 dark:border-slate-800">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+                        强制实时联网检索 (Force Web Search)
+                      </label>
+                      <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">
+                        开启后每次回答都会先联网检索并附来源索引（推荐，保障「溯源有据」）；关闭则由模型自主决定是否检索
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={modelConfig.force_web_search !== false}
+                      onClick={() =>
+                        setModelConfig((prev) => ({ ...prev, force_web_search: !(prev.force_web_search !== false) }))
+                      }
+                      className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${
+                        modelConfig.force_web_search !== false
+                          ? 'bg-indigo-600'
+                          : 'bg-slate-300 dark:bg-slate-700'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                          modelConfig.force_web_search !== false ? 'translate-x-6' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
                   </div>
 
                   {/* System Prompt */}

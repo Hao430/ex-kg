@@ -134,6 +134,8 @@ export interface AiModelConfig {
   temperature: number;
   max_tokens: number;
   custom_system_prompt?: string;
+  /** Spec I：强制联网（tool_choice:'required'），默认 true；关闭回落模型自主决策 */
+  force_web_search?: boolean;
   updated_at?: string;
   updated_by?: string;
 }

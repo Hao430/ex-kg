@@ -24,6 +24,8 @@ let adminCookie = '';
 const origFetch = globalThis.fetch;
 /** stub 场景：1=正常（2 源 1 搜索） 2=截断（35 源） 3=挂起流（供客户端中断） */
 let stubScenario: 1 | 2 | 3 = 1;
+/** 最近一次 /responses 请求体（断言 tool_choice 联网策略用） */
+let lastResponsesBody: any = null;
 
 function sse(events: unknown[]): Response {
   const body = events.map((e) => `data: ${JSON.stringify(e)}`).join('\n\n') + '\n\n';
@@ -125,6 +127,7 @@ describe('I2 AI 推理日志可观测扩列', () => {
     (globalThis as any).fetch = async (input: any, init?: any) => {
       const url = typeof input === 'string' ? input : input?.url || String(input);
       if (url.includes('/responses')) {
+        try { lastResponsesBody = JSON.parse(init?.body || '{}'); } catch { lastResponsesBody = null; }
         if (stubScenario === 2) return scenario2Response();
         if (stubScenario === 3) return hangingResponse();
         return scenario1Response();
@@ -167,6 +170,9 @@ describe('I2 AI 推理日志可观测扩列', () => {
     assert.equal(log.raw_sources_count, 2);
     assert.equal(log.sources_truncated, false);
     assert.ok(typeof log.ttft_ms === 'number' && log.ttft_ms >= 0);
+    // force_web_search 默认开（存量配置无该字段由 DEFAULT 合并补全）→ 单工具场景 tool_choice:'required'
+    assert.equal(lastResponsesBody?.tool_choice, 'required');
+    assert.deepEqual(lastResponsesBody?.tools, [{ type: 'web_search' }]);
   });
 
   test('35 源截断 → raw_sources_count=35 / sources_truncated=true / 落库 30', async () => {
@@ -211,5 +217,50 @@ describe('I2 AI 推理日志可观测扩列', () => {
     assert.ok(ev, '应记录 chat_client_abort 事件');
     assert.equal(ev.category, 'chat');
     assert.equal(ev.entity_id, 'i2-board');
+  });
+
+  test('force_web_search:false → 不携带 tool_choice（回落模型自主决策）', async () => {
+    const cfg = await fetch(`${base}/api/admin/model-config`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', cookie: adminCookie },
+      body: JSON.stringify({
+        provider: 'openai',
+        openai_base_url: 'http://127.0.0.1:9/v1',
+        openai_api_key: 'sk-test-i2-key-0001',
+        openai_model: 'qwen-i2-test',
+        force_web_search: false,
+      }),
+    });
+    assert.equal(cfg.status, 200);
+
+    stubScenario = 1;
+    const res = await chat({ messages: [{ role: 'user', content: '自主决策测试' }], canvasId: 'i2-board' });
+    assert.equal(res.status, 200);
+    await res.text();
+
+    assert.equal(lastResponsesBody?.tool_choice, undefined, '关闭强制联网后不应携带 tool_choice');
+    assert.deepEqual(lastResponsesBody?.tools, [{ type: 'web_search' }]);
+  });
+
+  test('force_web_search:true → 恢复 tool_choice:required', async () => {
+    const cfg = await fetch(`${base}/api/admin/model-config`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', cookie: adminCookie },
+      body: JSON.stringify({
+        provider: 'openai',
+        openai_base_url: 'http://127.0.0.1:9/v1',
+        openai_api_key: 'sk-test-i2-key-0001',
+        openai_model: 'qwen-i2-test',
+        force_web_search: true,
+      }),
+    });
+    assert.equal(cfg.status, 200);
+
+    stubScenario = 1;
+    const res = await chat({ messages: [{ role: 'user', content: '强制联网恢复' }], canvasId: 'i2-board' });
+    assert.equal(res.status, 200);
+    await res.text();
+
+    assert.equal(lastResponsesBody?.tool_choice, 'required');
   });
 });

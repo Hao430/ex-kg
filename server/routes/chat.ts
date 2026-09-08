@@ -266,6 +266,9 @@ chatRouter.post(
             instructions: effectiveSystemInstruction,
             input: responsesInput,
             tools: [{ type: 'web_search' }],
+            // Spec I：force_web_search（默认开）→ 单工具场景 tool_choice:'required' 强制联网，
+            // 修复「模型对知识型问题自主跳过搜索导致来源索引永远为空」；关闭回落 auto
+            ...(systemModelConfig.force_web_search !== false ? { tool_choice: 'required' } : {}),
             stream: true,
             enable_thinking: false, // 关闭思维链：画布卡片只需最终回答，且首字更快
             temperature: systemModelConfig.temperature ?? 0.7,

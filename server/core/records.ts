@@ -177,6 +177,8 @@ export interface AiModelConfig {
   temperature: number;
   max_tokens: number;
   custom_system_prompt?: string;
+  /** Spec I：强制联网（tool_choice:'required'）。默认 true（溯源有据是产品定位）；关闭回落模型自主决策 */
+  force_web_search?: boolean;
   /** Spec E4：仅 VIP/Admin 可调用的模型白名单（体验版/过期 VIP 请求命中 → 403 MODEL_VIP_ONLY） */
   vip_only_models?: string[];
   updated_at?: string;
@@ -192,4 +194,5 @@ export const DEFAULT_AI_MODEL_CONFIG: AiModelConfig = {
   temperature: 0.7,
   max_tokens: 4096,
   custom_system_prompt: '',
+  force_web_search: true,
 };
