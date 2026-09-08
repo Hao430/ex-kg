@@ -13,12 +13,14 @@ import {
   saveModelConfigWithAudit,
   listAllOrders,
   listAuditLogs,
+  listAiRequestLogs,
+  listEventLogs,
 } from '../services/admin.service.js';
 import { getAiModelConfig, isModelConfigured } from '../services/ai.service.js';
 import { asyncHandler } from '../lib/async-handler.js';
 import { checkDbStatus } from '../core/db-status.js';
 import { validate } from '../lib/validate.js';
-import { authMiddleware, requireAdmin } from '../middleware/auth.js';
+import { authMiddleware, requireAdmin, adminLogReadRateLimiter } from '../middleware/auth.js';
 import { GoogleGenAI } from '@google/genai';
 
 export const adminRouter = Router();
@@ -72,6 +74,45 @@ adminRouter.get('/audit-logs', asyncHandler(async (req: Request, res: Response) 
   const userId = typeof req.query.userId === 'string' ? req.query.userId : undefined;
 
   const result = await listAuditLogs({ page, limit, action, userId });
+  res.json({
+    success: true,
+    ...result,
+    page,
+    limit,
+  });
+}));
+
+/**
+ * GET /api/admin/ai-logs
+ * 分页查询 AI 推演调用日志（Spec I 可观测：含 provider/联网检索/首字延迟/容灾明细）
+ */
+adminRouter.get('/ai-logs', adminLogReadRateLimiter, asyncHandler(async (req: Request, res: Response) => {
+  const page = parseInt(req.query.page as string, 10) || 1;
+  const limit = parseInt(req.query.limit as string, 10) || 10;
+  const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+  const userId = typeof req.query.userId === 'string' ? req.query.userId : undefined;
+
+  const result = await listAiRequestLogs({ page, limit, status, userId });
+  res.json({
+    success: true,
+    ...result,
+    page,
+    limit,
+  });
+}));
+
+/**
+ * GET /api/admin/event-logs
+ * 分页查询业务事件日志（Spec I 可观测：画布冲突/配额拦截/推演容灾等）
+ */
+adminRouter.get('/event-logs', adminLogReadRateLimiter, asyncHandler(async (req: Request, res: Response) => {
+  const page = parseInt(req.query.page as string, 10) || 1;
+  const limit = parseInt(req.query.limit as string, 10) || 10;
+  const category = typeof req.query.category === 'string' ? req.query.category : undefined;
+  const event = typeof req.query.event === 'string' ? req.query.event : undefined;
+  const userId = typeof req.query.userId === 'string' ? req.query.userId : undefined;
+
+  const result = await listEventLogs({ page, limit, category, event, userId });
   res.json({
     success: true,
     ...result,

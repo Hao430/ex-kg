@@ -14,6 +14,8 @@ export const inMemoryStore = {
   systemSettings: new Map<string, any>(),
   feedbacks: [] as import('./records.js').FeedbackRecord[],
   auditLogs: [] as import('./records.js').AuditLogRecord[],
+  /** Spec I：业务事件埋点（最新在前） */
+  eventLogs: [] as import('./records.js').EventLogRecord[],
   /** 注册邮箱验证码（email 为 key，一邮箱一码） */
   emailVerificationCodes: new Map<string, import('./records.js').EmailCodeRecord>(),
   /** Spec K1：分享记录（canvas_id 为 key，一画板至多一个分享行，与 PG 唯一索引对齐） */
@@ -26,6 +28,15 @@ const AUDIT_LOGS_MAX = 1000;
 export function trimAuditLogs(): void {
   if (inMemoryStore.auditLogs.length > AUDIT_LOGS_MAX) {
     inMemoryStore.auditLogs.length = AUDIT_LOGS_MAX;
+  }
+}
+
+/** 业务事件日志内存上限：最新在前，超出裁剪最旧记录（Spec I） */
+const EVENT_LOGS_MAX = 1000;
+
+export function trimEventLogs(): void {
+  if (inMemoryStore.eventLogs.length > EVENT_LOGS_MAX) {
+    inMemoryStore.eventLogs.length = EVENT_LOGS_MAX;
   }
 }
 

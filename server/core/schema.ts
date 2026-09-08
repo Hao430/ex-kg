@@ -196,6 +196,16 @@ export async function initDbSchema(): Promise<boolean> {
         grounding_chunks_count INT DEFAULT 0 NOT NULL,
         created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
       );
+      -- 可观测埋点扩列（Spec I）：provider 与推演链路明细，存量库幂等补列
+      ALTER TABLE ai_request_logs ADD COLUMN IF NOT EXISTS provider VARCHAR(32) DEFAULT '' NOT NULL;
+      ALTER TABLE ai_request_logs ADD COLUMN IF NOT EXISTS web_search_calls INT DEFAULT 0 NOT NULL;
+      ALTER TABLE ai_request_logs ADD COLUMN IF NOT EXISTS raw_sources_count INT DEFAULT 0 NOT NULL;
+      ALTER TABLE ai_request_logs ADD COLUMN IF NOT EXISTS sources_truncated BOOLEAN DEFAULT FALSE NOT NULL;
+      ALTER TABLE ai_request_logs ADD COLUMN IF NOT EXISTS ttft_ms INT DEFAULT 0 NOT NULL;
+      ALTER TABLE ai_request_logs ADD COLUMN IF NOT EXISTS aborted BOOLEAN DEFAULT FALSE NOT NULL;
+      ALTER TABLE ai_request_logs ADD COLUMN IF NOT EXISTS fallback_used BOOLEAN DEFAULT FALSE NOT NULL;
+      ALTER TABLE ai_request_logs ADD COLUMN IF NOT EXISTS reset_count INT DEFAULT 0 NOT NULL;
+      ALTER TABLE ai_request_logs ADD COLUMN IF NOT EXISTS candidate_failures INT DEFAULT 0 NOT NULL;
     `);
 
     // 7. System Settings table
@@ -388,6 +398,22 @@ export async function initDbSchema(): Promise<boolean> {
       );
     `);
 
+    // 7.13 Event Logs (业务事件埋点：画布冲突/配额拦截/推演容灾等，Spec I 可观测)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS event_logs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        category VARCHAR(32) NOT NULL,
+        event VARCHAR(64) NOT NULL,
+        entity_type VARCHAR(32),
+        entity_id VARCHAR(64),
+        user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        num1 INT,
+        num2 INT,
+        details JSONB DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+    `);
+
     // 8. Indices
 
     // 新增 PM 视角优化索引
@@ -434,6 +460,10 @@ export async function initDbSchema(): Promise<boolean> {
     // BRIN 时间索引：日志表为追加型，供按 created_at 范围的清理任务使用，避免每 24h 全表扫描
     await client.query(`CREATE INDEX IF NOT EXISTS idx_ai_logs_created_brin ON ai_request_logs USING BRIN(created_at);`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_audit_created_brin ON user_audit_logs USING BRIN(created_at);`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_event_created_brin ON event_logs USING BRIN(created_at);`);
+    // 业务事件高频查询路径（event 过滤 + 用户维度 + 时间排序）
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_event_logs_event ON event_logs(event, created_at DESC);`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_event_logs_user ON event_logs(user_id, created_at DESC);`);
 
     // C 组清理迁移：点数体系已下线，删除历史遗留列与流水表
     await client.query(`ALTER TABLE users DROP COLUMN IF EXISTS credits_balance;`);

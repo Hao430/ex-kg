@@ -77,6 +77,30 @@ export interface AiRequestLogRecord {
   status: 'success' | 'error';
   error_message?: string | null;
   grounding_chunks_count: number;
+  /** Spec I 可观测扩列：provider 与推演链路明细（内存分支与 PG 同款默认值，双模对齐） */
+  provider: string;
+  web_search_calls: number;
+  raw_sources_count: number;
+  sources_truncated: boolean;
+  ttft_ms: number;
+  aborted: boolean;
+  fallback_used: boolean;
+  reset_count: number;
+  candidate_failures: number;
+  created_at: string;
+}
+
+/** Spec I：业务事件埋点（event_logs 双模映射） */
+export interface EventLogRecord {
+  id: string;
+  category: string;
+  event: string;
+  entity_type?: string | null;
+  entity_id?: string | null;
+  user_id?: string | null;
+  num1?: number | null;
+  num2?: number | null;
+  details?: any;
   created_at: string;
 }
 

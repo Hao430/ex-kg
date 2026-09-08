@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { GoogleGenAI } from '@google/genai';
 import { getAiModelConfig, isModelConfigured, recordAiRequestLog } from '../services/ai.service.js';
+import { recordEventLog } from '../repositories/event-log.repository.js';
 import { authMiddleware, validateInputLimits, roleBasedRateLimiter } from '../middleware/auth.js';
 import { chatQuotaMiddleware } from '../middleware/quota.js';
 import { validate } from '../lib/validate.js';
@@ -135,10 +136,66 @@ chatRouter.post(
     let canvasId: string | null | undefined;
     let nodeId: string | null | undefined;
 
+    // =====================================================================
+    // Spec I 可观测状态：贯穿两条模型分支，终局统一写入 ai_request_logs
+    // =====================================================================
+    let obsProvider = '';
+    let webSearchCalls = 0;
+    let rawSourcesCount = 0;
+    let sourcesTruncated = false;
+    let ttftMs = 0;
+    let aborted = false;
+    let fallbackUsed = false;
+    let resetCount = 0;
+    let candidateFailures = 0;
+    let actualModelName = (typeof model === 'string' && model.trim()) || '';
+    let aiLogWritten = false;
+    /** 单写者：abort/error/成功终局只落一条 ai log，避免双写 */
+    const writeAiLog = async (data: Parameters<typeof recordAiRequestLog>[0]) => {
+      if (aiLogWritten) return;
+      aiLogWritten = true;
+      try {
+        await recordAiRequestLog(data);
+      } catch { /* 埋点失败不阻塞 */ }
+    };
+
     // Set SSE headers
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
+    // 客户端断连时 res.write 会触发底层 error 事件，吞掉防止 uncaught
+    res.on('error', () => {
+      aborted = true;
+    });
+    // 客户端中断捕获：writableEnded=false 的 close 即为提前断连（正常 end 后的 close 是回收事件）
+    res.on('close', () => {
+      if (res.writableEnded) return;
+      aborted = true;
+      void writeAiLog({
+        userId: user.id,
+        canvasId: canvasId || null,
+        nodeId: nodeId || null,
+        modelName: actualModelName,
+        totalTokens: 0,
+        latencyMs: Date.now() - startTime,
+        status: 'error',
+        errorMessage: '客户端中断连接（SSE 未完成即断开）',
+        provider: obsProvider,
+        ttftMs,
+        aborted: true,
+        resetCount,
+        candidateFailures,
+        fallbackUsed,
+      });
+      void recordEventLog({
+        category: 'chat',
+        event: 'chat_client_abort',
+        entityType: 'canvas',
+        entityId: canvasId || null,
+        userId: user.id,
+        details: { nodeId: nodeId || null, ttftMs, resetCount, candidateFailures },
+      });
+    });
 
     try {
       // Spec F3：zod 全入参校验（保留 validateInputLimits 中间件负责长度规则）
@@ -185,8 +242,10 @@ chatRouter.post(
       // 搜索来源（web_search_call.action.sources）映射为前端 grounding 面板结构。
       // =========================================================================
       if (systemModelConfig.provider === 'openai' && systemModelConfig.openai_api_key) {
+        obsProvider = 'openai';
         const baseUrl = (systemModelConfig.openai_base_url || 'https://api.openai.com/v1').replace(/\/+$/, '');
         const actualModelUsed = systemModelConfig.openai_model || model;
+        actualModelName = actualModelUsed || actualModelName;
         const apiKey = systemModelConfig.openai_api_key;
         const endpoint = `${baseUrl}/responses`;
 
@@ -256,8 +315,13 @@ chatRouter.post(
               keys.map((k) => (s as any)?.[k]).find((v) => typeof v === 'string' && v.trim()) || '';
             const uri = pick('url', 'uri', 'link');
             if (uri && !seenUris.has(uri)) {
-              if (accumulatedSources.length >= MAX_GROUNDING_SOURCES) return;
+              // Spec I：截断前原始来源计数（先记 seen 再判上限，保证超限后其余来源仍被计数）
               seenUris.add(uri);
+              rawSourcesCount++;
+              if (accumulatedSources.length >= MAX_GROUNDING_SOURCES) {
+                sourcesTruncated = true;
+                continue;
+              }
               let domain = '';
               try {
                 domain = new URL(uri).hostname.replace(/^www\./, '');
@@ -306,6 +370,7 @@ chatRouter.post(
               case 'response.output_text.delta': {
                 const delta = chunk?.delta;
                 if (typeof delta === 'string' && delta) {
+                  if (!ttftMs) ttftMs = Date.now() - startTime; // Spec I：首字延迟
                   accumulatedResponseText += delta;
                   res.write(`data: ${JSON.stringify({ text: delta })}\n\n`);
                 }
@@ -314,6 +379,7 @@ chatRouter.post(
               case 'response.output_item.done': {
                 // web_search_call 完成事件：提取搜索查询与来源 URL
                 if (chunk?.item?.type === 'web_search_call') {
+                  webSearchCalls++; // Spec I：联网检索触发次数
                   collectQueries(chunk.item.action?.query);
                   collectQueries(chunk.item.action?.queries);
                   collectSources(chunk.item.action?.sources);
@@ -362,7 +428,7 @@ chatRouter.post(
         const totalTokensCount =
           usageTokens?.total ?? Math.max(100, (promptTokens as number) + (responseTokens as number));
 
-        await recordAiRequestLog({
+        await writeAiLog({
           userId: user.id,
           canvasId: canvasId || null,
           nodeId: nodeId || null,
@@ -373,6 +439,14 @@ chatRouter.post(
           latencyMs: Date.now() - startTime,
           status: 'success',
           groundingChunksCount: accumulatedSources.length,
+          provider: obsProvider,
+          webSearchCalls,
+          rawSourcesCount,
+          sourcesTruncated,
+          ttftMs,
+          resetCount,
+          candidateFailures,
+          fallbackUsed,
         });
 
         // Send final done event
@@ -394,6 +468,7 @@ chatRouter.post(
       // =========================================================================
       // PATH B: Google Gemini Native Provider
       // =========================================================================
+      obsProvider = 'gemini';
       const ai = getGenAI();
 
       // Map messages to Gemini format: role 'user' | 'model'
@@ -467,8 +542,13 @@ chatRouter.post(
                 for (const chunk of metadata.groundingChunks) {
                   const web = chunk?.web;
                   if (web?.uri && typeof web.uri === 'string' && !seenUris.has(web.uri)) {
-                    if (accumulatedSources.length >= MAX_GROUNDING_SOURCES) break;
+                    // Spec I：截断前原始来源计数（先记 seen 再判上限，保证超限后其余来源仍被计数）
                     seenUris.add(web.uri);
+                    rawSourcesCount++;
+                    if (accumulatedSources.length >= MAX_GROUNDING_SOURCES) {
+                      sourcesTruncated = true;
+                      continue;
+                    }
                     let domain = '';
                     try {
                       domain = new URL(web.uri).hostname.replace(/^www\./, '');
@@ -490,11 +570,22 @@ chatRouter.post(
             const firstResult = await iterator.next();
 
             if (streamStarted) {
+              resetCount++; // Spec I：容灾换流计数
               res.write(`data: ${JSON.stringify({ reset: true })}\n\n`);
+              void recordEventLog({
+                category: 'chat',
+                event: 'chat_stream_reset',
+                entityType: 'node',
+                entityId: nodeId || null,
+                userId: user.id,
+                num1: resetCount,
+                details: { canvasId: canvasId || null },
+              });
             }
 
             streamStarted = true;
             actualModelUsed = candidate;
+            actualModelName = actualModelUsed;
 
             if (!firstResult.done && firstResult.value) {
               const firstVal = firstResult.value;
@@ -504,6 +595,7 @@ chatRouter.post(
               extractGrounding((firstVal as any)?.candidates?.[0]?.groundingMetadata);
 
               if (firstVal.text) {
+                if (!ttftMs) ttftMs = Date.now() - startTime; // Spec I：首字延迟
                 accumulatedResponseText += firstVal.text;
                 res.write(`data: ${JSON.stringify({ text: firstVal.text })}\n\n`);
               }
@@ -528,6 +620,7 @@ chatRouter.post(
                 extractGrounding((val as any)?.candidates?.[0]?.groundingMetadata);
                 const text = val.text;
                 if (text) {
+                  if (!ttftMs) ttftMs = Date.now() - startTime; // Spec I：首字延迟
                   accumulatedResponseText += text;
                   res.write(`data: ${JSON.stringify({ text })}\n\n`);
                 }
@@ -549,7 +642,7 @@ chatRouter.post(
             }
 
             // Post-inference audit logging
-            await recordAiRequestLog({
+            await writeAiLog({
               userId: user.id,
               canvasId: canvasId || null,
               nodeId: nodeId || null,
@@ -560,6 +653,14 @@ chatRouter.post(
               latencyMs: Date.now() - startTime,
               status: 'success',
               groundingChunksCount: accumulatedSources.length,
+              provider: obsProvider,
+              webSearchCalls,
+              rawSourcesCount,
+              sourcesTruncated,
+              ttftMs,
+              resetCount,
+              candidateFailures,
+              fallbackUsed,
             });
 
             // Send final done event with full grounding and token consumption
@@ -578,8 +679,23 @@ chatRouter.post(
             return;
           } catch (candidateErr: any) {
             lastError = candidateErr;
+            candidateFailures++; // Spec I：候选降级计数
             const errMsg = candidateErr?.message || String(candidateErr);
             console.warn(`Model ${candidate} (tools=${!!tools}) issue:`, errMsg.slice(0, 200));
+            void recordEventLog({
+              category: 'chat',
+              event: 'chat_model_candidate_failed',
+              entityType: 'node',
+              entityId: nodeId || null,
+              userId: user.id,
+              num1: candidateFailures,
+              details: {
+                model: candidate,
+                tools: !!tools,
+                canvasId: canvasId || null,
+                error: errMsg.slice(0, 200),
+              },
+            });
 
             // If it failed with tools, retry immediately without tools
             if (tools) {
@@ -603,6 +719,7 @@ chatRouter.post(
 
         if (isQuotaOrRateLimit) {
           // Provide intelligent fallback response so user mindmap is never blocked
+          fallbackUsed = true; // Spec I：容灾假回复标记（此前该路径完全不落日志，用户拿到的是容灾文案但系统视为零调用）
           const userPrompt = messages[messages.length - 1]?.content || '深度思考探索';
           const fallbackText = generateFallbackResponse(userPrompt);
 
@@ -615,6 +732,36 @@ chatRouter.post(
           }
 
           const fallbackTokens = Math.max(100, Math.ceil(fallbackText.length / 2.5));
+
+          // Spec I：补写 ai log（status 仍为 success + fallback_used，避免 status 枚举扩散）
+          await writeAiLog({
+            userId: user.id,
+            canvasId: canvasId || null,
+            nodeId: nodeId || null,
+            modelName: 'arborize-knowledge-base',
+            promptTokens: 0,
+            completionTokens: fallbackTokens,
+            totalTokens: fallbackTokens,
+            latencyMs: Date.now() - startTime,
+            status: 'success',
+            groundingChunksCount: 0,
+            provider: 'gemini-fallback',
+            ttftMs: ttftMs || Date.now() - startTime,
+            resetCount,
+            candidateFailures,
+            fallbackUsed: true,
+          });
+          void recordEventLog({
+            category: 'chat',
+            event: 'chat_fallback_response',
+            entityType: 'node',
+            entityId: nodeId || null,
+            userId: user.id,
+            details: {
+              canvasId: canvasId || null,
+              lastError: lastError ? String((lastError as any)?.message || lastError).slice(0, 200) : null,
+            },
+          });
 
           res.write(
             `data: ${JSON.stringify({
@@ -641,23 +788,26 @@ chatRouter.post(
       }
       console.error('Chat API Error:', error);
       const friendlyMsg = cleanErrorMessage(error);
-      try {
-        await recordAiRequestLog({
-          userId: user?.id || null,
-          canvasId: canvasId || null,
-          nodeId: nodeId || null,
-          modelName: (typeof model === 'string' && model.trim()) || '',
-          promptTokens: 0,
-          completionTokens: 0,
-          totalTokens: 0,
-          latencyMs: Date.now() - startTime,
-          status: 'error',
-          errorMessage: friendlyMsg,
-          groundingChunksCount: 0,
-        });
-      } catch (logErr) {
-        // ignore log error
-      }
+      // Spec I：错误终局统一走单写者（若客户端中断已落日志则此处跳过，防双写）
+      await writeAiLog({
+        userId: user?.id || null,
+        canvasId: canvasId || null,
+        nodeId: nodeId || null,
+        modelName: actualModelName,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        latencyMs: Date.now() - startTime,
+        status: 'error',
+        errorMessage: friendlyMsg,
+        groundingChunksCount: 0,
+        provider: obsProvider,
+        ttftMs,
+        aborted,
+        resetCount,
+        candidateFailures,
+        fallbackUsed,
+      });
       res.write(
         `data: ${JSON.stringify({
           error: friendlyMsg,

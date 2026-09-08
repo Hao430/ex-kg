@@ -18,6 +18,9 @@ export {
 } from '../repositories/admin.repository.js';
 export { listAllOrders } from '../repositories/billing.repository.js';
 export { listAuditLogs };
+// Spec I：AI 推演日志与业务事件日志的 admin 分页查询
+export { listAiRequestLogs } from '../repositories/ai.repository.js';
+export { listEventLogs } from '../repositories/event-log.repository.js';
 
 /** 操作者上下文：由路由层传入，用于审计日志记录 */
 export interface AuditContext {

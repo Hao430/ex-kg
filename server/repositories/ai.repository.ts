@@ -20,6 +20,16 @@ export async function recordAiRequestLog(data: {
   status: 'success' | 'error';
   errorMessage?: string | null;
   groundingChunksCount?: number;
+  /** Spec I 可观测扩列 */
+  provider?: string;
+  webSearchCalls?: number;
+  rawSourcesCount?: number;
+  sourcesTruncated?: boolean;
+  ttftMs?: number;
+  aborted?: boolean;
+  fallbackUsed?: boolean;
+  resetCount?: number;
+  candidateFailures?: number;
 }): Promise<AiRequestLogRecord> {
   const p = getPool();
   const now = new Date().toISOString();
@@ -36,6 +46,15 @@ export async function recordAiRequestLog(data: {
     status: data.status,
     error_message: data.errorMessage || null,
     grounding_chunks_count: data.groundingChunksCount || 0,
+    provider: data.provider || '',
+    web_search_calls: data.webSearchCalls || 0,
+    raw_sources_count: data.rawSourcesCount || 0,
+    sources_truncated: data.sourcesTruncated || false,
+    ttft_ms: data.ttftMs || 0,
+    aborted: data.aborted || false,
+    fallback_used: data.fallbackUsed || false,
+    reset_count: data.resetCount || 0,
+    candidate_failures: data.candidateFailures || 0,
     created_at: now,
   };
 
@@ -45,9 +64,11 @@ export async function recordAiRequestLog(data: {
         `INSERT INTO ai_request_logs (
            user_id, canvas_id, node_id, model_name, prompt_tokens,
            completion_tokens, total_tokens, latency_ms, status, error_message,
-           grounding_chunks_count, created_at
+           grounding_chunks_count, provider, web_search_calls, raw_sources_count,
+           sources_truncated, ttft_ms, aborted, fallback_used, reset_count,
+           candidate_failures, created_at
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NOW())`,
         [
           data.userId || null,
           data.canvasId || null,
@@ -60,6 +81,15 @@ export async function recordAiRequestLog(data: {
           data.status,
           data.errorMessage || null,
           data.groundingChunksCount || 0,
+          data.provider || '',
+          data.webSearchCalls || 0,
+          data.rawSourcesCount || 0,
+          data.sourcesTruncated || false,
+          data.ttftMs || 0,
+          data.aborted || false,
+          data.fallbackUsed || false,
+          data.resetCount || 0,
+          data.candidateFailures || 0,
         ]
       );
       return log;
@@ -75,6 +105,80 @@ export async function recordAiRequestLog(data: {
     inMemoryStore.aiRequestLogs.pop();
   }
   return log;
+}
+
+/**
+ * Spec I：分页查询 AI 推演日志（双模，admin 专用），返回最新在前。
+ */
+export async function listAiRequestLogs(params: {
+  page?: number;
+  limit?: number;
+  status?: string;
+  userId?: string;
+}): Promise<{ logs: AiRequestLogRecord[]; total: number }> {
+  const page = Math.max(1, params.page || 1);
+  const limit = Math.min(200, Math.max(1, params.limit || 10));
+  const offset = (page - 1) * limit;
+
+  const p = getPool();
+  if (p) {
+    try {
+      await initDbSchema();
+      let whereClause = '1=1';
+      const values: any[] = [];
+
+      if (params.status?.trim()) {
+        values.push(params.status.trim());
+        whereClause += ` AND status = $${values.length}`;
+      }
+      if (params.userId?.trim()) {
+        values.push(params.userId.trim());
+        whereClause += ` AND user_id = $${values.length}::uuid`;
+      }
+
+      const countRes = await p.query(
+        `SELECT COUNT(*) as total FROM ai_request_logs WHERE ${whereClause}`,
+        values
+      );
+      const total = parseInt(countRes.rows[0].total, 10);
+
+      const listRes = await p.query(
+        `SELECT * FROM ai_request_logs
+         WHERE ${whereClause}
+         ORDER BY created_at DESC
+         LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+        [...values, limit, offset]
+      );
+
+      return {
+        logs: listRes.rows.map((r) => ({
+          ...r,
+          created_at: r.created_at instanceof Date ? r.created_at.toISOString() : r.created_at,
+        })),
+        total,
+      };
+    } catch (e) {
+      handlePgError(e);
+      console.warn('PG listAiRequestLogs fallback to in-memory:', e);
+    }
+  }
+
+  // In-memory fallback
+  let list = inMemoryStore.aiRequestLogs;
+  if (params.status?.trim()) {
+    list = list.filter((l) => l.status === params.status!.trim());
+  }
+  if (params.userId?.trim()) {
+    list = list.filter((l) => l.user_id === params.userId!.trim());
+  }
+  list = [...list].sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  );
+
+  return {
+    logs: list.slice(offset, offset + limit),
+    total: list.length,
+  };
 }
 
 /**
