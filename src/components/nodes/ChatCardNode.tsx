@@ -453,13 +453,20 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
               onChange={(e) => setTitleValue(e.target.value)}
               onBlur={handleTitleSubmit}
               onKeyDown={(e) => e.key === 'Enter' && handleTitleSubmit()}
+              // 双击（选中文本等）不冒泡到 React Flow 视口，避免编辑时意外缩放
+              onDoubleClick={(e) => e.stopPropagation()}
               autoFocus
               className="px-2 py-0.5 text-xs font-semibold text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-800 border border-indigo-500 dark:border-indigo-400 rounded-lg outline-none w-full"
             />
           ) : (
             <Tooltip content="双击可重命名此节点标题" side="top">
               <span
-                onDoubleClick={() => setEditingTitle(true)}
+                // stopPropagation：阻断冒泡到 React Flow 的 d3-zoom（zoomOnDoubleClick 默认开），
+                // 否则双击重命名会先触发视口放大，重命名被缩放淹没
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  setEditingTitle(true);
+                }}
                 className="text-xs font-semibold text-slate-800 dark:text-slate-100 truncate cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
               >
                 {nodeData.title}
