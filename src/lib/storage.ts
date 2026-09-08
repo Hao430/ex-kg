@@ -11,6 +11,8 @@ const STORAGE_BOARDS_INDEX_KEY = 'deepdive_boards_index_v1';
 const LEGACY_STORAGE_BOARDS_INDEX_KEY = 'rabbithole_boards_index_v1';
 const STORAGE_BOARD_PREFIX = 'deepdive_board_';
 const LEGACY_STORAGE_BOARD_PREFIX = 'rabbithole_board_';
+/** serverUpdatedAt 独立小键：保存成功后免整板 JSON parse/stringify（性能优化） */
+const SERVER_TS_PREFIX = 'deepdive_board_server_ts_';
 
 export interface StoredBoard {
   id: string;
@@ -70,6 +72,9 @@ export function loadBoard(boardId: string): StoredBoard | null {
     if (parsed) {
       parsed.nodes = deduplicateNodes(parsed.nodes);
       parsed.edges = deduplicateEdges(parsed.edges);
+      // 独立小键为权威来源（旧数据回退 blob 内嵌值）
+      const serverTs = localStorage.getItem(`${SERVER_TS_PREFIX}${boardId}`);
+      if (serverTs) parsed.serverUpdatedAt = serverTs;
     }
     return parsed;
   } catch (e) {
@@ -191,13 +196,10 @@ export async function syncBoardToBackend(board: StoredBoard): Promise<'ok' | 'co
   }
 }
 
-/** 仅更新本地记录的 serverUpdatedAt（不触发再次入队） */
+/** 仅更新本地记录的 serverUpdatedAt（不触发再次入队）；写独立小键，避免整板重读重写 */
 function persistServerUpdatedAt(boardId: string, serverUpdatedAt: string): void {
   try {
-    const board = loadBoard(boardId);
-    if (!board) return;
-    board.serverUpdatedAt = serverUpdatedAt;
-    localStorage.setItem(`${STORAGE_BOARD_PREFIX}${boardId}`, JSON.stringify(board));
+    localStorage.setItem(`${SERVER_TS_PREFIX}${boardId}`, serverUpdatedAt);
   } catch (e) {
     console.error('Failed to persist serverUpdatedAt:', e);
   }
@@ -210,9 +212,13 @@ setSyncExecutor(async (boardId) => {
   const localVersion = board.updatedAt;
   const outcome = await syncBoardToBackend(board);
   // 同步期间本地又被编辑过：以新数据重新入队，避免"标记已同步但云端是旧数据"
+  //（走索引元数据比对，免整板 parse；索引缺失的 legacy 板回退整板比对）
   if (outcome === 'ok') {
-    const latest = loadBoard(boardId);
-    if (latest && latest.updatedAt !== localVersion) {
+    const meta = loadBoardList().find((b) => b.id === boardId);
+    const latestVersion = meta
+      ? meta.updatedAt
+      : loadBoard(boardId)?.updatedAt;
+    if (latestVersion !== undefined && latestVersion !== localVersion) {
       enqueue(boardId);
     }
   }
@@ -222,26 +228,6 @@ setSyncExecutor(async (boardId) => {
 /** 画布保存入队：断网/失败自动退避重试，恢复网络立即补传 */
 export function enqueueBoardSync(boardId: string): void {
   enqueue(boardId);
-}
-
-/**
- * Fetch database connection status from backend
- */
-export async function fetchDbStatus(): Promise<{
-  connected: boolean;
-  type: 'postgresql' | 'in-memory-fallback';
-  message: string;
-  canvasCount: number;
-  nodeCount: number;
-  databaseUrlConfigured: boolean;
-} | null> {
-  try {
-    const res = await fetch('/api/db/status');
-    if (!res.ok) return null;
-    return await res.json();
-  } catch (e) {
-    return null;
-  }
 }
 
 /**
@@ -317,6 +303,7 @@ export async function deleteBoard(boardId: string): Promise<{ ok: boolean; statu
   try {
     localStorage.removeItem(`${STORAGE_BOARD_PREFIX}${boardId}`);
     localStorage.removeItem(`${LEGACY_STORAGE_BOARD_PREFIX}${boardId}`);
+    localStorage.removeItem(`${SERVER_TS_PREFIX}${boardId}`);
     saveBoardList(loadBoardList().filter((b) => b.id !== boardId));
   } catch (e) {}
   return { ok: true };

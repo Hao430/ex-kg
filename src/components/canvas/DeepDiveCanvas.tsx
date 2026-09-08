@@ -172,10 +172,26 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
     return true;
   }, [isVip, openRechargeModal, serverNodeRemaining]);
 
-  // Auto-save sync back to parent
+  // Auto-save sync back to parent（拖动期间跳过逐帧上报，dragstop 一次性上报终态，避免每帧重排防抖定时器）
+  const isDraggingRef = useRef(false);
   useEffect(() => {
+    if (isDraggingRef.current) return;
     onCanvasChange?.(nodes, edges);
   }, [nodes, edges, onCanvasChange]);
+  const handleNodeDragStart = useCallback(() => {
+    isDraggingRef.current = true;
+  }, []);
+  const handleNodeDragStop = useCallback(() => {
+    isDraggingRef.current = false;
+    onCanvasChange?.(nodesRef.current, edgesRef.current);
+  }, [onCanvasChange]);
+  const handleSelectionDragStart = useCallback(() => {
+    isDraggingRef.current = true;
+  }, []);
+  const handleSelectionDragStop = useCallback(() => {
+    isDraggingRef.current = false;
+    onCanvasChange?.(nodesRef.current, edgesRef.current);
+  }, [onCanvasChange]);
 
   // Layout function (Zero-drag automatic tidy tree)
   const applyLayout = useCallback(
@@ -1264,6 +1280,10 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          onNodeDragStart={handleNodeDragStart}
+          onNodeDragStop={handleNodeDragStop}
+          onSelectionDragStart={handleSelectionDragStart}
+          onSelectionDragStop={handleSelectionDragStop}
           nodeTypes={nodeTypes}
           onlyRenderVisibleElements
           nodesDraggable={true}

@@ -212,7 +212,9 @@ export async function saveCanvas(
     expectedUpdatedAt?: string;
   },
   userId: string,
-  isAdmin = false
+  isAdmin = false,
+  /** 新建画布（exists=false）前的配额闸门；复用事务内已查的 exists，省一次独立预查 */
+  quotaGate?: (exists: boolean) => Promise<void>
 ): Promise<CanvasRecord> {
   const p = getPool();
   const now = new Date().toISOString();
@@ -253,6 +255,11 @@ export async function saveCanvas(
 
       if (existing.rows.length > 0) {
         assertNoConflict(existing.rows[0].updated_at);
+      }
+
+      // 新建画布前配额校验（事务内复用 exists，避免服务层独立预查同一行）
+      if (existing.rows.length === 0 && quotaGate) {
+        await quotaGate(false);
       }
 
       const assignedUserId = existingUserId || userId;
@@ -431,6 +438,9 @@ export async function saveCanvas(
   }
   if (existing) {
     assertNoConflict(existing.updatedAt);
+  }
+  if (!existing && quotaGate) {
+    await quotaGate(false);
   }
 
   const record: CanvasRecord = {

@@ -85,7 +85,12 @@ canvasesRouter.post('/:id/save', asyncHandler(async (req: Request, res: Response
     isAdmin
   );
 
-  res.json({ success: true, canvas: saved });
+  // 响应瘦身：前端与测试仅消费 canvas.updatedAt（乐观锁版本），不再回显全量 nodes/edges
+  const { nodes, edges, ...canvasMeta } = saved;
+  res.json({
+    success: true,
+    canvas: { ...canvasMeta, nodeCount: nodes?.length ?? 0, edgeCount: edges?.length ?? 0 },
+  });
 }));
 
 /**
