@@ -26,8 +26,6 @@ import {
   ExternalLink,
   ChevronRight,
   HelpCircle,
-  Sun,
-  Moon,
   Globe,
   Search,
   SlidersHorizontal,
@@ -42,17 +40,12 @@ import { SampleBoardViewer } from '../sample/SampleBoardViewer';
 
 interface LandingPageProps {
   onEnterCanvas: (presetTopic?: string) => void;
-  theme?: 'light' | 'dark';
-  onToggleTheme?: () => void;
 }
 
 export const LandingPage: React.FC<LandingPageProps> = ({
   onEnterCanvas,
-  theme = 'light',
-  onToggleTheme,
 }) => {
   const { user, isVip, openAuthModal, openRechargeModal } = useAuth();
-  const isDark = theme === 'dark';
   const [activeScenario, setActiveScenario] = useState<number>(0);
   const [demoExpanded, setDemoExpanded] = useState<boolean>(false);
   const [demoStep, setDemoStep] = useState<number>(1);
@@ -176,21 +169,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
           {/* Action Zone */}
           <div className="flex items-center gap-2 sm:gap-2.5 shrink-0 whitespace-nowrap">
-            {onToggleTheme && (
-              <button
-                onClick={onToggleTheme}
-                className="p-2 rounded-xl border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] text-slate-300 hover:text-white transition-all cursor-pointer focus:outline-none shrink-0"
-                aria-label={isDark ? '切换浅色模式' : '切换深色模式'}
-                title={isDark ? '当前为深色模式（点击切换浅色）' : '切换为深色模式'}
-              >
-                {isDark ? (
-                  <Moon className="w-4 h-4 text-amber-300 fill-amber-300/20" />
-                ) : (
-                  <Sun className="w-4 h-4 text-amber-400" />
-                )}
-              </button>
-            )}
-
             {user ? (
               <div className="flex items-center gap-2 shrink-0">
                 <button

@@ -709,11 +709,7 @@ function MainApp() {
 
   if (viewMode === 'landing') {
     return (
-      <LandingPage
-        onEnterCanvas={handleEnterCanvas}
-        theme={theme}
-        onToggleTheme={toggleTheme}
-      />
+      <LandingPage onEnterCanvas={handleEnterCanvas} />
     );
   }
 
