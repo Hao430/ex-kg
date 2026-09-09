@@ -1,11 +1,27 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { publicShareReadLimiter } from '../middleware/auth.js';
+import { authMiddleware, publicShareReadLimiter, mySharesReadRateLimiter } from '../middleware/auth.js';
 import { asyncHandler } from '../lib/async-handler.js';
 import { validate } from '../lib/validate.js';
-import { getShareView } from '../services/share.service.js';
+import { getShareView, listMyShares } from '../services/share.service.js';
 
 export const sharesRouter = Router();
+
+/**
+ * GET /api/shares（「我的分享」2026-09-09）
+ * 列出当前登录用户生效中的分享（未撤销 + 画布未软删），含浏览次数。
+ * 无入参（无注入面）；admin 同样只看自己的；列表读取不递增浏览计数。
+ */
+sharesRouter.get(
+  '/',
+  authMiddleware,
+  mySharesReadRateLimiter,
+  asyncHandler(async (req: Request, res: Response) => {
+    const appUrl = process.env.APP_URL || `${req.protocol}://${req.get('host') || 'localhost'}`;
+    const result = await listMyShares(req.user!, appUrl);
+    res.json(result);
+  })
+);
 
 /**
  * GET /api/shares/:shareCode（Spec K1 / B1）

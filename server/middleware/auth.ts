@@ -57,6 +57,21 @@ export const shareActionRateLimiter = rateLimit({
 });
 
 /**
+ * Rate limiter for my-shares list: 30 req/min per user（读接口，「我的分享」弹窗每次打开拉取一次）
+ */
+export const mySharesReadRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => (req.user ? `user_${req.user.id}` : ipKeyGenerator(req.ip || 'anonymous')),
+  message: {
+    error: '分享列表查询过于频繁，请稍后再试',
+    code: 'RATE_LIMIT_EXCEEDED',
+  },
+});
+
+/**
  * Rate limiter for admin log read endpoints: 30 req/min per user（Spec I，独立实例）
  */
 export const adminLogReadRateLimiter = rateLimit({

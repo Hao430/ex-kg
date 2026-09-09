@@ -4,8 +4,10 @@ import {
   upsertShare,
   findActiveShareByCode,
   revokeShareByCanvasId,
+  listActiveSharesByUser,
 } from '../repositories/share.repository.js';
 import { recordAuditLog } from '../repositories/audit.repository.js';
+import { recordEventLog } from '../repositories/event-log.repository.js';
 import { ForbiddenError, NotFoundError } from '../lib/errors.js';
 import type { UserRecord } from '../core/records.js';
 
@@ -104,5 +106,43 @@ export async function getShareView(code: string, countViews = true): Promise<Sha
     edges: record.snapshot.edges || [],
     createdAt: record.created_at,
     viewCount: record.views_count,
+  };
+}
+
+export interface MyShareItem {
+  canvasId: string;
+  canvasTitle: string;
+  shareCode: string;
+  url: string;
+  viewsCount: number;
+  createdAt: string;
+}
+
+/**
+ * 「我的分享」列表（2026-09-09）：仅本人、仅生效中（未撤销 + 画布未软删）。
+ * admin 同样只看自己的（个人中心语义，非运营视图）。
+ * 列表读取不递增浏览计数（与公开读取端口径区分），但落一条使用埋点供运营漏斗。
+ */
+export async function listMyShares(user: UserRecord, appUrl: string): Promise<{ shares: MyShareItem[] }> {
+  const items = await listActiveSharesByUser(user.id);
+
+  void recordEventLog({
+    category: 'share',
+    event: 'share_manage_viewed',
+    entityType: 'user',
+    entityId: user.id,
+    userId: user.id,
+  });
+
+  const base = appUrl.replace(/\/+$/, '');
+  return {
+    shares: items.map((it) => ({
+      canvasId: it.canvas_id,
+      canvasTitle: it.canvas_title,
+      shareCode: it.share_code,
+      url: `${base}/share/${it.share_code}`,
+      viewsCount: it.views_count,
+      createdAt: it.created_at,
+    })),
   };
 }

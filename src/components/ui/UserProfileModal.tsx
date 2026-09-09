@@ -13,6 +13,7 @@ import {
   Camera,
   Trash2,
   KeyRound,
+  Share2,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -33,7 +34,7 @@ const PRESET_AVATARS = [
 ];
 
 export const UserProfileModal: React.FC = () => {
-  const { user, isVip, userProfileModalOpen, closeUserProfileModal, updateProfile, changePassword, openRechargeModal, logout } = useAuth();
+  const { user, isVip, userProfileModalOpen, closeUserProfileModal, updateProfile, changePassword, openRechargeModal, openMySharesModal, logout } = useAuth();
 
   const [name, setName] = useState('');
   const [selectedAvatar, setSelectedAvatar] = useState('🧠');
@@ -450,6 +451,25 @@ export const UserProfileModal: React.FC = () => {
                 </div>
               )}
             </div>
+
+            {/* My Shares 入口（我的分享管理，2026-09-09） */}
+            <button
+              type="button"
+              id="user-profile-my-shares-btn"
+              onClick={() => {
+                closeUserProfileModal();
+                openMySharesModal();
+              }}
+              className="w-full flex items-center justify-between bg-slate-950/70 border border-slate-800/90 rounded-xl px-4 py-3 hover:border-sky-800/60 hover:bg-slate-900 transition group"
+            >
+              <span className="flex items-center gap-2">
+                <Share2 className="w-4 h-4 text-sky-400" />
+                <span className="text-sm font-semibold text-slate-200">我的分享</span>
+              </span>
+              <span className="text-xs text-slate-500 group-hover:text-sky-400 transition">
+                管理生效中的分享链接 ›
+              </span>
+            </button>
 
             {/* Status Message */}
             {statusMsg && (

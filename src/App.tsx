@@ -40,6 +40,7 @@ import { AuthModal } from './components/auth/AuthModal';
 import { RechargeModal } from './components/ui/RechargeModal';
 import { AdminDashboardModal } from './components/admin/AdminDashboardModal';
 import { UserProfileModal } from './components/ui/UserProfileModal';
+import { MySharesModal } from './components/ui/MySharesModal';
 import { FeedbackModal } from './components/ui/FeedbackModal';
 
 /**
@@ -861,6 +862,7 @@ export default function App() {
       <MainApp />
       <AuthModal />
       <UserProfileModal />
+      <MySharesModal />
       <FeedbackModal />
       <RechargeModal />
       <AdminDashboardModal />

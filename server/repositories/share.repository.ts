@@ -175,3 +175,61 @@ export async function revokeShareByCanvasId(canvasId: string): Promise<boolean> 
   share.revoked_at = new Date().toISOString();
   return true;
 }
+
+/** 「我的分享」列表项（不含 snapshot 大对象；画板名取画布现名而非快照名） */
+export interface ShareListItem {
+  canvas_id: string;
+  share_code: string;
+  canvas_title: string;
+  views_count: number;
+  created_at: string;
+}
+
+/**
+ * 列出用户「生效中」的分享（未撤销 + 所属画布未软删），「我的分享」弹窗专用（2026-09-09）。
+ * 纯读、无业务错误；admin 同样只查本人（个人中心语义）。
+ * 列表自身不做浏览计数（与 findActiveShareByCode 的 countViews 口径区分）。
+ */
+export async function listActiveSharesByUser(userId: string): Promise<ShareListItem[]> {
+  const p = getPool();
+  if (p) {
+    try {
+      await initDbSchema();
+      const res = await p.query(
+        `SELECT s.canvas_id, s.share_code, s.views_count, s.created_at, c.title AS canvas_title
+           FROM canvas_shares s
+           JOIN canvases c ON c.id = s.canvas_id AND c.deleted_at IS NULL
+          WHERE s.revoked_at IS NULL AND c.user_id = $1
+          ORDER BY s.created_at DESC
+          LIMIT 200`,
+        [userId]
+      );
+      return res.rows.map((r) => ({
+        canvas_id: r.canvas_id,
+        share_code: r.share_code,
+        canvas_title: r.canvas_title ?? r.canvas_id,
+        views_count: r.views_count ?? 0,
+        created_at: new Date(r.created_at).toISOString(),
+      }));
+    } catch (e) {
+      handlePgError(e);
+      console.warn('PG listActiveSharesByUser fallback to in-memory:', e);
+    }
+  }
+
+  const items: ShareListItem[] = [];
+  for (const share of inMemoryStore.shares.values()) {
+    if (share.revoked_at) continue;
+    const canvas = inMemoryStore.canvases.get(share.canvas_id);
+    if (!canvas || canvas.deleted_at || canvas.user_id !== userId) continue;
+    items.push({
+      canvas_id: share.canvas_id,
+      share_code: share.share_code,
+      canvas_title: canvas.title || share.snapshot?.title || share.canvas_id,
+      views_count: share.views_count,
+      created_at: share.created_at,
+    });
+  }
+  items.sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+  return items.slice(0, 200);
+}

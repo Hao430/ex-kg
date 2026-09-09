@@ -9,6 +9,7 @@
  */
 import React, { useEffect, useState } from 'react';
 import { X, Copy, Check, Link2, AlertTriangle } from 'lucide-react';
+import { copyTextToClipboard } from '../../lib/clipboard';
 
 interface ShareLinkModalProps {
   url: string;
@@ -35,23 +36,9 @@ export const ShareLinkModal: React.FC<ShareLinkModalProps> = ({
   }, [copied]);
 
   const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(url);
+    if (await copyTextToClipboard(url)) {
       setCopied(true);
-      return;
-    } catch {}
-    // 非安全上下文兜底：临时 textarea + execCommand
-    try {
-      const ta = document.createElement('textarea');
-      ta.value = url;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
-      setCopied(true);
-    } catch {}
+    }
   };
 
   const handleRevokeClick = () => {

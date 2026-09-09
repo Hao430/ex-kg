@@ -34,6 +34,9 @@ interface AuthContextType {
   adminModalOpen: boolean;
   openAdminModal: () => void;
   closeAdminModal: () => void;
+  mySharesModalOpen: boolean;
+  openMySharesModal: () => void;
+  closeMySharesModal: () => void;
   refreshUser: () => Promise<void>;
 }
 
@@ -53,6 +56,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [rechargeCanvasId, setRechargeCanvasId] = useState<string | null>(null);
   const [upgradeModalReason, setUpgradeModalReason] = useState<string | null>(null);
   const [adminModalOpen, setAdminModalOpen] = useState(false);
+  const [mySharesModalOpen, setMySharesModalOpen] = useState(false);
 
   // Determine VIP active status
   const isVip = Boolean(
@@ -286,6 +290,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setAdminModalOpen(false);
   }, []);
 
+  const openMySharesModal = useCallback(() => {
+    setMySharesModalOpen(true);
+  }, []);
+
+  const closeMySharesModal = useCallback(() => {
+    setMySharesModalOpen(false);
+  }, []);
+
   return (
     <AuthContext.Provider
       value={{
@@ -318,6 +330,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         adminModalOpen,
         openAdminModal,
         closeAdminModal,
+        mySharesModalOpen,
+        openMySharesModal,
+        closeMySharesModal,
         refreshUser,
       }}
     >

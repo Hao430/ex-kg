@@ -36,6 +36,7 @@ import {
   Settings,
   Trash2,
   Link2,
+  Share2,
 } from 'lucide-react';
 import { DeepDiveBoardMeta } from '../../types';
 import { useAuth } from '../../context/AuthContext';
@@ -105,6 +106,7 @@ export const Topbar: React.FC<TopbarProps> = ({
     openAuthModal,
     openRechargeModal,
     openUserProfileModal,
+    openMySharesModal,
     openFeedbackModal,
     openAdminModal,
     logout,
@@ -635,6 +637,22 @@ export const Topbar: React.FC<TopbarProps> = ({
                     <div>
                       <div className="font-medium">个人中心</div>
                       <div className="text-[10px] text-slate-400">修改头像、昵称与账户信息</div>
+                    </div>
+                  </button>
+
+                  {/* My Shares Action（我的分享管理，2026-09-09） */}
+                  <button
+                    id="user-menu-my-shares-btn"
+                    onClick={() => {
+                      setShowUserMenu(false);
+                      openMySharesModal();
+                    }}
+                    className="w-full text-left px-2.5 py-2 text-xs flex items-center gap-2.5 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
+                  >
+                    <Share2 className="w-4 h-4 text-sky-500 shrink-0" />
+                    <div>
+                      <div className="font-medium">我的分享</div>
+                      <div className="text-[10px] text-slate-400">管理生效中的分享链接</div>
                     </div>
                   </button>
 
