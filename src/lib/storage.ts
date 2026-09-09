@@ -6,6 +6,7 @@
 import { Node, Edge } from '@xyflow/react';
 import { DeepDiveBoardMeta, ChatNodeData } from '../types';
 import { enqueue, dequeue, setSyncExecutor } from './sync-queue';
+import { trackEvent } from './analytics';
 
 const STORAGE_BOARDS_INDEX_KEY = 'deepdive_boards_index_v1';
 const LEGACY_STORAGE_BOARDS_INDEX_KEY = 'rabbithole_boards_index_v1';
@@ -216,6 +217,11 @@ export async function syncBoardToBackend(board: StoredBoard): Promise<'ok' | 'co
       if (body?.canvas?.updatedAt) {
         board.serverUpdatedAt = body.canvas.updatedAt;
         persistServerUpdatedAt(board.id, body.canvas.updatedAt);
+      }
+      // 冲突自愈成功埋点（K4 扩展事件，attempt 为冲突发生次数，纯计数无 PII）：
+      // 自愈发生在客户端，服务端无法感知 409→重试成功的配对，统计走 Umami 通道
+      if (attempt > 1) {
+        trackEvent('conflict_healed', { attempt });
       }
       return 'ok';
     }

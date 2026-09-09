@@ -9,6 +9,7 @@ import { NotFoundError } from '../lib/errors.js';
 import { assertCanCreateBoard } from './quota.service.js';
 import { findUserById } from '../repositories/user.repository.js';
 import { recordAuditLog } from '../repositories/audit.repository.js';
+import { recordEventLog } from '../repositories/event-log.repository.js';
 import type { CanvasRecord } from '../core/records.js';
 
 export async function listUserCanvases(userId: string | undefined, isAdmin: boolean): Promise<CanvasRecord[]> {
@@ -32,15 +33,35 @@ export async function saveUserCanvas(
   // 配额退化为纯新建计数；更新自己的画板不受限。
   // 配额闸门以回调下沉到 saveCanvas：PG 分支复用事务内已查的 exists（新建才触发），
   // 省掉保存前对同一行的独立 owner 预查；软删画布在事务内先抛 404，不再误耗配额。
+  // 统计链路（2026-09-09）：quotaGate 仅在事务内判定为新建（exists=false）时被调用，
+  // 借此标记 created——admin 无配额限制也统一走旗标回调，保证创建事件全角色覆盖。
+  let created = false;
   const quotaGate = isAdmin
-    ? undefined
+    ? async (exists: boolean) => {
+        if (!exists) created = true;
+      }
     : async (exists: boolean) => {
         if (!exists) {
+          created = true;
           const user = await findUserById(userId);
           if (user) await assertCanCreateBoard(user);
         }
       };
-  return saveCanvas(data, userId, isAdmin, quotaGate);
+  const record = await saveCanvas(data, userId, isAdmin, quotaGate);
+
+  // 服务端画板创建事实源（前端 Umami board_create 有拦截丢失率，此处为准）。
+  // 埋点绝不阻塞业务：fire-and-forget，仅保存成功后落一条（更新/冲突/404 均不记）。
+  if (created) {
+    void recordEventLog({
+      category: 'canvas',
+      event: 'canvas_create',
+      entityType: 'canvas',
+      entityId: record.id,
+      userId,
+    });
+  }
+
+  return record;
 }
 
 export async function deleteUserCanvas(canvasId: string, userId: string, isAdmin: boolean): Promise<boolean> {

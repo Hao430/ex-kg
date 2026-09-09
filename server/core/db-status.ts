@@ -17,7 +17,7 @@ export async function checkDbStatus(): Promise<DbStatus> {
       type: 'in-memory-fallback',
       message: 'DATABASE_URL 未配置。当前运行于高性能内存回退模式，数据与会话全量就绪。',
       userCount: inMemoryStore.users.size,
-      canvasCount: inMemoryStore.canvases.size,
+      canvasCount: Array.from(inMemoryStore.canvases.values()).filter((c) => !c.deleted_at).length,
       nodeCount: Array.from(inMemoryStore.canvases.values()).reduce((acc, c) => acc + (c.nodes?.length || 0), 0),
       databaseUrlConfigured: false,
       degraded: false,
@@ -29,7 +29,7 @@ export async function checkDbStatus(): Promise<DbStatus> {
     const client = await p.connect();
     try {
       const uRes = await client.query('SELECT COUNT(*) as count FROM users');
-      const cRes = await client.query('SELECT COUNT(*) as count FROM canvases');
+      const cRes = await client.query('SELECT COUNT(*) as count FROM canvases WHERE deleted_at IS NULL');
       const nRes = await client.query('SELECT COUNT(*) as count FROM nodes');
       return {
         connected: true,
@@ -54,7 +54,7 @@ export async function checkDbStatus(): Promise<DbStatus> {
         ? `PostgreSQL 连接异常: ${err?.message || err}。生产模式下写请求将返回 503，请立即检查数据库。`
         : `PostgreSQL 连接异常: ${err?.message || err}。当前自动切换至内存模式保障服务。`,
       userCount: inMemoryStore.users.size,
-      canvasCount: inMemoryStore.canvases.size,
+      canvasCount: Array.from(inMemoryStore.canvases.values()).filter((c) => !c.deleted_at).length,
       nodeCount: Array.from(inMemoryStore.canvases.values()).reduce((acc, c) => acc + (c.nodes?.length || 0), 0),
       databaseUrlConfigured: true,
       degraded,

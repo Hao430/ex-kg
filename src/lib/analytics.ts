@@ -15,8 +15,11 @@
 
 type EventData = Record<string, string | number | boolean>;
 
-const UMAMI_SRC = import.meta.env.VITE_UMAMI_SRC as string | undefined;
-const UMAMI_WEBSITE_ID = import.meta.env.VITE_UMAMI_WEBSITE_ID as string | undefined;
+// 防御式读取 Vite 环境变量：node/tsx 环境（前端模块的单测）无 import.meta.env，
+// 直接链式取值会 TypeError；回退空对象使全部埋点按「未配置」静默 no-op。
+const env: Record<string, string | undefined> = (import.meta as any).env ?? {};
+const UMAMI_SRC = env.VITE_UMAMI_SRC as string | undefined;
+const UMAMI_WEBSITE_ID = env.VITE_UMAMI_WEBSITE_ID as string | undefined;
 
 declare global {
   interface Window {
