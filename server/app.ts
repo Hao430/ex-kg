@@ -46,7 +46,14 @@ export function createApp(): express.Express {
   app.get('/api/db/status', async (_req, res) => {
     try {
       const status = await checkDbStatus();
-      res.json(status);
+      if (process.env.NODE_ENV === 'production') {
+        // 审计修复（数据隔离排查 2026-09-09）：生产环境剥离全库聚合计数，
+        // 防止公开端点探测平台规模；探活所需的 connected/degraded/type 保留。
+        const { userCount: _u, canvasCount: _c, nodeCount: _n, ...safe } = status;
+        res.json(safe);
+      } else {
+        res.json(status);
+      }
     } catch (error: any) {
       res.status(500).json({ error: error?.message || 'Failed to check database status' });
     }
