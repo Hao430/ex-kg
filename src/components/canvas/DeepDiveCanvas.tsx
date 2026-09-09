@@ -1317,6 +1317,10 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
 
   const isLargeCanvas = nodes.length >= 150;
 
+  const handlePaneClick = useCallback(() => {
+    setSelectionPayload(null);
+  }, []);
+
   return (
     <div className="w-full h-full relative">
       {/* Large Canvas Mind Branch Performance Optimization Banner */}
@@ -1372,6 +1376,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          onPaneClick={handlePaneClick}
           onNodeDragStart={handleNodeDragStart}
           onNodeDragStop={handleNodeDragStop}
           onSelectionDragStart={handleSelectionDragStart}

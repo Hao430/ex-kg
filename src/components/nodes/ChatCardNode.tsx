@@ -166,7 +166,37 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
   const [highlightSource, setHighlightSource] = useState<number | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const sourcesContainerRef = useRef<HTMLDivElement>(null);
   const renderWarning = useRenderMonitor(`ChatNode_${id}`);
+
+  // #点击空白地方自动收起：当参考来源展开时，点击卡片外部/正文空白/画布空白自动收起
+  useEffect(() => {
+    if (!showSources) return;
+
+    const handleSourcesClickOutside = (event: MouseEvent | PointerEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+
+      // 如果点击在参考来源卡片容器内部（查看链接、复制、滚动等），保持展开
+      if (sourcesContainerRef.current && sourcesContainerRef.current.contains(target)) {
+        return;
+      }
+
+      // 如果点击的是正文引用角标 <sup>，交由 handleCitationClick 处理展开与高亮定位
+      if (target.closest('sup') || target.getAttribute('href')?.startsWith('#src-')) {
+        return;
+      }
+
+      // 点击了卡片空白地方、正文空白或画布空白处，自动收起折叠卡片
+      setShowSources(false);
+    };
+
+    // 使用捕获阶段确保即使节点内部容器调用了 stopPropagation 也能可靠捕获
+    document.addEventListener('pointerdown', handleSourcesClickOutside, true);
+    return () => {
+      document.removeEventListener('pointerdown', handleSourcesClickOutside, true);
+    };
+  }, [showSources]);
 
   // Auto scroll to latest answer text while generating
   useEffect(() => {
@@ -629,7 +659,10 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
                 {/* Grounding Sources / Reference Citations Section */}
                 {nodeData.grounding?.sources && nodeData.grounding.sources.length > 0 && (
                   <div className="mt-4 pt-3 border-t border-slate-200/80 dark:border-slate-800">
-                    <div className="border border-indigo-100 dark:border-indigo-900/50 bg-indigo-50/25 dark:bg-slate-900/60 rounded-xl overflow-hidden shadow-xs">
+                    <div
+                      ref={sourcesContainerRef}
+                      className="border border-indigo-100 dark:border-indigo-900/50 bg-indigo-50/25 dark:bg-slate-900/60 rounded-xl overflow-hidden shadow-xs transition-all duration-200"
+                    >
                       {/* Source Accordion Header */}
                       <button
                         type="button"

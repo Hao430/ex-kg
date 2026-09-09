@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Sparkles,
   FolderOpen,
@@ -100,6 +100,45 @@ export const Topbar: React.FC<TopbarProps> = ({
   const [showCanvasMoreMenu, setShowCanvasMoreMenu] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
 
+  const boardMenuRef = useRef<HTMLDivElement>(null);
+  const canvasMoreMenuRef = useRef<HTMLDivElement>(null);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+
+  // 点击空白地方自动收起：画布列表卡片、更多操作卡片、个人中心卡片
+  useEffect(() => {
+    if (!showBoardMenu && !showCanvasMoreMenu && !showUserMenu) return;
+
+    const handleClickOutside = (event: MouseEvent | PointerEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+
+      if (showBoardMenu && boardMenuRef.current && !boardMenuRef.current.contains(target)) {
+        setShowBoardMenu(false);
+      }
+      if (showCanvasMoreMenu && canvasMoreMenuRef.current && !canvasMoreMenuRef.current.contains(target)) {
+        setShowCanvasMoreMenu(false);
+      }
+      if (showUserMenu && userMenuRef.current && !userMenuRef.current.contains(target)) {
+        setShowUserMenu(false);
+      }
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowBoardMenu(false);
+        setShowCanvasMoreMenu(false);
+        setShowUserMenu(false);
+      }
+    };
+
+    document.addEventListener('pointerdown', handleClickOutside, true);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handleClickOutside, true);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [showBoardMenu, showCanvasMoreMenu, showUserMenu]);
+
   const {
     user,
     isVip,
@@ -177,7 +216,7 @@ export const Topbar: React.FC<TopbarProps> = ({
         </Tooltip>
 
         {/* Board Switcher & Quick Rename */}
-        <div className="relative flex items-center">
+        <div ref={boardMenuRef} className="relative flex items-center">
           {isEditingName ? (
             <input
               type="text"
@@ -375,7 +414,7 @@ export const Topbar: React.FC<TopbarProps> = ({
         </Tooltip>
 
         {/* Canvas More Operations Dropdown (Export, Reset, Layout on mobile) */}
-        <div className="relative">
+        <div ref={canvasMoreMenuRef} className="relative">
           <Tooltip content="画板导出与更多操作" side="bottom">
             <button
               onClick={() => setShowCanvasMoreMenu(!showCanvasMoreMenu)}
@@ -544,7 +583,7 @@ export const Topbar: React.FC<TopbarProps> = ({
 
         {/* User Profile & Navigation Menu */}
         {user ? (
-          <div className="relative">
+          <div ref={userMenuRef} className="relative">
             <Tooltip content={`用户个人中心: ${user.name || user.email}`} side="bottom">
               <button
                 id="topbar-user-menu-btn"
