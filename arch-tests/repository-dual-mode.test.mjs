@@ -31,6 +31,9 @@ const ALLOWLIST = new Set([
   'normalizeMemoryNode',   // 内存分支归一化（本身是单模）
   'trimAuditLogs',    // 在 memory-store.ts 而非 repositories/
   'trimEventLogs',    // 同上
+  // 技术债 #0078 修复后暴露的 2 个合规变体（非违规）：
+  'canvasExists',      // 委托型：转发给双模的 getCanvasOwnerInfo，自身无需重复双模
+  'recordFailedLogin', // 内存兜底走 findUserById 返回的内存单例对象引用直改字段，无 inMemoryStore. 字样
 ]);
 
 /** 扫描文件中的所有 export async function（含方法简写） */
@@ -50,19 +53,59 @@ function findAsyncFunctions(content) {
   return results;
 }
 
-/** 提取函数体（粗略按配对花括号） */
+/**
+ * 提取函数体（技术债 #0078 修复）：
+ * 旧逻辑按"签名后第一个 `{`"配对，带对象类型字面量签名的函数
+ * （如 saveCanvas(data: { id: string; ... })）会提取到参数类型而非函数体，
+ * 导致 20 个合规双模函数误报恒红。
+ * 新逻辑三步：
+ *   1. 定位参数列表——从函数名后第一个 `(` 做括号配对，闭合 `)` 之后才是返回类型区；
+ *   2. 圈定本函数文本边界——下一个列 0 顶层声明（export/function/const/async）或文件尾；
+ *      顶层声明的函数体必在此边界前闭合；
+ *   3. 边界内最后一个顶层 `{` 即函数体起点——返回类型中的类型字面量
+ *      （如 Promise<{ session: ... } | null>）也是顶层花括号组，但必在函数体之前；
+ *      函数体打开后所有内部花括号均为嵌套（深度 ≥1）。再从该 `{` 括号配对提取完整函数体。
+ */
 function extractFunctionBody(content, start) {
-  // 从 start 位置向后找第一个 '{'，再配对
-  let i = content.indexOf('{', start);
+  // 1. 参数列表括号配对
+  let i = content.indexOf('(', start);
   if (i === -1) return '';
   let depth = 1;
   i++;
   while (i < content.length && depth > 0) {
-    if (content[i] === '{') depth++;
-    else if (content[i] === '}') depth--;
+    if (content[i] === '(') depth++;
+    else if (content[i] === ')') depth--;
     i++;
   }
-  return content.slice(start, i);
+
+  // 2. 函数文本边界：下一个列 0 顶层声明或文件尾
+  const rest = content.slice(i);
+  const declMatch = rest.match(/^(?:export\s|function\s|const\s|async\s+function\s)/m);
+  const region = declMatch ? rest.slice(0, declMatch.index) : rest;
+
+  // 3. 区域内最后一个顶层 `{` 为函数体起点
+  let bodyStart = -1;
+  let braceDepth = 0;
+  for (let j = 0; j < region.length; j++) {
+    if (region[j] === '{') {
+      if (braceDepth === 0) bodyStart = j;
+      braceDepth++;
+    } else if (region[j] === '}') {
+      braceDepth--;
+    }
+  }
+  if (bodyStart === -1) return '';
+
+  // 4. 从函数体起点括号配对提取完整函数体
+  let k = i + bodyStart;
+  depth = 1;
+  k++;
+  while (k < content.length && depth > 0) {
+    if (content[k] === '{') depth++;
+    else if (content[k] === '}') depth--;
+    k++;
+  }
+  return content.slice(i + bodyStart, k);
 }
 
 test('repositories 目录下所有 export async function 都遵循双模写法（ADR-0002）', () => {
