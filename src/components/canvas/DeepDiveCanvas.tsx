@@ -23,6 +23,7 @@ import '@xyflow/react/dist/style.css';
 
 import { ChatCardNode } from '../nodes/ChatCardNode';
 import { NoteCardNode } from '../nodes/NoteCardNode';
+import { withErrorBoundary, ErrorBoundary } from '../ErrorBoundary';
 import { SelectionPopup } from './SelectionPopup';
 import { ChatNodeData, TextSelectionPayload, GroundingMetadata } from '../../types';
 import { getLayoutedElements } from '../../lib/layout';
@@ -49,9 +50,10 @@ export const generateUniqueId = (prefix: string = 'node'): string => {
   return `${safePrefix}-${time}-${globalIdCounter}-${rand}`;
 };
 
+// 技术债 #0032：节点级错误边界——单个节点渲染抛错降级为占位卡片，不再拖垮整画布
 const nodeTypes = {
-  chat: ChatCardNode,
-  note: NoteCardNode,
+  chat: withErrorBoundary(ChatCardNode),
+  note: withErrorBoundary(NoteCardNode),
 };
 
 // ---- Edge style constants: unified definitions to avoid repeating inline style objects in multiple places ----
@@ -1370,7 +1372,10 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       )}
 
       <NodeActionsContext.Provider value={actionsValue}>
-        <ReactFlow
+        {/* 技术债 #0032：画布级错误边界——渲染链路异常时整块画布降级为可恢复面板，
+            应用其余部分（顶栏/列表）不受影响 */}
+        <ErrorBoundary variant="canvas">
+          <ReactFlow
           nodes={nodes}
           edges={edges}
           onNodesChange={onNodesChange}
@@ -1411,7 +1416,8 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
             maskColor={theme === 'dark' ? 'rgba(7, 12, 24, 0.78)' : 'rgba(241, 245, 249, 0.75)'}
             className="!bg-white/95 dark:!bg-[#0c1322]/95 !border !border-slate-200/90 dark:!border-white/10 !shadow-2xl !rounded-2xl !backdrop-blur-md"
           />
-        </ReactFlow>
+          </ReactFlow>
+        </ErrorBoundary>
       </NodeActionsContext.Provider>
 
       {/* Floating Capsule for DeepDive branching upon selecting text */}
