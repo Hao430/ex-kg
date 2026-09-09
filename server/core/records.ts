@@ -181,6 +181,9 @@ export interface AiModelConfig {
   force_web_search?: boolean;
   /** Spec E4：仅 VIP/Admin 可调用的模型白名单（体验版/过期 VIP 请求命中 → 403 MODEL_VIP_ONLY） */
   vip_only_models?: string[];
+  /** 技术债 #0020：Gemini 容灾链（preferredModel 失败后依次尝试）。管理员后台配置即时生效，
+   *  不再依赖 chat.ts 硬编码；未配置时回落代码内 bootstrap 默认链 */
+  gemini_fallback_models?: string[];
   updated_at?: string;
   updated_by?: string;
 }

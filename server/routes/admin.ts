@@ -272,6 +272,8 @@ const ModelConfigSchema = z.object({
   max_tokens: z.number().min(100).max(32000).optional().default(4096),
   custom_system_prompt: z.string().optional().default(''),
   vip_only_models: z.array(z.string()).optional(),
+  // 技术债 #0020：Gemini 容灾链表驱动（管理员改配置即时生效，无需重新部署）
+  gemini_fallback_models: z.array(z.string()).optional(),
   force_web_search: z.boolean().optional(), // Spec I：强制联网开关（默认 true，存量配置由 DEFAULT 合并补全）
 });
 

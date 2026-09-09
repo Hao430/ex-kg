@@ -505,8 +505,16 @@ chatRouter.post(
         systemModelConfig.gemini_model ||
         (model && typeof model === 'string' && model.trim() ? model.trim() : '');
 
+      // 技术债 #0020：容灾链表驱动——优先取 ai_model_config.gemini_fallback_models
+      // （管理员后台保存即时生效，无需重新部署），字符白名单校验防垃圾值进推理请求；
+      // 未配置时保留原三档为 bootstrap 默认链（同 DEFAULT_AI_MODEL_CONFIG.gemini_model 口径）
+      const FALLBACK_MODEL_RE = /^[\w.\-/]{1,64}$/;
+      const DEFAULT_GEMINI_FALLBACKS = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
+      const configuredFallbacks = (systemModelConfig.gemini_fallback_models || [])
+        .map((m) => (typeof m === 'string' ? m.trim() : ''))
+        .filter((m) => FALLBACK_MODEL_RE.test(m));
       const candidateModels = Array.from(
-        new Set([preferredModel, 'gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'])
+        new Set([preferredModel, ...(configuredFallbacks.length > 0 ? configuredFallbacks : DEFAULT_GEMINI_FALLBACKS)])
       ).filter(Boolean);
 
       let lastError: unknown = null;
