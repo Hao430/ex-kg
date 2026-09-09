@@ -10,7 +10,12 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "PAYMENT_ENABLED=true tsx --test 'tests/*.test.ts'"
+    "test": "PAYMENT_ENABLED=true tsx --test 'tests/*.test.ts'",
+    "arch:check": "depcruise . --config .dependency-cruiser.cjs",
+    "arch:check:html": "depcruise . --config .dependency-cruiser.cjs --output-type html --output-to arch-report.html",
+    "arch:check:graph": "depcruise . --config .dependency-cruiser.cjs --output-type dot --output-to arch-graph.dot",
+    "arch:test": "node --test arch-tests/*.test.mjs",
+    "arch:all": "npm run arch:check && npm run arch:test"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
