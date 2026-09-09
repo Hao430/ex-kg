@@ -109,7 +109,14 @@ const SharePageInner: React.FC<{ shareCode: string }> = ({ shareCode }) => {
   }, [shareCode]);
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-[#070a13] flex flex-col">
+    // 高度修复（2026-09-09）：必须用确定高度（h-screen + 100dvh 渐进增强）。
+    // 此前 min-h-screen（height:auto）下 flex-1 子项高度对孙辈的 height:100% 是
+    // 「不确定高度」，React Flow（height:100%; overflow:hidden）解析为 0，
+    // 节点已渲染进 DOM 但整体被裁剪——肉眼即「画布不渲染」。
+    <div
+      className="h-screen bg-slate-50 dark:bg-[#070a13] flex flex-col"
+      style={{ height: '100dvh' }}
+    >
       {/* 顶部品牌条 */}
       <header className="flex items-center justify-between px-5 py-3 border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/80 backdrop-blur z-10">
         <div className="flex items-center gap-2">
