@@ -176,6 +176,21 @@ export const forgotPasswordRateLimiter = rateLimit({
 });
 
 /**
+ * Rate limiter for subscription endpoints: 10 req/min per IP（技术债 #0012，防刷"尝试下单"）
+ */
+export const subscriptionRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => ipKeyGenerator(req.ip || 'anonymous'),
+  message: {
+    error: '订阅操作过于频繁，请稍后再试',
+    code: 'RATE_LIMIT_EXCEEDED',
+  },
+});
+
+/**
  * Extract token from Cookie or Bearer header
  */
 export function extractToken(req: Request): string | null {

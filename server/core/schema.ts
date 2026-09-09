@@ -112,6 +112,8 @@ export async function initDbSchema(): Promise<boolean> {
         height INT DEFAULT 320 NOT NULL,
         depth INT DEFAULT 0 NOT NULL,
         parent_id VARCHAR(64) REFERENCES nodes(id) ON DELETE SET NULL,
+        -- 技术债 #0006：禁止 parent 自指（环链的最低防线；多节点环由 saveCanvas 写入路径校验）
+        CONSTRAINT nodes_parent_id_no_self CHECK (id != parent_id),
         model_used VARCHAR(64) DEFAULT '', -- 默认模型由管理后台配置（ai_model_config），存列仅作节点级元数据
         grounding JSONB DEFAULT '[]'::jsonb,
         is_collapsed BOOLEAN DEFAULT FALSE NOT NULL,
@@ -468,6 +470,18 @@ export async function initDbSchema(): Promise<boolean> {
     // C 组清理迁移：点数体系已下线，删除历史遗留列与流水表
     await client.query(`ALTER TABLE users DROP COLUMN IF EXISTS credits_balance;`);
     await client.query(`DROP TABLE IF EXISTS credit_transactions;`);
+
+    // 技术债 #0006：存量库补 nodes 自指 CHECK（PG 无 ADD CONSTRAINT IF NOT EXISTS，先查 pg_constraint；
+    // 上约束前修复历史自指脏数据——parent 指向自身无业务语义，置空处理）
+    await client.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'nodes_parent_id_no_self') THEN
+          UPDATE nodes SET parent_id = NULL WHERE parent_id = id;
+          ALTER TABLE nodes ADD CONSTRAINT nodes_parent_id_no_self CHECK (id != parent_id);
+        END IF;
+      END $$;
+    `);
 
     // 模型默认值中性化迁移：默认模型唯一来源为管理后台配置（ai_model_config），
     // 存量库同步将列默认值改为空串（写入路径始终显式赋值，此处仅口径对齐）

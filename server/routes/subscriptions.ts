@@ -1,11 +1,14 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { authMiddleware } from '../middleware/auth.js';
+import { authMiddleware, subscriptionRateLimiter } from '../middleware/auth.js';
 import { asyncHandler } from '../lib/async-handler.js';
 import { validate } from '../lib/validate.js';
 import { startSubscription, mockPayOrder, getOrderStatus, isPaymentEnabled } from '../services/billing.service.js';
 
 export const subscriptionsRouter = Router();
+
+// 订阅全端点挂限流器（技术债 #0012，ADR-0007 独立实例）：IP 维度 10/min，防刷"尝试下单"
+subscriptionsRouter.use(subscriptionRateLimiter);
 
 const OrderPlanSchema = z.object({
   plan: z.enum(['weekly', 'monthly', 'yearly']),

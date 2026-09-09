@@ -2,7 +2,7 @@ import pg from 'pg';
 import { getPool } from '../core/pool.js';
 import { initDbSchema } from '../core/schema.js';
 import { inMemoryStore } from '../core/memory-store.js';
-import { AppError, ConflictError, ForbiddenError, NotFoundError } from '../lib/errors.js';
+import { AppError, ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../lib/errors.js';
 import type { CanvasRecord } from '../core/records.js';
 import { handlePgError } from '../core/db-guard.js';
 
@@ -199,6 +199,30 @@ export async function getCanvas(canvasId: string, userId?: string, isAdmin = fal
   return { ...canvas, nodes: (canvas.nodes || []).map((n) => normalizeMemoryNode(n, canvas.defaultModel)) };
 }
 
+/**
+ * parent 链环检测（技术债 #0006）：saveCanvas 的 parentId 来自前端请求体，理论可构造
+ * a→b→a 多节点环（PG 的 CHECK 约束只能防单节点自指）。环链会使后续任何层级遍历
+ * （子树剥离 extractSubtree、级联操作、上下文回溯）死循环。沿 parent 链以 visited set
+ * 探测，发现环抛 ValidationError 拒绝整次保存。saveCanvas 双分支共用此入口校验。
+ */
+function assertAcyclicParentChain(nodes: any[]): void {
+  const parentOf = new Map<string, string | null>();
+  for (const node of nodes || []) {
+    if (node?.id) parentOf.set(String(node.id), node?.data?.parentId ? String(node.data.parentId) : null);
+  }
+  for (const startId of parentOf.keys()) {
+    const visited = new Set<string>();
+    let cur: string | null = startId;
+    while (cur) {
+      if (visited.has(cur)) {
+        throw new ValidationError('节点层级关系存在循环引用，已拒绝保存', 'NODE_PARENT_CYCLE');
+      }
+      visited.add(cur);
+      cur = parentOf.get(cur) ?? null;
+    }
+  }
+}
+
 export async function saveCanvas(
   data: {
     id: string;
@@ -219,6 +243,9 @@ export async function saveCanvas(
   const p = getPool();
   const now = new Date().toISOString();
   const vp = data.viewport || { x: 0, y: 0, zoom: 1 };
+
+  // 环链校验在权限/事务之前统一执行，PG 与内存双分支共用（技术债 #0006）
+  assertAcyclicParentChain(data.nodes);
 
   /** 乐观锁：画布已存在且调用方声明了其已知版本时校验，防止并发静默覆盖 */
   const assertNoConflict = (serverUpdatedAt: string | null | undefined): void => {

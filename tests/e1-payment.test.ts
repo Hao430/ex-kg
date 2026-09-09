@@ -6,10 +6,17 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createApp } from '../server/app.js';
+import { subscriptionRateLimiter } from '../server/middleware/auth.js';
+import { ipKeyGenerator } from 'express-rate-limit';
 
 let server: http.Server;
 let base = '';
 let userCookie = '';
+
+/** 复位订阅限流器：本文件同 IP 订阅请求 >10 次/分钟，会撞新加的 subscriptionRateLimiter 429（技术债 #0012） */
+function resetSubLimiter(): void {
+  subscriptionRateLimiter.resetKey(ipKeyGenerator('127.0.0.1'));
+}
 
 async function waitSeeds(tries = 50): Promise<void> {
   for (let i = 0; i < tries; i++) {
@@ -31,6 +38,7 @@ describe('E1+E2 支付抽象与 Mock 生命周期', () => {
     const { port } = server.address() as AddressInfo;
     base = `http://127.0.0.1:${port}`;
     await waitSeeds();
+    resetSubLimiter();
 
     const res = await fetch(`${base}/api/auth/sign-in`, {
       method: 'POST',
@@ -52,6 +60,7 @@ describe('E1+E2 支付抽象与 Mock 生命周期', () => {
   }
 
   test('下单 → pending 订单 + mock payUrl，VIP 未生效', async () => {
+    resetSubLimiter();
     const { status, body } = await startOrder('weekly');
     assert.equal(status, 201);
     assert.ok(body.orderNo);
@@ -68,6 +77,7 @@ describe('E1+E2 支付抽象与 Mock 生命周期', () => {
   });
 
   test('模拟支付回调 → 订单 paid + VIP 生效（weekly 7 天）', async () => {
+    resetSubLimiter();
     const { body } = await startOrder('weekly');
     const res = await fetch(`${base}/api/subscriptions/orders/${body.orderNo}/mock-pay`, {
       method: 'POST',
@@ -85,6 +95,7 @@ describe('E1+E2 支付抽象与 Mock 生命周期', () => {
   });
 
   test('重复 mock-pay 已支付订单 → 409 ORDER_ALREADY_PAID', async () => {
+    resetSubLimiter();
     const { body } = await startOrder('monthly');
     await fetch(`${base}/api/subscriptions/orders/${body.orderNo}/mock-pay`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', cookie: userCookie },
@@ -97,6 +108,7 @@ describe('E1+E2 支付抽象与 Mock 生命周期', () => {
   });
 
   test('未知 orderNo：mock-pay 与查询均 404', async () => {
+    resetSubLimiter();
     const pay = await fetch(`${base}/api/subscriptions/orders/ORD-NOTEXIST/mock-pay`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', cookie: userCookie },
     });
@@ -109,6 +121,7 @@ describe('E1+E2 支付抽象与 Mock 生命周期', () => {
   });
 
   test('他人订单 mock-pay → 403', async () => {
+    resetSubLimiter();
     const admin = await fetch(`${base}/api/auth/sign-in`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

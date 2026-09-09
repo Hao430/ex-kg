@@ -19,8 +19,10 @@ import { checkDbStatus } from './core/db-status.js';
 export function createApp(): express.Express {
   const app = express();
 
-  // Trust the reverse proxy (required for express-rate-limit in production/cloud)
-  app.set('trust proxy', 1);
+  // Trust proxy（技术债 #0010）：仅信任回环/私网段代理跳数。
+  // 反代/CDN 后限流器按 X-Forwarded-For 末端可信跳取真实 IP；
+  // 若前端挂公网 CDN，需在此显式枚举 CDN 出口 IP 段，不可放宽为 true/更大跳数。
+  app.set('trust proxy', 'loopback, linklocal, uniquelocal');
 
   // Security headers with Helmet (per Spec 1.2)
   app.use(
