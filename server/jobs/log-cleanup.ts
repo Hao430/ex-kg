@@ -11,6 +11,7 @@ import { cleanupOldAuditLogs } from '../repositories/audit.repository.js';
 import { cleanupOldEventLogs } from '../repositories/event-log.repository.js';
 import { cleanupDeletedUsers } from '../repositories/user.repository.js';
 import { cleanupExpiredSessions } from '../repositories/session.repository.js';
+import { initDbSchema } from '../core/schema.js';
 
 const DAY_MS = 24 * 3600 * 1000;
 
@@ -22,6 +23,9 @@ export function startLogCleanupJob(): void {
 
   const run = async () => {
     try {
+      // 技术债 #0011：首跑前显式等 schema/PG 就绪（pg Pool 无连接超时，PG 冷启动慢时
+      // 会阻塞在此直到可连），避免启动竞态下首跑失败要等 24h 下一周期才真正清理
+      await initDbSchema();
       const ai = await cleanupOldAiLogs(aiRetention);
       const audit = await cleanupOldAuditLogs(auditRetention);
       const events = await cleanupOldEventLogs(eventRetention);

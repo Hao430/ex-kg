@@ -16,8 +16,7 @@ const app = createApp();
 const PORT = Number(process.env.PORT) || 3000;
 
 async function start() {
-  // Initialize DB in background
-  startLogCleanupJob();
+  // DB schema 初始化先行（后台）
   initDbSchema().catch((err) => console.warn('Background initDbSchema warning:', err?.message || err));
 
   if (process.env.NODE_ENV !== 'production') {
@@ -41,6 +40,9 @@ async function start() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Arborize (枝想) enterprise server listening on http://0.0.0.0:${PORT}`);
+    // 技术债 #0011：清理任务延后到监听成功之后启动（原在 initDbSchema 之前立即首跑，
+    // PG 启动慢时首跑必失败，要等 24h 下一周期才真正清理）
+    startLogCleanupJob();
   });
 }
 
