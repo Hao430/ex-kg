@@ -116,6 +116,29 @@ function generateFallbackResponse(userPrompt: string): string {
 }
 
 /**
+ * 技术债 #0023：SSE 背压写入。res.write 返回 false 表示内核缓冲已满——继续同步
+ * 高频写入会无界堆积内存、拖慢出口；此时挂起等待 'drain'（或 'close'）再继续，
+ * 把流式推送节流到客户端真实消费速度，防止高并发下事件循环与内存被推流拖垮。
+ * 客户端已断开（writableEnded/destroyed）时直接丢弃，配合上方 error/close 兜底。
+ */
+async function sseWrite(res: Response, payload: string): Promise<void> {
+  if (res.writableEnded || res.destroyed) return;
+  const ok = res.write(payload);
+  if (!ok) {
+    await new Promise<void>((resolve) => {
+      const cleanup = () => {
+        res.off('drain', onDrain);
+        res.off('close', onClose);
+      };
+      const onDrain = () => { cleanup(); resolve(); };
+      const onClose = () => { cleanup(); resolve(); };
+      res.once('drain', onDrain);
+      res.once('close', onClose);
+    });
+  }
+}
+
+/**
  * POST /api/chat
  * Secure AI chat with input limits, quota pre-check, SSE streaming, and post-inference audit logging
  * Supports both Google Gemini native models and OpenAI-compatible models (DeepSeek, GPT-4o, etc.)
@@ -394,7 +417,7 @@ chatRouter.post(
                 if (typeof delta === 'string' && delta) {
                   if (!ttftMs) ttftMs = Date.now() - startTime; // Spec I：首字延迟
                   accumulatedResponseText += delta;
-                  res.write(`data: ${JSON.stringify({ text: delta })}\n\n`);
+                  await sseWrite(res, `data: ${JSON.stringify({ text: delta })}\n\n`);
                 }
                 break;
               }
@@ -406,7 +429,8 @@ chatRouter.post(
                   collectQueries(chunk.item.action?.queries);
                   collectSources(chunk.item.action?.sources);
                   if (accumulatedSources.length > 0 || accumulatedQueries.length > 0) {
-                    res.write(
+                    await sseWrite(
+                      res,
                       `data: ${JSON.stringify({
                         grounding: { sources: accumulatedSources, queries: accumulatedQueries },
                       })}\n\n`
@@ -472,7 +496,8 @@ chatRouter.post(
         });
 
         // Send final done event
-        res.write(
+        await sseWrite(
+          res,
           `data: ${JSON.stringify({
             done: true,
             modelUsed: actualModelUsed,
@@ -601,7 +626,7 @@ chatRouter.post(
 
             if (streamStarted) {
               resetCount++; // Spec I：容灾换流计数
-              res.write(`data: ${JSON.stringify({ reset: true })}\n\n`);
+              await sseWrite(res, `data: ${JSON.stringify({ reset: true })}\n\n`);
               void recordEventLog({
                 category: 'chat',
                 event: 'chat_stream_reset',
@@ -627,11 +652,12 @@ chatRouter.post(
               if (firstVal.text) {
                 if (!ttftMs) ttftMs = Date.now() - startTime; // Spec I：首字延迟
                 accumulatedResponseText += firstVal.text;
-                res.write(`data: ${JSON.stringify({ text: firstVal.text })}\n\n`);
+                await sseWrite(res, `data: ${JSON.stringify({ text: firstVal.text })}\n\n`);
               }
 
               if (accumulatedSources.length > 0 || accumulatedQueries.length > 0) {
-                res.write(
+                await sseWrite(
+                  res,
                   `data: ${JSON.stringify({
                     grounding: { sources: accumulatedSources, queries: accumulatedQueries },
                   })}\n\n`
@@ -652,7 +678,7 @@ chatRouter.post(
                 if (text) {
                   if (!ttftMs) ttftMs = Date.now() - startTime; // Spec I：首字延迟
                   accumulatedResponseText += text;
-                  res.write(`data: ${JSON.stringify({ text })}\n\n`);
+                  await sseWrite(res, `data: ${JSON.stringify({ text })}\n\n`);
                 }
               }
             }
@@ -694,7 +720,8 @@ chatRouter.post(
             });
 
             // Send final done event with full grounding and token consumption
-            res.write(
+            await sseWrite(
+              res,
               `data: ${JSON.stringify({
                 done: true,
                 modelUsed: actualModelUsed,
@@ -757,7 +784,7 @@ chatRouter.post(
           const chunkSize = 20;
           for (let i = 0; i < fallbackText.length; i += chunkSize) {
             const slice = fallbackText.slice(i, i + chunkSize);
-            res.write(`data: ${JSON.stringify({ text: slice })}\n\n`);
+            await sseWrite(res, `data: ${JSON.stringify({ text: slice })}\n\n`);
             await new Promise((r) => setTimeout(r, 25));
           }
 
@@ -793,7 +820,8 @@ chatRouter.post(
             },
           });
 
-          res.write(
+          await sseWrite(
+            res,
             `data: ${JSON.stringify({
               done: true,
               modelUsed: 'arborize-knowledge-base (容灾模式)',
@@ -838,7 +866,8 @@ chatRouter.post(
         candidateFailures,
         fallbackUsed,
       });
-      res.write(
+      await sseWrite(
+        res,
         `data: ${JSON.stringify({
           error: friendlyMsg,
         })}\n\n`
