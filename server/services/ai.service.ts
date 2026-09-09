@@ -1,6 +1,6 @@
 import { getAiModelConfig, getSavedAiModelConfig } from '../repositories/ai.repository.js';
 
-export { getAiModelConfig, getSavedAiModelConfig, saveAiModelConfig, recordAiRequestLog } from '../repositories/ai.repository.js';
+export { getAiModelConfig, getSavedAiModelConfig, saveAiModelConfig, recordAiRequestLog, sumUserTokensSince } from '../repositories/ai.repository.js';
 
 /**
  * Spec E4（跟踪清单「模型配置单点依赖」）：模型是否已配置。

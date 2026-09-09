@@ -230,9 +230,36 @@ export async function getSavedAiModelConfig(): Promise<Partial<AiModelConfig> | 
 }
 
 /**
- * Save or update system AI Model & API Provider configuration
+ * 技术债 #0021：聚合用户当日（自 sinceMs 起）token 消耗总量，供 chat 推理前的
+ * per-user 每日配额校验。双模：PG SUM 聚合 / 内存 filter+reduce（与 ai_request_logs
+ * 读取口径一致：user_id 维度、created_at ISO 字符串）。
  */
-export async function saveAiModelConfig(config: Partial<AiModelConfig>, operatorEmail?: string): Promise<AiModelConfig> {
+export async function sumUserTokensSince(userId: string, sinceMs: number): Promise<number> {
+  const p = getPool();
+  if (p) {
+    try {
+      await initDbSchema();
+      const res = await p.query(
+        `SELECT COALESCE(SUM(total_tokens), 0)::bigint AS total
+         FROM ai_request_logs
+         WHERE user_id = $1 AND created_at >= $2`,
+        [userId, new Date(sinceMs)]
+      );
+      return parseInt(res.rows[0]?.total || '0', 10) || 0;
+    } catch (e) {
+      handlePgError(e);
+      console.warn('PG sumUserTokensSince fallback to in-memory:', e);
+    }
+  }
+
+  return inMemoryStore.aiRequestLogs
+    .filter((l) => l.user_id === userId && new Date(l.created_at).getTime() >= sinceMs)
+    .reduce((sum, l) => sum + (l.total_tokens || 0), 0);
+}
+
+/**
+ * Save or update system AI Model & API Provider configuration
+ */export async function saveAiModelConfig(config: Partial<AiModelConfig>, operatorEmail?: string): Promise<AiModelConfig> {
   const current = await getAiModelConfig();
   const updated: AiModelConfig = {
     ...current,

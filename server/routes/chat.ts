@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { GoogleGenAI } from '@google/genai';
-import { getAiModelConfig, isModelConfigured, recordAiRequestLog } from '../services/ai.service.js';
+import { getAiModelConfig, isModelConfigured, recordAiRequestLog, sumUserTokensSince } from '../services/ai.service.js';
 import { recordEventLog } from '../repositories/event-log.repository.js';
 import { authMiddleware, validateInputLimits, roleBasedRateLimiter } from '../middleware/auth.js';
 import { chatQuotaMiddleware } from '../middleware/quota.js';
@@ -213,6 +213,24 @@ chatRouter.post(
           error: 'AI 模型尚未配置，请管理员在管理后台「模型配置」中选择模型并保存后再试',
           code: 'MODEL_NOT_CONFIGURED',
         });
+      }
+
+      // 技术债 #0021：per-user 每日 token 配额（按日 UTC 聚合 ai_request_logs，
+      // 默认 20 万 tokens/天，AI_DAILY_TOKEN_QUOTA 可调，0 = 不限）。
+      // 高消耗用户拖垮预算的兜底闸门，与配额服务端化（B1）互补。
+      const dailyTokenQuota = parseInt(process.env.AI_DAILY_TOKEN_QUOTA || '200000', 10);
+      if (dailyTokenQuota > 0) {
+        const now = new Date();
+        const dayStartUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+        const usedTokens = await sumUserTokensSince(user.id, dayStartUtc);
+        if (usedTokens >= dailyTokenQuota) {
+          return res.status(429).json({
+            error: '今日 AI 用量已达上限，请明日再试或联系管理员调整',
+            code: 'DAILY_TOKEN_QUOTA_EXCEEDED',
+            used_tokens: usedTokens,
+            daily_quota: dailyTokenQuota,
+          });
+        }
       }
 
       // Effective system instruction for structured Arborize thinking, concise responses (<450 words) and suggestion generation
