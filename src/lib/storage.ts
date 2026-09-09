@@ -100,6 +100,12 @@ export function saveBoard(board: StoredBoard): void {
 
 /** 纯本地持久化（写画布记录 + 更新索引），不触发服务端入队 */
 function persistBoard(cleanedBoard: StoredBoard): void {
+  // 兜底合并：调用点构造的 StoredBoard 不携带 serverUpdatedAt 时，从权威小键读回注入，
+  // 防止覆写 blob 抹掉内嵌版本号（App 层各 saveBoard 调用点均不传该字段）
+  if (!cleanedBoard.serverUpdatedAt) {
+    const serverTs = localStorage.getItem(`${SERVER_TS_PREFIX}${cleanedBoard.id}`);
+    if (serverTs) cleanedBoard.serverUpdatedAt = serverTs;
+  }
   localStorage.setItem(
     `${STORAGE_BOARD_PREFIX}${cleanedBoard.id}`,
     JSON.stringify(cleanedBoard)
@@ -124,62 +130,85 @@ function persistBoard(cleanedBoard: StoredBoard): void {
 /**
  * Sync board to backend API（三态：ok / conflict / fail，供重试队列判定）
  * - 携带 serverUpdatedAt 作为乐观锁版本（Spec A4）
- * - 409 冲突：派发 deepdive:canvas-save-conflict 事件（App 层 toast 提示），不静默覆盖
+ * - 409 冲突静默自愈：用响应的 latest_updated_at 推进版本号、原样重发本地内容
+ *   （本地版胜出、覆盖服务端，用户无感知）；上限 MAX_CONFLICT_ATTEMPTS 次，
+ *   耗尽或响应异常（解析失败/缺 latest_updated_at）才派发 deepdive:canvas-save-conflict
+ *   事件（App 层 toast 提示）。收到合法 latest 的瞬间即落小键，即使本轮后续失败，
+ *   下轮队列重跑也已携带新鲜版本。
  */
-export async function syncBoardToBackend(board: StoredBoard): Promise<'ok' | 'conflict' | 'fail'> {
-  try {
-    const res = await fetch(`/api/canvases/${encodeURIComponent(board.id)}/save`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({
-        title: board.name,
-        viewport: board.viewport,
-        nodes: board.nodes,
-        edges: board.edges,
-        expectedUpdatedAt: board.serverUpdatedAt,
-      }),
-    });
+/** 409 静默自愈的总尝试次数（含首次） */
+const MAX_CONFLICT_ATTEMPTS = 3;
 
-    if (res.status === 409) {
-      const body = await res.json().catch(() => null) as any;
-      window.dispatchEvent(
-        new CustomEvent('deepdive:canvas-save-conflict', {
-          detail: {
-            boardId: board.id,
-            message: body?.error || '画板已在其他窗口被修改',
-            latestUpdatedAt: body?.latest_updated_at,
-          },
-        })
-      );
-      return 'conflict';
+/** 冲突/失败提示事件统一派发（detail 形状向后兼容，App 层只读 message） */
+function dispatchConflictEvent(boardId: string, message?: string, latestUpdatedAt?: string): void {
+  window.dispatchEvent(
+    new CustomEvent('deepdive:canvas-save-conflict', {
+      detail: {
+        boardId,
+        message,
+        latestUpdatedAt,
+      },
+    })
+  );
+}
+
+export async function syncBoardToBackend(board: StoredBoard): Promise<'ok' | 'conflict' | 'fail'> {
+  let expected = board.serverUpdatedAt;
+  for (let attempt = 1; attempt <= MAX_CONFLICT_ATTEMPTS; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(`/api/canvases/${encodeURIComponent(board.id)}/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          title: board.name,
+          viewport: board.viewport,
+          nodes: board.nodes,
+          edges: board.edges,
+          expectedUpdatedAt: expected,
+        }),
+      });
+    } catch (e) {
+      // 网络失败（含自愈重试中途）：交回 sync-queue 退避重试
+      return 'fail';
     }
 
     // 401 会话失效（如改密/重置密码后被踢下线）：重试无意义——提示重新登录并停止重试
     if (res.status === 401) {
-      window.dispatchEvent(
-        new CustomEvent('deepdive:canvas-save-conflict', {
-          detail: {
-            boardId: board.id,
-            message: '登录状态已失效，请重新登录后再保存画板',
-          },
-        })
-      );
+      dispatchConflictEvent(board.id, '登录状态已失效，请重新登录后再保存画板');
       return 'conflict';
     }
 
     // 配额/权限类 403 为永久失败，重试无意义——直接提示（Spec B1/B4）
     if (res.status === 403) {
       const body = await res.json().catch(() => null) as any;
-      window.dispatchEvent(
-        new CustomEvent('deepdive:canvas-save-conflict', {
-          detail: {
-            boardId: board.id,
-            message: body?.error || '画板保存被拒绝',
-          },
-        })
-      );
+      dispatchConflictEvent(board.id, body?.error || '画板保存被拒绝');
       return 'conflict';
+    }
+
+    // 409 冲突：静默自愈（本地版胜出）
+    if (res.status === 409) {
+      const body = await res.json().catch(() => null) as any;
+      const latest = body?.latest_updated_at;
+      // 降级 1：latest 缺失/非法 → 退回提示路径，不重试
+      if (typeof latest !== 'string' || !latest) {
+        dispatchConflictEvent(board.id, body?.error || '画板已在其他窗口被修改');
+        return 'conflict';
+      }
+      // 立即落服务端事实版本：即使本轮重试失败，下轮 executor 重跑也已带新鲜版本
+      board.serverUpdatedAt = latest;
+      persistServerUpdatedAt(board.id, latest);
+      // 降级 2：重试耗尽 → 退回提示路径
+      if (attempt === MAX_CONFLICT_ATTEMPTS) {
+        dispatchConflictEvent(board.id, body?.error || '画板已在其他窗口被修改', latest);
+        return 'conflict';
+      }
+      console.warn(
+        `[canvas-sync] 409 conflict, retrying with latest server version (${attempt}/${MAX_CONFLICT_ATTEMPTS}) for ${board.id}`
+      );
+      expected = latest; // 内容不变（本地版胜出），仅推进版本号重发
+      continue;
     }
 
     if (res.ok) {
@@ -191,9 +220,8 @@ export async function syncBoardToBackend(board: StoredBoard): Promise<'ok' | 'co
       return 'ok';
     }
     return 'fail';
-  } catch (e) {
-    return 'fail';
   }
+  return 'fail';
 }
 
 /** 仅更新本地记录的 serverUpdatedAt（不触发再次入队）；写独立小键，避免整板重读重写 */
@@ -253,6 +281,8 @@ export async function fetchBoardFromServer(boardId: string): Promise<StoredBoard
       serverUpdatedAt: data.updatedAt,
     };
     persistBoard(board);
+    // 同步刷新权威小键：刷新/切板即重置版本源，斩断「冲突 → 小键停留旧值 → 保存再 409」死锁
+    persistServerUpdatedAt(board.id, board.serverUpdatedAt!);
     return board;
   } catch (e) {
     return null;
