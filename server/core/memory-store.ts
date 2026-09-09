@@ -31,8 +31,15 @@ export function trimAuditLogs(): void {
   }
 }
 
-/** 业务事件日志内存上限：最新在前，超出裁剪最旧记录（Spec I） */
-const EVENT_LOGS_MAX = 1000;
+/**
+ * 业务事件日志内存上限：最新在前，超出裁剪最旧记录（Spec I）。
+ * 技术债 #0047：原 1000 条在 AI 推理密集场景约 200-500 次推理（chat_stream_reset /
+ * chat_client_abort / chat_model_candidate_failed 等每帧可能落多条）即滚没，排障窗口
+ * 过短；调至 10000（单条约 0.5KB，约 5MB 内存），可经 EVENT_LOGS_MEM_MAX 覆盖
+ * （下限 1000，防误配把上限锁死过小）。PG 分支不受此限制——全量落库，按
+ * EVENT_LOG_RETENTION_DAYS 留存期清理（BRIN 索引服务范围扫描）。
+ */
+const EVENT_LOGS_MAX = Math.max(1000, parseInt(process.env.EVENT_LOGS_MEM_MAX || '10000', 10) || 10000);
 
 export function trimEventLogs(): void {
   if (inMemoryStore.eventLogs.length > EVENT_LOGS_MAX) {
