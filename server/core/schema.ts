@@ -441,6 +441,10 @@ export async function initDbSchema(): Promise<boolean> {
       await client.query(`CREATE INDEX IF NOT EXISTS idx_canvas_snapshots_canvas ON canvas_snapshots(canvas_id, created_at DESC);`);
       // 审计与通知高频查询路径（对齐 docs 建表脚本）
       await client.query(`CREATE INDEX IF NOT EXISTS idx_user_audit_user_action ON user_audit_logs(user_id, action, created_at DESC);`);
+      // 技术债 #0018：Admin 审计日志分页查询路径——BRIN 不能提供有序输出，纯
+      // ORDER BY created_at DESC 分页与"仅按 user_id 过滤"各需一条 B-tree
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_audit_created_desc ON user_audit_logs(created_at DESC);`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_audit_user_created ON user_audit_logs(user_id, created_at DESC);`);
       await client.query(`CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications(user_id, is_read, created_at DESC);`);
       await client.query(`CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);`);
       await client.query(`CREATE INDEX IF NOT EXISTS idx_feedbacks_status ON feedbacks(status, created_at DESC);`);
