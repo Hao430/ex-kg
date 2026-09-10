@@ -1,6 +1,6 @@
 # ADR-0006: 一期不接真实支付（PaymentProvider 抽象 + Mock）
 
-- **Status**: Accepted
+- **Status**: Superseded by ADR-0014（2026-09-10 接入支付宝；PaymentProvider 抽象与 mock 开发链路仍沿用本 ADR 设计）
 - **Date**: 2026-09-09
 - **Deciders**: 枝想架构组
 - **Tags**: payment, phase1, abstraction

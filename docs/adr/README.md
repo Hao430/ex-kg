@@ -35,10 +35,11 @@
 
 | # | 标题 | 状态 | 日期 | 摘要 |
 | :--- | :--- | :--- | :--- | :--- |
-| [0006](./0006-mock-payment-phase1.md) | 一期不接真实支付（PaymentProvider 抽象 + Mock） | Accepted | 2026-09-09 | `PAYMENT_ENABLED=false` 关闭在线充值；VIP 由 Admin 赠送 |
+| [0006](./0006-mock-payment-phase1.md) | ~~一期不接真实支付（PaymentProvider 抽象 + Mock）~~ | **Superseded by 0014** | 2026-09-09 | `PAYMENT_ENABLED=false` 关闭在线充值；VIP 由 Admin 赠送 |
 | [0007](./0007-independent-rate-limiters.md) | 12 个独立限流器 | Accepted | 2026-09-09 | 每个限流器独立实例 + 独立计数 key，避免一端点耗尽名额拖垮其他 |
 | [0010](./0010-scrypt-hardening.md) | scrypt 加固参数（N=2^16 / r=8 / p=1） | Accepted | 2026-09-09 | 单次校验 ≥200ms 抗 GPU 暴力；版本头 `scrypt$N$r$p$salt:key` 支持存量升级 |
 | [0011](./0011-email-verification-code-first.md) | 邮箱验证（验证码先行） | Accepted | 2026-09-09 | 注册先发 6 位码（10 分钟、连错 5 次作废），账号出生即 `email_verified=true` |
+| [0014](./0014-alipay-page-pay.md) | 支付宝电脑网站支付（alipay.trade.page.pay） | Accepted | 2026-09-10 | 官方 alipay-sdk v4；三要素齐备走支付宝、否则回落 mock；notify 验签+金额+app_id 三重校验、幂等激活、查单兜底 |
 
 ### 同步与并发
 
@@ -50,7 +51,7 @@
 
 | # | 标题 | 状态 | 取代为 |
 | :--- | :--- | :--- | :--- |
-| _(暂无)_ | | | |
+| [0006](./0006-mock-payment-phase1.md) | 一期不接真实支付（PaymentProvider 抽象 + Mock） | Superseded | [ADR-0014](./0014-alipay-page-pay.md)（2026-09-10 接入支付宝；其中 PaymentProvider 抽象与 mock 开发链路仍沿用） |
 
 ## 待提议 (Proposed)
 
@@ -63,7 +64,7 @@
 - **部署 / 运维**：[0001](./0001-single-port-fullstack.md)
 - **持久化 / 数据**：[0002](./0002-dual-mode-persistence.md) · [0004](./0004-strict-tenant-ownership.md) · [0005](./0005-soft-delete-with-30d-cooldown.md) · [0012](./0012-default-canvas-no-delete.md) · [0013](./0013-frontend-node-id-truncation.md)
 - **AI 集成**：[0003](./0003-multi-model-failover.md) · [0009](./0009-150-node-subtree-split.md)
-- **业务与安全**：[0006](./0006-mock-payment-phase1.md) · [0007](./0007-independent-rate-limiters.md) · [0010](./0010-scrypt-hardening.md) · [0011](./0011-email-verification-code-first.md)
+- **业务与安全**：[0007](./0007-independent-rate-limiters.md) · [0010](./0010-scrypt-hardening.md) · [0011](./0011-email-verification-code-first.md) · [0014](./0014-alipay-page-pay.md)
 - **同步与并发**：[0008](./0008-sync-state-machine.md)
 
 > 索引本身由 ADR 维护者更新；新增 ADR 时把行加到对应主题段，并按编号升序排列。
