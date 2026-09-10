@@ -37,6 +37,8 @@ import {
   Trash2,
   Link2,
   Share2,
+  Star,
+  Archive,
 } from 'lucide-react';
 import { DeepDiveBoardMeta } from '../../types';
 import { useAuth } from '../../context/AuthContext';
@@ -64,6 +66,8 @@ interface TopbarProps {
   onGoToLanding?: () => void;
   /** 打开示例画布查看器（Spec K5/D1 冷启动引导） */
   onOpenSamples?: () => void;
+  /** 打开画板库（Spec L1：搜索/收藏/归档） */
+  onOpenLibrary?: () => void;
   theme?: 'light' | 'dark';
   onToggleTheme?: () => void;
   nodeCount?: number;
@@ -93,6 +97,7 @@ export const Topbar: React.FC<TopbarProps> = ({
   onResetBoard,
   onGoToLanding,
   onOpenSamples,
+  onOpenLibrary,
   theme = 'light',
   onToggleTheme,
   nodeCount,
@@ -288,7 +293,14 @@ export const Topbar: React.FC<TopbarProps> = ({
                 </span>
               </div>
               <div className="max-h-52 overflow-y-auto mt-1">
-                {boards.map((b) => (
+                {/* Spec L1：归档画板不进快捷切换；收藏置顶（画板库统一管理归档） */}
+                {[...boards.filter((b) => !b.isArchived)]
+                  .sort(
+                    (a, b) =>
+                      Number(Boolean(b.isFavorite)) - Number(Boolean(a.isFavorite)) ||
+                      b.updatedAt - a.updatedAt
+                  )
+                  .map((b) => (
                   <div
                     key={b.id}
                     onClick={() => {
@@ -301,7 +313,12 @@ export const Topbar: React.FC<TopbarProps> = ({
                         : 'text-slate-700 dark:text-slate-300'
                     }`}
                   >
-                    <span className="truncate flex-1 mr-2">{b.name}</span>
+                    <span className="flex items-center gap-1 min-w-0 flex-1 mr-2">
+                      {b.isFavorite && (
+                        <Star className="w-3 h-3 text-amber-400 shrink-0" fill="currentColor" />
+                      )}
+                      <span className="truncate">{b.name}</span>
+                    </span>
                     <span className="flex items-center gap-0.5 shrink-0">
                       {b.id === currentBoardId && <Check className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />}
                       {b.id !== 'default-board' && (
@@ -334,6 +351,18 @@ export const Topbar: React.FC<TopbarProps> = ({
                     示例画布 · 看看怎么用
                   </button>
                 )}
+                {onOpenLibrary && (
+                  <button
+                    onClick={() => {
+                      onOpenLibrary();
+                      setShowBoardMenu(false);
+                    }}
+                    className="w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 text-xs text-slate-500 dark:text-slate-400 font-medium hover:bg-slate-50 dark:hover:bg-slate-800/60 rounded-xl transition-colors"
+                  >
+                    <LayoutGrid className="w-3.5 h-3.5" />
+                    画板库 · 搜索 / 收藏 / 归档
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     onNewBoard();
@@ -359,6 +388,19 @@ export const Topbar: React.FC<TopbarProps> = ({
             <span className="hidden md:inline">新建画板</span>
           </button>
         </Tooltip>
+
+        {/* Spec L1：画板库入口（搜索 / 收藏 / 归档） */}
+        {onOpenLibrary && (
+          <Tooltip content="画板库（搜索 / 收藏 / 归档）" side="bottom">
+            <button
+              onClick={onOpenLibrary}
+              className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-slate-100/70 dark:bg-slate-800/60 hover:bg-slate-200/70 dark:hover:bg-slate-700/60 text-slate-700 dark:text-slate-200 text-xs font-medium border border-slate-200/50 dark:border-slate-700/50 transition-colors"
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+              <span className="hidden md:inline">画板库</span>
+            </button>
+          </Tooltip>
+        )}
 
         {/* 探索灵感节点显示开关：滑动切换仅隐藏视图，节点仍随画板保存并计入配额 */}
         {onToggleSuggestions && (

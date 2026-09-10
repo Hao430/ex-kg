@@ -12,6 +12,7 @@ import {
   loadBoard,
   saveBoard,
   deleteBoardLocally,
+  updateBoardMetaLocally,
   exportBoardToJson,
   exportBoardToMarkdown,
   fetchBoardFromServer,
@@ -25,7 +26,8 @@ import * as boardStore from './lib/board-store';
 import * as boardScope from './lib/board-scope';
 import * as quotaStore from './lib/quota-store';
 import * as syncQueue from './lib/sync-queue';
-import { useBoards } from './hooks/useBoards';
+import * as folderStore from './lib/folder-store';
+import { useBoards, useFolders } from './hooks/useBoards';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { trackEvent } from './lib/analytics';
 import { markChecklistStep } from './lib/checklist';
@@ -47,6 +49,7 @@ import { AdminDashboardModal } from './components/admin/AdminDashboardModal';
 import { UserProfileModal } from './components/ui/UserProfileModal';
 import { MySharesModal } from './components/ui/MySharesModal';
 import { FeedbackModal } from './components/ui/FeedbackModal';
+import { BoardLibraryModal } from './components/ui/BoardLibraryModal';
 
 /**
  * 新画布引导（H2）：注入一个待填写的主题根节点，避免新用户/新建画板面对纯空白画布。
@@ -91,6 +94,7 @@ function MainApp() {
   });
 
   const boards = useBoards();
+  const foldersView = useFolders();
   const [currentBoardId, setCurrentBoardId] = useState<string>('default-board');
   const [boardName, setBoardName] = useState<string>('量子计算深度探索');
   const [initialNodes, setInitialNodes] = useState<Node[] | undefined>(undefined);
@@ -102,6 +106,9 @@ function MainApp() {
 
   // Spec K5（D1）：示例画布只读查看器开关（Topbar「示例画布」入口）
   const [sampleViewerOpen, setSampleViewerOpen] = useState(false);
+
+  // Spec L1：画板库弹窗（搜索/收藏/归档）
+  const [libraryOpen, setLibraryOpen] = useState(false);
 
   // Global Dark Mode state ('light' | 'dark')
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -335,6 +342,7 @@ function MainApp() {
     const scopeChanged = boundScopeRef.current !== scopeKey;
     boardStore.bindScope(scopeKey); // 幂等，StrictMode 双跑安全
     syncQueue.bindQueueScope(scopeKey);
+    folderStore.bindScope(scopeKey);
     boundScopeRef.current = scopeKey;
 
     if (scopeChanged) {
@@ -395,6 +403,7 @@ function MainApp() {
       // 3) 后台对账（不阻塞 UI）
       if (!user) return;
       void quotaStore.refreshQuota();
+      void folderStore.refreshFolders();
       void fetchBoardListFromServer().then((serverList) => {
         if (cancelled || seq !== loadSeqRef.current) return;
         if (serverList && serverList.length > 0) {
@@ -510,6 +519,53 @@ function MainApp() {
     };
     saveBoard(boardToSave);
     showToast(`画板已重命名为「${newName}」`);
+  };
+
+  // Spec L1：画板库管理操作（收藏/归档/改名）走轻量 meta 通道，本地乐观 + 队列同步
+  const handleRenameBoardById = (id: string, newName: string) => {
+    if (id === currentBoardId) setBoardName(newName);
+    updateBoardMetaLocally(id, { name: newName });
+    showToast(`画板已重命名为「${newName}」`);
+  };
+
+  const handleToggleFavorite = (id: string, value: boolean) => {
+    updateBoardMetaLocally(id, { isFavorite: value });
+    showToast(value ? '已收藏画板（置顶显示）' : '已取消收藏');
+  };
+
+  const handleToggleArchive = (id: string, value: boolean) => {
+    updateBoardMetaLocally(id, { isArchived: value });
+    showToast(value ? '画板已归档，可在画板库「包含归档」中找回' : '画板已恢复');
+  };
+
+  // Spec L1：分组操作（在线优先，失败回滚由 folder-store 负责，此处只做反馈）
+  const handleMoveBoard = (boardId: string, folderId: string | null) => {
+    updateBoardMetaLocally(boardId, { folderId });
+    if (folderId) {
+      const name = foldersView.folders.find((f) => f.id === folderId)?.name;
+      showToast(name ? `已移动到分组「${name}」` : '已移动到分组');
+    } else {
+      showToast('已移出分组');
+    }
+  };
+
+  const handleCreateFolder = async (name: string) => {
+    const r = await folderStore.createFolder(name);
+    if (r.ok) showToast(`已创建分组「${name}」`);
+    return r;
+  };
+
+  const handleRenameFolder = async (id: string, name: string) => {
+    const r = await folderStore.renameFolder(id, name);
+    if (r.ok) showToast(`分组已重命名为「${name}」`);
+    return r;
+  };
+
+  const handleDeleteFolder = async (id: string) => {
+    const name = foldersView.folders.find((f) => f.id === id)?.name;
+    const r = await folderStore.deleteFolder(id);
+    if (r.ok) showToast(name ? `已删除分组「${name}」，组内画板回到未分组` : '已删除分组');
+    return r;
   };
 
   // 自动命名：画布首节点完成后，DeepDiveCanvas 经事件回传 LLM 生成的画板名。
@@ -932,6 +988,7 @@ function MainApp() {
         onResetBoard={handleResetBoard}
         onGoToLanding={handleGoToLanding}
         onOpenSamples={() => setSampleViewerOpen(true)}
+        onOpenLibrary={() => setLibraryOpen(true)}
         theme={theme}
         syncState={syncState}
         onToggleTheme={toggleTheme}
@@ -966,6 +1023,30 @@ function MainApp() {
       {/* Spec K5（D1）：示例画布只读查看器（纯前端静态内容，不占用户配额） */}
       {sampleViewerOpen && (
         <SampleBoardViewer onClose={() => setSampleViewerOpen(false)} />
+      )}
+
+      {/* Spec L1：画板库（搜索 / 收藏 / 归档；归档画板在此找回） */}
+      {libraryOpen && (
+        <BoardLibraryModal
+          boards={boards}
+          folders={foldersView.folders}
+          foldersOffline={foldersView.offline}
+          currentBoardId={currentBoardId}
+          onClose={() => setLibraryOpen(false)}
+          onSwitchBoard={(id) => void handleSwitchBoard(id)}
+          onNewBoard={() => {
+            setLibraryOpen(false);
+            handleNewBoard();
+          }}
+          onDeleteBoard={(id) => void handleDeleteBoard(id)}
+          onRenameBoard={handleRenameBoardById}
+          onToggleFavorite={handleToggleFavorite}
+          onToggleArchive={handleToggleArchive}
+          onMoveBoard={handleMoveBoard}
+          onCreateFolder={handleCreateFolder}
+          onRenameFolder={handleRenameFolder}
+          onDeleteFolder={handleDeleteFolder}
+        />
       )}
 
       {/* Spec K2：分享链接弹窗（创建/重建提示/撤销） */}

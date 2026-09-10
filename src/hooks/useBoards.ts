@@ -5,12 +5,22 @@
 import { useSyncExternalStore } from 'react';
 import * as boardStore from '../lib/board-store.js';
 import * as quotaStore from '../lib/quota-store.js';
+import * as folderStore from '../lib/folder-store.js';
 
 export function useBoards() {
   return useSyncExternalStore(
     boardStore.subscribe,
     boardStore.getBoardList,
     boardStore.getBoardList
+  );
+}
+
+/** Spec L1：分组视图（服务端快照 + 本地缓存的稳定快照） */
+export function useFolders(): folderStore.FoldersView {
+  return useSyncExternalStore(
+    folderStore.subscribe,
+    folderStore.getFoldersView,
+    folderStore.getFoldersView
   );
 }
 
