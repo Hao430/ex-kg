@@ -1,10 +1,12 @@
 # CI/CD：门禁 + 生产部署 + 一键回退
 #
-# 流程：push/PR main → ci（tsc/测试/arch/build/PG 冒烟）→
-#   - push main：deploy（environment production 人工放行）→ 备份快照 → rsync → 依赖 → 重启 → 验收
-#   - workflow_dispatch 带 rollback_snapshot：rollback（执行部署手册 §5）
+# 流程：push/PR main → ci（tsc/测试/arch/build/PG 冒烟，自动）→
+#   - 部署：Actions 页手动 Run workflow（留空 rollback_snapshot）→
+#     备份快照 → rsync → 依赖 → 重启 → 验收
+#   - 回退：手动 Run workflow 填 rollback_snapshot → 执行部署手册 §5
 #
-# 部署目标与全部命令口径来自 docs/部署与回退手册.md（铁律：不备份不发布）。
+# 人工放行 = 手动触发（私有仓库 Free 套餐无 Environment Required reviewers，
+# 见部署手册 §11）；部署目标与全部命令口径来自 docs/部署与回退手册.md。
 # 所需 Secrets：DEPLOY_HOST / DEPLOY_PORT / DEPLOY_USER / DEPLOY_SSH_KEY
 name: CI/CD
 
@@ -85,12 +87,11 @@ jobs:
           retention-days: 7
 
   deploy:
-    name: 部署到生产（production）
+    name: 部署到生产（手动触发）
     needs: ci
-    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.rollback_snapshot == '') }}
+    # 仅手动 Run workflow（回退输入留空）时执行——push 只跑门禁，不自动发版
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.rollback_snapshot == '' }}
     runs-on: ubuntu-latest
-    environment:
-      name: production   # Settings → Environments → production 需配置 Required reviewers（人工放行）
     concurrency:
       group: deploy-production
       cancel-in-progress: false
