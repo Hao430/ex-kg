@@ -40,7 +40,14 @@ export function pgDegraded(): boolean {
  */
 export function handlePgError(e: unknown): void {
   notePgError();
+  const err = e as { code?: string; message?: string } | undefined;
+  const detail = `code=${err?.code ?? '-'} message=${err?.message ?? String(e)}`;
   if (isProductionDbRequired()) {
+    // 生产 fail-fast 会直接抛错，调用方 catch 里的 console.warn 永远执行不到 →
+    // 真实 PG 错误必须在这里落日志，否则线上只剩 503 无从排查。
+    // 2026-09-10 踩坑：billing 下单报 42P08 时日志里干干净净，只能手写脚本复现。
+    console.error(`[db-guard] PG 查询失败，生产 fail-fast → 503 DB_UNAVAILABLE | ${detail}`);
     throw new AppError(503, 'DB_UNAVAILABLE', '数据库暂时不可用，请稍后重试');
   }
+  console.warn(`[db-guard] PG 查询失败，降级内存 | ${detail}`);
 }

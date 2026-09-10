@@ -11,7 +11,14 @@ import type { OrderRecord } from '../../core/records.js';
  * 不是商户应用公钥；沙箱与生产公钥不可混用，否则 notify 验签必失败）。
  * ALIPAY_GATEWAY 可选：沙箱填 https://openapi-sandbox.dl.alipaydev.com。
  */
-const APP_URL = (process.env.APP_URL || 'http://localhost:3000').replace(/\/+$/, '');
+/**
+ * 运行时惰性读取：模块级常量会在 dotenv.config() 之前求值 → APP_URL 恒为 undefined
+ * 回落成 http://localhost:3000，导致 notify_url / return_url 指向本机（支付宝通知永远打不到线上）。
+ * 同类踩坑见 server/lib/mailer.ts 的 dry-run 修复。
+ */
+function getAppUrl(): string {
+  return (process.env.APP_URL || 'http://localhost:3000').replace(/\/+$/, '');
+}
 
 /** 支付宝配置是否齐备（getPaymentProvider 据此选择渠道；测试环境不配则走 mock） */
 export function isAlipayConfigured(): boolean {
@@ -65,8 +72,8 @@ class AlipayProvider implements PaymentProvider {
         total_amount: (order.amount_cents / 100).toFixed(2),
         subject: order.plan_name || 'Pro 会员订阅',
       },
-      notify_url: `${APP_URL}/api/subscriptions/notify`,
-      return_url: `${APP_URL}/?payment=return`,
+      notify_url: `${getAppUrl()}/api/subscriptions/notify`,
+      return_url: `${getAppUrl()}/?payment=return`,
     });
     return { payUrl };
   }

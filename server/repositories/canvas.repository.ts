@@ -327,7 +327,18 @@ export async function saveCanvas(
       // Clean & Re-insert Nodes（批量多值 INSERT，分块控制参数数量）
       await client.query('DELETE FROM nodes WHERE canvas_id = $1', [data.id]);
       const nodeRows: any[][] = [];
-      for (const node of data.nodes || []) {
+      // 同一 payload 内重复的节点 id 会让多值 INSERT 直接撞 nodes_pkey（生产日志里已出现 48 次，
+      // 前端合并/冲突自愈后偶发重复节点）→ 整块画布 500 存不进去。这里按 id 去重 + 告警。
+      const seenNodeIds = new Set<string>();
+      const uniqueNodes = (data.nodes || []).filter((node: any) => {
+        if (seenNodeIds.has(node.id)) {
+          console.warn(`[saveCanvas] 丢弃重复节点 id=${node.id} canvas=${data.id}`);
+          return false;
+        }
+        seenNodeIds.add(node.id);
+        return true;
+      });
+      for (const node of uniqueNodes) {
         const d = node.data || {};
         const pos = node.position || { x: 0, y: 0 };
         const nodeType = node.type || 'chat';
@@ -400,7 +411,27 @@ export async function saveCanvas(
 
       // Clean & Re-insert Edges（批量多值 INSERT）
       await client.query('DELETE FROM edges WHERE canvas_id = $1', [data.id]);
-      const edgeRows: any[][] = (data.edges || []).map((edge: any) => [
+      // 丢弃端点不在本次节点集合内的边：nodes 已在上方整体重建，而 edges.source_id/target_id
+      // 有外键约束指向 nodes.id —— 前端一旦漏删「已删除节点的边」（多标签页/同步竞态/程序化删节点），
+      // 整个保存事务会 FK 失败 → 500，用户画布从此再也存不进去。这里做自愈式过滤 + 告警：
+      // 保存保持可用，客户端问题仍能在日志里看到。2026-09-10
+      const nodeIdSet = new Set((data.nodes || []).map((n: any) => n.id));
+      const allEdges: any[] = data.edges || [];
+      const danglingEdges = allEdges.filter(
+        (e: any) => !nodeIdSet.has(e.source) || !nodeIdSet.has(e.target)
+      );
+      if (danglingEdges.length > 0) {
+        console.warn(
+          `[saveCanvas] 丢弃 ${danglingEdges.length} 条端点缺失的边 canvas=${data.id}：` +
+            danglingEdges
+              .slice(0, 5)
+              .map((e: any) => `${e.id}(${e.source}→${e.target})`)
+              .join(', ')
+        );
+      }
+      const edgeRows: any[][] = allEdges
+        .filter((e: any) => nodeIdSet.has(e.source) && nodeIdSet.has(e.target))
+        .map((edge: any) => [
         edge.id,
         data.id,
         edge.source,

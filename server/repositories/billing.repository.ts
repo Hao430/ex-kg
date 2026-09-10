@@ -44,7 +44,7 @@ export async function createOrder(data: {
       // 破坏支付宝 notify 幂等核对与对账口径）
       const res = await p.query(
         `INSERT INTO orders (order_no, user_id, plan_id, plan_name, amount_cents, currency, status, duration_days, payment_method, created_at, paid_at)
-         VALUES ($1, $2, $3, $4, $5, 'CNY', $6, $7, $8, NOW(), CASE WHEN $6 = 'paid' THEN NOW() ELSE NULL END)
+         VALUES ($1, $2, $3, $4, $5, 'CNY', $6, $7, $8, NOW(), CASE WHEN $9 = 'paid' THEN NOW() ELSE NULL END)
          RETURNING *`,
         [
           orderNo,
@@ -55,6 +55,7 @@ export async function createOrder(data: {
           status,
           data.durationDays,
           paymentMethod,
+          status,
         ]
       );
       if (res.rows.length > 0) {
@@ -198,10 +199,10 @@ export async function updateOrderStatus(
       const res = await p.query(
         `UPDATE orders
          SET status = $1,
-             paid_at = CASE WHEN $1 = 'paid' THEN NOW() ELSE paid_at END
-         WHERE order_no = $2 ${expectedStatus ? 'AND status = $3' : ''}
+             paid_at = CASE WHEN $3 = 'paid' THEN NOW() ELSE paid_at END
+         WHERE order_no = $2 ${expectedStatus ? 'AND status = $4' : ''}
          RETURNING *`,
-        expectedStatus ? [status, orderNo, expectedStatus] : [status, orderNo]
+        expectedStatus ? [status, orderNo, status, expectedStatus] : [status, orderNo, status]
       );
       if (res.rows.length > 0) return mapRowToOrder(res.rows[0]);
       return null;

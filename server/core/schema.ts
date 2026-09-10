@@ -15,11 +15,20 @@ export async function initDbSchema(): Promise<boolean> {
   try {
     await client.query('BEGIN');
 
-    // Enable pgcrypto if possible
+    // Enable pgcrypto if possible（PG13+ 已内置 gen_random_uuid，扩展只为兼容旧库）。
+    // ⚠️ 必须用 SAVEPOINT 包住：非超级用户角色无权 CREATE EXTENSION，裸 try/catch 会吞掉报错，
+    // 而失败语句已让事务进入 aborted 状态 → 后续所有 DDL 一律 25P02，空库上整套建表静默全废。
+    // 2026-09-10 踩坑：新库部署表现为「表全都不存在」，日志里只有一条被吞的错误。
     try {
+      await client.query('SAVEPOINT pgcrypto_ext');
       await client.query('CREATE EXTENSION IF NOT EXISTS "pgcrypto";');
+      await client.query('RELEASE SAVEPOINT pgcrypto_ext');
     } catch (extErr) {
-      // ignore if unprivileged
+      await client.query('ROLLBACK TO SAVEPOINT pgcrypto_ext').catch(() => {});
+      console.warn(
+        '[schema] 跳过 pgcrypto 扩展（无权限或不可用），gen_random_uuid 由 PG13+ 内置提供：',
+        (extErr as { message?: string })?.message
+      );
     }
 
     // 1. Users core table

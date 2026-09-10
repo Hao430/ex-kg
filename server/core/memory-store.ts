@@ -39,11 +39,19 @@ export function trimAuditLogs(): void {
  * （下限 1000，防误配把上限锁死过小）。PG 分支不受此限制——全量落库，按
  * EVENT_LOG_RETENTION_DAYS 留存期清理（BRIN 索引服务范围扫描）。
  */
-const EVENT_LOGS_MAX = Math.max(1000, parseInt(process.env.EVENT_LOGS_MEM_MAX || '10000', 10) || 10000);
+/**
+ * 运行时惰性读取：模块级常量会在 `dotenv.config()` 之前求值（server.ts 的 import 先执行），
+ * 那样 EVENT_LOGS_MEM_MAX 恒为 undefined、配置永远不生效——与 alipay-provider 的 APP_URL、
+ * mailer 的 dry-run 是同一类坑。2026-09-10 修正。
+ */
+function eventLogsMax(): number {
+  return Math.max(1000, parseInt(process.env.EVENT_LOGS_MEM_MAX || '10000', 10) || 10000);
+}
 
 export function trimEventLogs(): void {
-  if (inMemoryStore.eventLogs.length > EVENT_LOGS_MAX) {
-    inMemoryStore.eventLogs.length = EVENT_LOGS_MAX;
+  const max = eventLogsMax();
+  if (inMemoryStore.eventLogs.length > max) {
+    inMemoryStore.eventLogs.length = max;
   }
 }
 
