@@ -1,21 +1,40 @@
-# CI 门禁（ADR 见 docs/adr/；CD 后续以独立 deploy.yml 接入）
-# 门禁链：tsc → 全量测试（内存模式）→ 架构守护 → 构建 → PG 真库冒烟
-# PG service 与 docker-compose.pg-smoke.yml 同参（postgres:16 / 5433:5432 / arborize_test），
-# tests/pg/*.test.ts 内置默认连接串 127.0.0.1:5433，无需注入 Secrets
-name: CI
+# CI/CD：门禁 + 生产部署 + 一键回退
+#
+# 流程：push/PR main → ci（tsc/测试/arch/build/PG 冒烟）→
+#   - push main：deploy（environment production 人工放行）→ 备份快照 → rsync → 依赖 → 重启 → 验收
+#   - workflow_dispatch 带 rollback_snapshot：rollback（执行部署手册 §5）
+#
+# 部署目标与全部命令口径来自 docs/部署与回退手册.md（铁律：不备份不发布）。
+# 所需 Secrets：DEPLOY_HOST / DEPLOY_PORT / DEPLOY_USER / DEPLOY_SSH_KEY
+name: CI/CD
 
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      rollback_snapshot:
+        description: '回退目标快照（如 20260910_1447）。留空 = 走正常部署'
+        required: false
+        type: string
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  APP_ORIGIN: https://kg.hao430.cn
+  SITE_DIR: /www/wwwroot/ex-kg
+  RELEASES_DIR: /www/ex-kg.releases
+  SERVER_NPM: /www/server/nodejs/v22.22.2/bin/npm
+  SERVER_NODE: /www/server/nodejs/v22.22.2/bin/node
+
 jobs:
   ci:
+    # 纯回退触发时不跑 CI（快照是已验收产物，无需再验）
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.rollback_snapshot != '') }}
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -56,3 +75,159 @@ jobs:
 
       - name: PG 真库冒烟（tests/pg/*.test.ts，PG_SMOKE 门控）
         run: PG_SMOKE=1 npx tsx --test 'tests/pg/*.test.ts'
+
+      # 测试通过的构建物即发布物（不经本地二次构建）
+      - name: 上传 dist 构建物
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ github.sha }}
+          path: dist/
+          retention-days: 7
+
+  deploy:
+    name: 部署到生产（production）
+    needs: ci
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.rollback_snapshot == '') }}
+    runs-on: ubuntu-latest
+    environment:
+      name: production   # Settings → Environments → production 需配置 Required reviewers（人工放行）
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4   # 取 package.json / package-lock.json（供服务端依赖安装）
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-${{ github.sha }}
+          path: dist/
+
+      - name: 写入 SSH 私钥
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p ${{ secrets.DEPLOY_PORT }} ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: 备份线上产物（铁律：不备份不发布）
+        run: |
+          ssh -i ~/.ssh/deploy_key -p ${{ secrets.DEPLOY_PORT }} \
+            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} 'bash -s' <<'REMOTE'
+          set -e
+          TS=$(date +%Y%m%d_%H%M)
+          DIR=/www/ex-kg.releases/$TS
+          mkdir -p $DIR
+          cp -a /www/wwwroot/ex-kg/dist $DIR/dist
+          cp -a /www/wwwroot/ex-kg/package.json /www/wwwroot/ex-kg/package-lock.json $DIR/ 2>/dev/null || true
+          cp -a /www/wwwroot/ex-kg/index.html $DIR/ 2>/dev/null || true
+          ( cd /www/ex-kg.releases && tar czf $TS.tar.gz $TS/dist )
+          {
+            echo '【ex-kg 回退快照】'
+            echo "备份时间(服务器): $(date '+%Y-%m-%d %H:%M:%S')"
+            echo '触发源: GitHub Actions CD'
+            echo "源码 commit: ${{ github.sha }}"
+            echo "支付开关: $(grep -m1 ^PAYMENT_ENABLED /www/wwwroot/ex-kg/.env || echo unknown)"
+          } > $DIR/RELEASE_INFO.txt
+          echo "SNAPSHOT=$TS"
+          REMOTE
+
+      - name: 同步 package.json / package-lock.json（供服务端依赖安装）
+        run: |
+          rsync -az -e "ssh -i ~/.ssh/deploy_key -p ${{ secrets.DEPLOY_PORT }}" \
+            package.json package-lock.json \
+            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:$SITE_DIR/
+
+      - name: 同步 dist（整体镜像，清理旧 hash 资产）
+        run: |
+          rsync -az --delete -e "ssh -i ~/.ssh/deploy_key -p ${{ secrets.DEPLOY_PORT }}" \
+            dist/ ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:$SITE_DIR/dist/
+
+      - name: 服务端依赖安装 + 依赖预检（缺模块即停，不重启）
+        run: |
+          ssh -i ~/.ssh/deploy_key -p ${{ secrets.DEPLOY_PORT }} \
+            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} 'bash -s' <<'REMOTE'
+          set -e
+          cd /www/wwwroot/ex-kg
+          chown -R www:www dist package.json package-lock.json
+          ${{ env.SERVER_NPM }} install --omit=dev --no-audit --no-fund
+          chown -R www:www node_modules
+          # 依赖预检：server.cjs 的全部 require 必须可 resolve（手册 §3），缺模块即失败不重启
+          ${{ env.SERVER_NODE }} -e "const src=require('fs').readFileSync('dist/server.cjs','utf8');const re=/require\(\"([a-z@][^\"]*)\"\)/g;const set=new Set();let m;while((m=re.exec(src)))set.add(m[1]);let bad=0;for(const n of set){try{require(n)}catch(e){console.log('MISSING',n);bad++}}if(bad){process.exit(1)}console.log('依赖齐')"
+          REMOTE
+
+      - name: 重启进程（手册 Step5：优雅退出 + kill -9 兜底 + su www 启动）
+        run: |
+          ssh -i ~/.ssh/deploy_key -p ${{ secrets.DEPLOY_PORT }} \
+            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} 'bash -s' <<'REMOTE'
+          set -e
+          PID=$(cat /www/server/nodejs/vhost/pids/ex_kg.pid)
+          kill $PID; for i in $(seq 1 40); do kill -0 $PID 2>/dev/null || break; sleep 0.5; done
+          kill -0 $PID 2>/dev/null && kill -9 $PID
+          su www -s /bin/bash -c "bash /www/server/nodejs/vhost/scripts/ex_kg.sh"
+          sleep 4
+          NEW_PID=$(cat /www/server/nodejs/vhost/pids/ex_kg.pid)
+          echo "new PID=$NEW_PID"
+          tail -4 /www/wwwlogs/nodejs/ex_kg.log
+          grep -q "listening on http://0.0.0.0:2998" /www/wwwlogs/nodejs/ex_kg.log \
+            || { echo "启动日志未见 listening 行"; tail -30 /www/wwwlogs/nodejs/ex_kg.log; exit 1; }
+          REMOTE
+
+      - name: 发布验收（health / 首页 / 新 bundle）
+        run: |
+          set -e
+          curl -fsS ${{ env.APP_ORIGIN }}/api/health > /dev/null && echo "health ok"
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' ${{ env.APP_ORIGIN }}/)
+          [ "$CODE" = "200" ] || { echo "首页 $CODE"; exit 1; }
+          ASSET=$(curl -fsS ${{ env.APP_ORIGIN }}/ | grep -oE 'index-[^"]+\.js' | head -1)
+          ACODE=$(curl -s -o /dev/null -w '%{http_code}' ${{ env.APP_ORIGIN }}/assets/$ASSET)
+          [ "$ACODE" = "200" ] || { echo "新 bundle $ASSET → $ACODE"; exit 1; }
+          echo "首页 200，bundle $ASSET 200 —— 验收通过"
+
+  rollback:
+    name: 回退生产（按快照）
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.rollback_snapshot != '' }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - name: 输入格式校验（防 shell 注入）
+        run: |
+          [[ "${{ inputs.rollback_snapshot }}" =~ ^[0-9]{8}_[0-9]{4}$ ]] \
+            || { echo "快照格式应为 YYYYMMDD_HHMM"; exit 1; }
+
+      - name: 写入 SSH 私钥
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p ${{ secrets.DEPLOY_PORT }} ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: 校验快照存在
+        run: |
+          ssh -i ~/.ssh/deploy_key -p ${{ secrets.DEPLOY_PORT }} \
+            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+            "test -d ${{ env.RELEASES_DIR }}/${{ inputs.rollback_snapshot }}/dist \
+              || { echo '快照不存在: ${{ inputs.rollback_snapshot }}'; ls ${{ env.RELEASES_DIR }}/; exit 1; }"
+
+      - name: 回退（手册 §5：快照 dist 覆盖 + 重启）
+        run: |
+          ssh -i ~/.ssh/deploy_key -p ${{ secrets.DEPLOY_PORT }} \
+            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} 'bash -s' <<'REMOTE'
+          set -e
+          D=${{ env.RELEASES_DIR }}/${{ inputs.rollback_snapshot }}
+          rm -rf /www/wwwroot/ex-kg/dist && cp -a $D/dist /www/wwwroot/ex-kg/dist
+          chown -R www:www /www/wwwroot/ex-kg/dist
+          kill $(cat /www/server/nodejs/vhost/pids/ex_kg.pid); sleep 2
+          su www -s /bin/bash -c "bash /www/server/nodejs/vhost/scripts/ex_kg.sh"
+          sleep 4
+          tail -4 /www/wwwlogs/nodejs/ex_kg.log
+          REMOTE
+
+      - name: 回退验收
+        run: |
+          set -e
+          curl -fsS ${{ env.APP_ORIGIN }}/api/health > /dev/null && echo "health ok"
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' ${{ env.APP_ORIGIN }}/)
+          [ "$CODE" = "200" ] || { echo "首页 $CODE"; exit 1; }
+          echo "已回退到快照 ${{ inputs.rollback_snapshot }}，验收通过"
