@@ -13,6 +13,7 @@ export interface BoardStoreState {
   metas: DeepDiveBoardMeta[];
   serverIds: ReadonlySet<string>;
   dirty: ReadonlySet<string>;
+  metaDirty: ReadonlySet<string>;
   tombstones: ReadonlySet<string>;
 }
 
@@ -24,6 +25,8 @@ let serverIds = new Set<string>();
 let localIndex = new Map<string, DeepDiveBoardMeta>();
 let tombstones = new Set<string>();
 let dirty = new Set<string>();
+/** Spec L1：收藏/归档等元数据待同步（与内容 dirty 分离，避免触发全量上传） */
+let metaDirty = new Set<string>();
 let serverHydrated = false;
 let boundScope: scope.ScopeKey | null = null;
 const ghostsEmitted = new Set<string>();
@@ -43,6 +46,7 @@ function persist(): void {
   try {
     scope.writeScopedIndex(snapshot, boundScope ?? undefined);
     scope.writeStringSet(scope.dirtyKey(boundScope ?? undefined), dirty);
+    scope.writeStringSet(scope.metaDirtyKey(boundScope ?? undefined), metaDirty);
     scope.saveTombstones(tombstones, boundScope ?? undefined);
   } catch (e) {
     // localStorage 配额/隐私模式：不静默失败，交由控制台与上层提示
@@ -72,7 +76,8 @@ function recompute(): void {
     if (seen.has(sm.id) || tombstones.has(sm.id)) continue;
     seen.add(sm.id);
     const local = localIndex.get(sm.id);
-    list.push(dirty.has(sm.id) && local ? { ...local } : { ...sm });
+    // 内容脏或元数据脏：本地版胜出，服务端快照不得回退用户刚做的改动
+    list.push((dirty.has(sm.id) || metaDirty.has(sm.id)) && local ? { ...local } : { ...sm });
   }
 
   const ghostIds: string[] = [];
@@ -114,7 +119,7 @@ export function getBoardList(): DeepDiveBoardMeta[] {
 }
 
 export function getState(): BoardStoreState {
-  return { metas: snapshot, serverIds, dirty, tombstones };
+  return { metas: snapshot, serverIds, dirty, metaDirty, tombstones };
 }
 
 /** 绑定作用域：迁移旧索引 → 载入 scoped 索引/墓碑/脏标记 → 重算 */
@@ -126,6 +131,7 @@ export function bindScope(scopeKey: scope.ScopeKey): void {
   localIndex = new Map(scope.readScopedIndex(scopeKey).map((m) => [m.id, m]));
   tombstones = scope.loadTombstones(scopeKey);
   dirty = scope.readStringSet(scope.dirtyKey(scopeKey));
+  metaDirty = scope.readStringSet(scope.metaDirtyKey(scopeKey));
   serverMetas = [];
   serverIds = new Set();
   serverHydrated = false;
@@ -147,7 +153,7 @@ export function hydrateFromServer(metas: DeepDiveBoardMeta[] | null): void {
   for (const sm of serverMetas) {
     if (tombstones.has(sm.id)) continue;
     const local = localIndex.get(sm.id);
-    if (dirty.has(sm.id) && local) continue; // 本地有未同步改动，本地版胜出
+    if ((dirty.has(sm.id) || metaDirty.has(sm.id)) && local) continue; // 本地有未同步改动，本地版胜出
     localIndex.set(sm.id, { ...sm });
   }
   recompute();
@@ -155,8 +161,56 @@ export function hydrateFromServer(metas: DeepDiveBoardMeta[] | null): void {
 
 /** 本地保存后更新该条 meta；dirty 默认 true */
 export function upsertLocal(meta: DeepDiveBoardMeta, opts?: { dirty?: boolean }): void {
-  localIndex.set(meta.id, { ...meta });
+  // 合并而非覆盖：内容保存路径传入的 meta 不含收藏/归档字段，直接覆盖会抹掉用户偏好
+  const prev = localIndex.get(meta.id);
+  localIndex.set(meta.id, prev ? { ...prev, ...meta } : { ...meta });
   if (opts?.dirty !== false) dirty.add(meta.id);
+  recompute();
+}
+
+/**
+ * Spec L1：本地更新画板库元数据（收藏/归档/改名），标 metaDirty 待后台 PATCH。
+ * 不触碰内容 dirty，故不会触发整板上传；未知画板 no-op。
+ */
+export function updateMetaLocal(id: string, patch: Partial<DeepDiveBoardMeta>): void {
+  const cur = localIndex.get(id);
+  if (!cur) return;
+  localIndex.set(id, { ...cur, ...patch });
+  metaDirty.add(id);
+  recompute();
+}
+
+/**
+ * 服务端确认 meta 变更：清 metaDirty，并以服务端回包收敛权威字段（nodeCount 回包无此字段，
+ * 保留本地值）。服务端回包的 updatedAt（触发器推进）同步写入列表，供内容保存推进乐观锁版本。
+ */
+export function confirmServerMeta(
+  id: string,
+  server: {
+    title?: string;
+    isFavorite?: boolean;
+    isArchived?: boolean;
+    folderId?: string | null;
+    updatedAt?: string;
+  }
+): void {
+  metaDirty.delete(id);
+  const prev = localIndex.get(id);
+  const parsedUpdatedAt = server.updatedAt ? Date.parse(server.updatedAt) : NaN;
+  const meta: DeepDiveBoardMeta = {
+    id,
+    name: server.title ?? prev?.name ?? id,
+    updatedAt: Number.isNaN(parsedUpdatedAt) ? prev?.updatedAt ?? Date.now() : parsedUpdatedAt,
+    nodeCount: prev?.nodeCount ?? 0,
+    isFavorite: server.isFavorite ?? prev?.isFavorite ?? false,
+    isArchived: server.isArchived ?? prev?.isArchived ?? false,
+    // null 是有效值（移出分组），不能用 ?? 把 null 吞成旧值
+    folderId: server.folderId !== undefined ? server.folderId : prev?.folderId ?? null,
+  };
+  localIndex.set(id, meta);
+  serverIds.add(id);
+  serverMetas = serverMetas.map((m) => (m.id === id ? { ...meta } : m));
+  if (!serverMetas.some((m) => m.id === id)) serverMetas = [{ ...meta }, ...serverMetas];
   recompute();
 }
 
@@ -187,6 +241,7 @@ export function getDirtyIds(): string[] {
 export function addTombstone(id: string): void {
   tombstones.add(id);
   dirty.delete(id);
+  metaDirty.delete(id);
   recompute();
 }
 
@@ -197,6 +252,7 @@ export function confirmServerDelete(id: string): void {
   serverIds.delete(id);
   serverMetas = serverMetas.filter((m) => m.id !== id);
   dirty.delete(id);
+  metaDirty.delete(id);
   scope.purgeBoardBlobs(id);
   recompute();
 }
@@ -207,12 +263,25 @@ export function restoreFromTombstone(id: string): void {
   recompute();
 }
 
+/** Spec L1：删除分组后本地解除所有画板归属（服务端已 SET NULL） */
+export function clearFolderOnBoards(folderId: string): void {
+  let changed = false;
+  for (const [id, meta] of localIndex) {
+    if (meta.folderId === folderId) {
+      localIndex.set(id, { ...meta, folderId: null });
+      changed = true;
+    }
+  }
+  if (changed) recompute();
+}
+
 /** 幽灵收敛：远端已删（save 404），移出列表、保留 blob */
 export function reconcileRemoteDeletion(id: string): void {
   localIndex.delete(id);
   serverIds.delete(id);
   serverMetas = serverMetas.filter((m) => m.id !== id);
   dirty.delete(id);
+  metaDirty.delete(id);
   tombstones.delete(id);
   recompute();
 }
@@ -240,6 +309,7 @@ export function resetForTest(): void {
   localIndex = new Map();
   tombstones = new Set();
   dirty = new Set();
+  metaDirty = new Set();
   serverHydrated = false;
   boundScope = null;
   ghostsEmitted.clear();

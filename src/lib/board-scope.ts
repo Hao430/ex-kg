@@ -53,6 +53,14 @@ export function tombstonesKey(scope?: ScopeKey): string {
 export function dirtyKey(scope?: ScopeKey): string {
   return scopedKey('dirty', scope);
 }
+/** Spec L1：待同步的画板库元数据（收藏/归档）脏标记，与内容 dirty 分开 */
+export function metaDirtyKey(scope?: ScopeKey): string {
+  return scopedKey('meta_dirty', scope);
+}
+/** Spec L1：分组本地缓存（按 scope 隔离，离线可见） */
+export function foldersKey(scope?: ScopeKey): string {
+  return scopedKey('folders', scope);
+}
 export function pendingCreateKey(scope?: ScopeKey): string {
   return scopedKey('pending_creates', scope);
 }

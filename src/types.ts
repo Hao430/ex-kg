@@ -61,6 +61,11 @@ export interface DeepDiveBoardMeta {
   name: string;
   updatedAt: number;
   nodeCount: number;
+  /** Spec L1 / ADR-0015：画板库管理偏好（可选，兼容旧 localStorage 索引条目） */
+  isFavorite?: boolean;
+  isArchived?: boolean;
+  /** Spec L1：单层分组归属（null/undefined = 未分组） */
+  folderId?: string | null;
 }
 
 export interface TextSelectionPayload {

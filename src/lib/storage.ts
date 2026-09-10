@@ -9,7 +9,7 @@
  */
 import { Node, Edge } from '@xyflow/react';
 import { DeepDiveBoardMeta, ChatNodeData } from '../types';
-import { enqueue, dequeue, enqueueDelete, setSyncExecutor, setDeleteExecutor } from './sync-queue';
+import { enqueue, dequeue, enqueueDelete, enqueueMeta, setSyncExecutor, setDeleteExecutor, setMetaExecutor } from './sync-queue';
 import * as boardScope from './board-scope';
 import * as boardStore from './board-store';
 import * as quotaStore from './quota-store';
@@ -304,6 +304,67 @@ setDeleteExecutor(async (boardId) => {
   return 'fail';
 });
 
+// ---- 元数据执行器（Spec L1）：收藏/归档走轻量 PATCH，不与内容上传耦合 ----
+setMetaExecutor(async (boardId) => {
+  if (boardStore.getState().tombstones.has(boardId)) return 'ok'; // 已删除，勿同步
+  const meta = boardStore.getBoardList().find((b) => b.id === boardId);
+  if (!meta) return 'ok'; // 本地已无该画板
+  // 纯本地草稿 / 从未同步：服务端无行可 PATCH，元数据保留在本地索引
+  if (!boardStore.getState().serverIds.has(boardId) && !boardScope.hasServerVersion(boardId)) {
+    return 'ok';
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(`/api/canvases/${encodeURIComponent(boardId)}/meta`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        title: meta.name,
+        isFavorite: meta.isFavorite ?? false,
+        isArchived: meta.isArchived ?? false,
+        folderId: meta.folderId ?? null,
+      }),
+    });
+  } catch {
+    return 'fail'; // 网络失败：交队列退避重试
+  }
+
+  if (res.ok) {
+    const body = await res.json().catch(() => null) as any;
+    // 服务端回包收敛权威字段；updatedAt（触发器推进）写回版本小键，供内容保存推进乐观锁
+    boardStore.confirmServerMeta(boardId, body?.canvas || {});
+    if (body?.canvas?.updatedAt) persistServerUpdatedAt(boardId, body.canvas.updatedAt);
+    return 'ok';
+  }
+  if (res.status === 404) {
+    const body = await res.json().catch(() => null) as any;
+    boardStore.reconcileRemoteDeletion(boardId);
+    dispatchConflictEvent(boardId, body?.error || '画板已在其他设备被删除', undefined, 'NOT_FOUND');
+    return 'conflict';
+  }
+  if (res.status === 401) {
+    dispatchConflictEvent(boardId, '登录状态已失效，请重新登录后再同步画板设置', undefined, 'UNAUTHORIZED');
+    return 'conflict';
+  }
+  if (res.status === 403) {
+    const body = await res.json().catch(() => null) as any;
+    dispatchConflictEvent(boardId, body?.error || '画板设置同步被拒绝', undefined, body?.code || 'CANVAS_FORBIDDEN');
+    return 'conflict';
+  }
+  if (res.status === 400) {
+    const body = await res.json().catch(() => null) as any;
+    // 分组已不存在/不属于属主（他端删除的竞态）：清本地陈旧归属，作永久冲突不再重试
+    if (body?.code === 'FOLDER_INVALID') {
+      boardStore.updateMetaLocal(boardId, { folderId: null });
+    }
+    dispatchConflictEvent(boardId, body?.error || '画板设置无效', undefined, body?.code || 'VALIDATION_ERROR');
+    return 'conflict';
+  }
+  return 'fail';
+});
+
 /**
  * 乐观删除：本地立即隐藏（墓碑）并后台确认。
  * - 游客/纯本地草稿：直接清理，不请求服务端（修「未登录无法删板」）
@@ -324,6 +385,18 @@ export function deleteBoardLocally(boardId: string): { needsServer: boolean } {
 /** 画布保存入队：断网/失败自动退避重试，恢复网络立即补传 */
 export function enqueueBoardSync(boardId: string): void {
   enqueue(boardId);
+}
+
+/**
+ * Spec L1：本地更新画板库元数据（收藏/归档/改名）并后台 PATCH 同步。
+ * 只动列表索引，不写内容 blob、不入 upload 队列——避免元数据变更触发整板上传。
+ */
+export function updateBoardMetaLocally(
+  boardId: string,
+  patch: { name?: string; isFavorite?: boolean; isArchived?: boolean; folderId?: string | null }
+): void {
+  boardStore.updateMetaLocal(boardId, patch);
+  enqueueMeta(boardId);
 }
 
 /**
@@ -373,6 +446,9 @@ export async function fetchBoardListFromServer(): Promise<DeepDiveBoardMeta[] | 
       name: c.title || '未命名思维探索',
       updatedAt: Date.parse(c.updatedAt) || 0,
       nodeCount: c.nodeCount || 0,
+      isFavorite: Boolean(c.isFavorite),
+      isArchived: Boolean(c.isArchived),
+      folderId: c.folderId ?? null,
     }));
     boardStore.hydrateFromServer(list); // 写通本地索引（修列表缩水）
     return list;

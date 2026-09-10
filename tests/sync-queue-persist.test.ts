@@ -49,7 +49,7 @@ describe('sync-queue 持久化与删除任务', () => {
     assert.ok(raw, '应写入持久化队列');
     const tasks = JSON.parse(raw!);
     assert.deepEqual(
-      tasks.map((t: any) => `${t.boardId}:${t.type}`).sort(),
+      tasks.map((t: any) => `${t.boardId}:${t.ops.join('+')}`).sort(),
       ['a:upload', 'b:delete']
     );
   });
