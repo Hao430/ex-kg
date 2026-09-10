@@ -41,6 +41,8 @@ import {
   Archive,
 } from 'lucide-react';
 import { DeepDiveBoardMeta } from '../../types';
+import type { FolderMeta } from '../../lib/folder-store';
+import { buildQuickSections } from '../../lib/board-sections';
 import { useAuth } from '../../context/AuthContext';
 import { useQuotaView } from '../../hooks/useBoards';
 import { Tooltip } from './Tooltip';
@@ -49,6 +51,8 @@ interface TopbarProps {
   boardName: string;
   onRenameBoard: (newName: string) => void;
   boards: DeepDiveBoardMeta[];
+  /** Spec L1：分组（下拉按分组渲染小标题；空数组则扁平列表） */
+  folders?: FolderMeta[];
   currentBoardId: string;
   onSwitchBoard: (boardId: string) => void;
   onNewBoard: () => void;
@@ -82,6 +86,7 @@ export const Topbar: React.FC<TopbarProps> = ({
   boardName,
   onRenameBoard,
   boards,
+  folders = [],
   currentBoardId,
   onSwitchBoard,
   onNewBoard,
@@ -293,48 +298,56 @@ export const Topbar: React.FC<TopbarProps> = ({
                 </span>
               </div>
               <div className="max-h-52 overflow-y-auto mt-1">
-                {/* Spec L1：归档画板不进快捷切换；收藏置顶（画板库统一管理归档） */}
-                {[...boards.filter((b) => !b.isArchived)]
-                  .sort(
-                    (a, b) =>
-                      Number(Boolean(b.isFavorite)) - Number(Boolean(a.isFavorite)) ||
-                      b.updatedAt - a.updatedAt
-                  )
-                  .map((b) => (
-                  <div
-                    key={b.id}
-                    onClick={() => {
-                      onSwitchBoard(b.id);
-                      setShowBoardMenu(false);
-                    }}
-                    className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-colors cursor-pointer ${
-                      b.id === currentBoardId
-                        ? 'text-indigo-600 dark:text-indigo-400 font-semibold bg-indigo-50/60 dark:bg-indigo-950/40'
-                        : 'text-slate-700 dark:text-slate-300'
-                    }`}
-                  >
-                    <span className="flex items-center gap-1 min-w-0 flex-1 mr-2">
-                      {b.isFavorite && (
-                        <Star className="w-3 h-3 text-amber-400 shrink-0" fill="currentColor" />
-                      )}
-                      <span className="truncate">{b.name}</span>
-                    </span>
-                    <span className="flex items-center gap-0.5 shrink-0">
-                      {b.id === currentBoardId && <Check className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />}
-                      {b.id !== 'default-board' && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onDeleteBoard(b.id);
-                            setShowBoardMenu(false);
-                          }}
-                          aria-label={`删除画板 ${b.name}`}
-                          className="p-1 rounded-lg text-slate-300 dark:text-slate-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                    </span>
+                {/* Spec L1：归档不进快捷切换；收藏置顶，其余按分组渲染小标题 */}
+                {buildQuickSections(boards, folders).map((sec) => (
+                  <div key={sec.key}>
+                    {sec.label && (
+                      <div className="px-3 pt-2 pb-0.5 flex items-center gap-1 text-[10px] font-semibold text-slate-400 dark:text-slate-600 uppercase tracking-wider">
+                        {sec.key === '__fav' ? (
+                          <Star className="w-3 h-3 text-amber-400" fill="currentColor" />
+                        ) : sec.key === '__none' ? null : (
+                          <FolderOpen className="w-3 h-3" />
+                        )}
+                        <span className="truncate">{sec.label}</span>
+                      </div>
+                    )}
+                    {sec.boards.map((b) => (
+                      <div
+                        key={b.id}
+                        onClick={() => {
+                          onSwitchBoard(b.id);
+                          setShowBoardMenu(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-colors cursor-pointer ${
+                          b.id === currentBoardId
+                            ? 'text-indigo-600 dark:text-indigo-400 font-semibold bg-indigo-50/60 dark:bg-indigo-950/40'
+                            : 'text-slate-700 dark:text-slate-300'
+                        }`}
+                      >
+                        <span className="flex items-center gap-1 min-w-0 flex-1 mr-2">
+                          {b.isFavorite && sec.key !== '__fav' && (
+                            <Star className="w-3 h-3 text-amber-400 shrink-0" fill="currentColor" />
+                          )}
+                          <span className="truncate">{b.name}</span>
+                        </span>
+                        <span className="flex items-center gap-0.5 shrink-0">
+                          {b.id === currentBoardId && <Check className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />}
+                          {b.id !== 'default-board' && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onDeleteBoard(b.id);
+                                setShowBoardMenu(false);
+                              }}
+                              aria-label={`删除画板 ${b.name}`}
+                              className="p-1 rounded-lg text-slate-300 dark:text-slate-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </span>
+                      </div>
+                    ))}
                   </div>
                 ))}
               </div>

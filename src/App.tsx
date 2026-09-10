@@ -970,6 +970,7 @@ function MainApp() {
         boardName={boardName}
         onRenameBoard={handleRenameBoard}
         boards={boards}
+        folders={foldersView.folders}
         currentBoardId={currentBoardId}
         onSwitchBoard={(id) => void handleSwitchBoard(id)}
         onNewBoard={handleNewBoard}
