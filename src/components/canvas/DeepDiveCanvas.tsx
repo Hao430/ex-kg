@@ -94,6 +94,8 @@ interface DeepDiveCanvasProps {
   triggerExportPngRef?: React.MutableRefObject<
     ((title: string) => Promise<{ ok: boolean; error?: string }>) | null
   >;
+  /** 探索灵感节点（status='suggested'）显示开关：仅视图级隐藏，数据层与配额口径不受影响 */
+  showSuggestions?: boolean;
 }
 
 export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
@@ -110,6 +112,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
   canvasId,
   boardNeedsAutoName = false,
   triggerExportPngRef,
+  showSuggestions = true,
 }) => {
   const [nodes, setNodes, onNodesChange] = useNodesState(
     initialNodes || []
@@ -1319,6 +1322,34 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
 
   const isLargeCanvas = nodes.length >= 150;
 
+  // 探索灵感节点视图级隐藏：对 suggested 节点及其连线注入 ReactFlow hidden 字段，
+  // 仅影响渲染（含 MiniMap），nodes/edges state 保持数据真源不被污染——
+  // 保存、配额计数（含 suggested，与后端同口径）与再次开启后的位置均不受影响
+  const hiddenSuggestedIds = useMemo(() => {
+    if (showSuggestions) return null;
+    return new Set(
+      nodes
+        .filter((n) => (n.data as unknown as ChatNodeData)?.status === 'suggested')
+        .map((n) => n.id)
+    );
+  }, [nodes, showSuggestions]);
+
+  const displayNodes = useMemo(() => {
+    if (!hiddenSuggestedIds) return nodes;
+    return nodes.map((n) =>
+      hiddenSuggestedIds.has(n.id) ? { ...n, hidden: true } : n
+    );
+  }, [nodes, hiddenSuggestedIds]);
+
+  const displayEdges = useMemo(() => {
+    if (!hiddenSuggestedIds) return edges;
+    return edges.map((e) =>
+      hiddenSuggestedIds.has(e.source) || hiddenSuggestedIds.has(e.target)
+        ? { ...e, hidden: true }
+        : e
+    );
+  }, [edges, hiddenSuggestedIds]);
+
   const handlePaneClick = useCallback(() => {
     setSelectionPayload(null);
   }, []);
@@ -1376,8 +1407,8 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
             应用其余部分（顶栏/列表）不受影响 */}
         <ErrorBoundary variant="canvas">
           <ReactFlow
-          nodes={nodes}
-          edges={edges}
+          nodes={displayNodes}
+          edges={displayEdges}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}

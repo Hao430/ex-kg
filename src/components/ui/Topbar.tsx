@@ -68,6 +68,9 @@ interface TopbarProps {
   nodeCount?: number;
   /** 服务端同步状态指示（Spec A5） */
   syncState?: 'idle' | 'saved' | 'pending' | 'error' | 'conflict';
+  /** 探索灵感节点显示开关（默认展示；仅视图级隐藏，画板数据不受影响） */
+  showSuggestions?: boolean;
+  onToggleSuggestions?: () => void;
 }
 
 export const Topbar: React.FC<TopbarProps> = ({
@@ -93,6 +96,8 @@ export const Topbar: React.FC<TopbarProps> = ({
   onToggleTheme,
   nodeCount,
   syncState = 'idle',
+  showSuggestions = true,
+  onToggleSuggestions,
 }) => {
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(boardName);
@@ -332,6 +337,44 @@ export const Topbar: React.FC<TopbarProps> = ({
             <span className="hidden md:inline">新建画板</span>
           </button>
         </Tooltip>
+
+        {/* 探索灵感节点显示开关：滑动切换仅隐藏视图，节点仍随画板保存并计入配额 */}
+        {onToggleSuggestions && (
+          <Tooltip
+            content={
+              showSuggestions
+                ? '隐藏画板上的探索灵感节点（数据仍保留，可随时重新开启）'
+                : '显示探索灵感节点'
+            }
+            side="bottom"
+          >
+            <div className="hidden sm:flex items-center gap-1.5 pl-2 pr-1.5 py-1 rounded-xl bg-slate-100/70 dark:bg-slate-800/60 border border-slate-200/50 dark:border-slate-700/50">
+              <Sparkles className="w-3 h-3 text-indigo-500 dark:text-indigo-400 shrink-0" />
+              <span className="text-xs font-medium text-slate-600 dark:text-slate-300 hidden lg:inline">
+                灵感
+              </span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={showSuggestions}
+                aria-label={showSuggestions ? '隐藏探索灵感节点' : '显示探索灵感节点'}
+                data-testid="suggestions-toggle"
+                onClick={onToggleSuggestions}
+                className={`relative w-9 h-5 rounded-full transition-colors duration-200 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/60 ${
+                  showSuggestions
+                    ? 'bg-indigo-500'
+                    : 'bg-slate-300 dark:bg-slate-600'
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                    showSuggestions ? 'translate-x-4' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+          </Tooltip>
+        )}
 
         {/* Micro Stats UI: Current Canvas Total Nodes & Performance Alert */}
         {typeof nodeCount === 'number' && (

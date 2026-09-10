@@ -124,6 +124,21 @@ function MainApp() {
     } catch (e) {}
   }, [theme]);
 
+  // 探索灵感节点显示开关（默认展示）：localStorage 记忆偏好，视图级隐藏不影响画板数据
+  const [showSuggestions, setShowSuggestions] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('deepdive_suggestions_visible') !== '0';
+    } catch (e) {
+      return true;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('deepdive_suggestions_visible', showSuggestions ? '1' : '0');
+    } catch (e) {}
+  }, [showSuggestions]);
+
   const toggleTheme = useCallback(() => {
     setTheme((prev) => {
       const next = prev === 'light' ? 'dark' : 'light';
@@ -189,6 +204,15 @@ function MainApp() {
       setToastMessage((prev) => (prev === msg ? null : prev));
     }, 2500);
   };
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const toggleSuggestions = useCallback(() => {
+    setShowSuggestions((prev) => {
+      const next = !prev;
+      showToast(next ? '已展示探索灵感节点' : '已隐藏探索灵感节点，画板内容不受影响');
+      return next;
+    });
+  }, []);
 
   // 保存冲突提示（Spec A4 乐观锁）+ 同步状态订阅（Spec A5，仅指示当前画板）
   const [syncState, setSyncState] = useState<'idle' | 'saved' | 'pending' | 'error' | 'conflict'>('idle');
@@ -807,6 +831,8 @@ function MainApp() {
         syncState={syncState}
         onToggleTheme={toggleTheme}
         nodeCount={nodeCount}
+        showSuggestions={showSuggestions}
+        onToggleSuggestions={toggleSuggestions}
       />
 
       {/* Main Infinite Canvas Viewport */}
@@ -825,6 +851,7 @@ function MainApp() {
             canvasId={currentBoardId}
             boardNeedsAutoName={isDefaultBoardName(boardName)}
             triggerExportPngRef={triggerExportPngRef}
+            showSuggestions={showSuggestions}
           />
         </ReactFlowProvider>
         {/* Spec K5（D1）：空态新手 4 步 checklist（全完成/手动关闭后不再显示） */}
