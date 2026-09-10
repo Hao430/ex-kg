@@ -245,6 +245,19 @@ CREATE TABLE IF NOT EXISTS canvas_tags (
   PRIMARY KEY (canvas_id, tag_id)
 );
 
+-- 2.8b 画板单层分组 (Spec L1 / ADR-0015：无 parent_id；删除分组只解除画板归属)
+CREATE TABLE IF NOT EXISTS folders (
+  id VARCHAR(64) PRIMARY KEY,                 -- 客户端 UUIDv7
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name VARCHAR(64) NOT NULL,
+  sort_order INT DEFAULT 0 NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+ALTER TABLE canvases
+  ADD COLUMN IF NOT EXISTS folder_id VARCHAR(64) REFERENCES folders(id) ON DELETE SET NULL;
+
 -- ==============================================================================
 -- 模块三：订阅订单体系 (Billing & Orders)
 -- ==============================================================================
@@ -363,6 +376,8 @@ CREATE INDEX IF NOT EXISTS idx_user_audit_user_action ON user_audit_logs(user_id
 -- 画布与节点查询性能索引 (覆盖用户最近编辑与层级遍历)
 CREATE INDEX IF NOT EXISTS idx_canvases_user_updated ON canvases(user_id, updated_at DESC) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_canvases_user_favorite ON canvases(user_id, is_favorite) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_canvases_folder ON canvases(folder_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_folders_user ON folders(user_id);
 CREATE INDEX IF NOT EXISTS idx_nodes_canvas_id ON nodes(canvas_id) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_nodes_parent_id ON nodes(parent_id);
 CREATE INDEX IF NOT EXISTS idx_nodes_depth ON nodes(canvas_id, depth);
