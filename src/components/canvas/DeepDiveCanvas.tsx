@@ -36,19 +36,12 @@ import { useAuth } from '../../context/AuthContext';
 import { useRenderMonitor } from '../../hooks/useRenderMonitor';
 import { trackEvent, trackOnce } from '../../lib/analytics';
 import { markChecklistStep } from '../../lib/checklist';
+import { uuidv7 } from '../../lib/uuid.js';
 import { AlertCircle, Sparkles, X, FolderPlus, AlertTriangle, Trash2 } from 'lucide-react';
 
-let globalIdCounter = 0;
-export const generateUniqueId = (prefix: string = 'node'): string => {
-  globalIdCounter += 1;
-  const time = Date.now();
-  const rand = Math.random().toString(36).substring(2, 8);
-  // 前缀截断：调用方会把父级 id 拼进前缀（如 node-${sourceNodeId}），层级越深 id 越长，
-  // 会超过 PostgreSQL varchar(64) 上限（报 22001 value too long）导致画布保存失败。
-  // 截断前缀只损失语义、不影响唯一性（time+counter+rand 保证唯一）。
-  const safePrefix = prefix.length > 24 ? prefix.slice(0, 24) : prefix;
-  return `${safePrefix}-${time}-${globalIdCounter}-${rand}`;
-};
+// id 生成统一 UUIDv7（路线 A，2026-09-10）：恒 36 字符、不可枚举、时间前缀 B-tree 友好；
+// ADR-0013 的「前缀截断防 varchar(64) 22001」防御随之消亡（不再有前缀拼接，见 src/lib/uuid.ts）
+export const generateUniqueId = (): string => uuidv7();
 
 // 技术债 #0032：节点级错误边界——单个节点渲染抛错降级为占位卡片，不再拖垮整画布
 const nodeTypes = {
@@ -284,7 +277,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       const newEdges: Edge[] = [];
 
       suggestions.slice(0, 3).forEach((questionText, idx) => {
-        const sugId = generateUniqueId(`sug-${parentNodeId}`);
+        const sugId = generateUniqueId();
         const title = questionText.slice(0, 16);
 
         const sugNode: Node = {
@@ -305,7 +298,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
         };
 
         const sugEdge: Edge = {
-          id: generateUniqueId(`e-${parentNodeId}-${sugId}`),
+          id: generateUniqueId(),
           source: parentNodeId,
           target: sugId,
           type: 'default',
@@ -672,7 +665,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
           ? parentData.enableWebSearch
           : defaultEnableWebSearch;
 
-      const newId = generateUniqueId(`node-${sourceNodeId}`);
+      const newId = generateUniqueId();
       const title =
         typeof params.title === 'function' ? params.title(depth) : params.title;
 
@@ -695,7 +688,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       };
 
       const newEdge: Edge = {
-        id: generateUniqueId(`e-${sourceNodeId}-${newId}`),
+        id: generateUniqueId(),
         source: sourceNodeId,
         target: newId,
         type: 'default',
@@ -951,7 +944,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
   // Add new standalone Root topic node
   const handleAddRootNode = useCallback(() => {
     if (!checkAiQuota()) return;
-    const newId = generateUniqueId('root');
+    const newId = generateUniqueId();
     
     // Find bottom-most root or leftmost node to place cleanly underneath
     const rootNodes = nodesRef.current.filter((n) => {
@@ -1009,7 +1002,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
     (sourceNoteId: string, premiseText: string) => {
       if (!checkAiQuota()) return;
       const sourceNode = nodesRef.current.find((n) => n.id === sourceNoteId);
-      const newId = generateUniqueId(`branch-note-${sourceNoteId}`);
+      const newId = generateUniqueId();
       const noteTitle = (sourceNode?.data as any)?.title || '便签前置假设';
       const prompt = premiseText.trim()
         ? `基于前置假设与思考沉淀「${premiseText.trim()}」，请深入推演其逻辑可行性、潜在工程挑战与下一步突破方向。`
@@ -1038,7 +1031,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       };
 
       const newEdge: Edge = {
-        id: generateUniqueId(`e-${sourceNoteId}-${newId}`),
+        id: generateUniqueId(),
         source: sourceNoteId,
         sourceHandle: 'out',
         target: newId,
@@ -1086,7 +1079,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
         (rootNode.data as any)?.title ||
         (rootNode.data as any)?.question?.slice(0, 15) ||
         '子思维分支';
-      const newBoardId = generateUniqueId('board');
+      const newBoardId = generateUniqueId();
       const newBoardName = `分支导出: ${title}`;
 
       const minX = Math.min(...subNodes.map((n) => n.position.x));
@@ -1129,7 +1122,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
 
   // Add note node placed near viewport center
   const handleAddNoteNode = useCallback(() => {
-    const newId = generateUniqueId('note');
+    const newId = generateUniqueId();
     let targetX = 300;
     let targetY = 200;
     try {
@@ -1163,7 +1156,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
   const handleBranchNewNote = useCallback(
     (sourceNoteId: string) => {
       const sourceNode = nodesRef.current.find((n) => n.id === sourceNoteId);
-      const newId = generateUniqueId(`note-${sourceNoteId}`);
+      const newId = generateUniqueId();
       const sourceX = sourceNode ? sourceNode.position.x : 300;
       const sourceY = sourceNode ? sourceNode.position.y : 200;
 
@@ -1184,7 +1177,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       };
 
       const newEdge: Edge = {
-        id: generateUniqueId(`e-${sourceNoteId}-${newId}`),
+        id: generateUniqueId(),
         source: sourceNoteId,
         target: newId,
         type: 'default',
@@ -1306,7 +1299,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
           addEdge(
             {
               ...params,
-              id: generateUniqueId(`e-${params.source}-${params.target}`),
+              id: generateUniqueId(),
               type: 'default',
               animated: isNoteInvolved,
               style: isNoteInvolved ? NOTE_ANIMATED_EDGE_STYLE : AI_EDGE_STYLE,

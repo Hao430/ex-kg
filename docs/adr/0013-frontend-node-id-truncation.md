@@ -1,6 +1,6 @@
 # ADR-0013: 节点 ID 前端生成 + 截断前缀 24 字符
 
-- **Status**: Accepted
+- **Status**: Deprecated（2026-09-10 id 统一 UUIDv7：恒 36 字符不再有前缀增长，截断防御整体移除；varchar 上限的上下文教训保留）
 - **Date**: 2026-09-09
 - **Deciders**: 枝想架构组
 - **Tags**: persistence, data-contract, frontend

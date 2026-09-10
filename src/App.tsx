@@ -33,6 +33,7 @@ import {
   takeCloneIntent,
 } from './lib/share-clone';
 import { deduplicateNodes, deduplicateEdges } from './lib/storage';
+import { uuidv7 } from './lib/uuid.js';
 import { SampleBoardViewer } from './components/sample/SampleBoardViewer';
 import { ShareLinkModal } from './components/ui/ShareLinkModal';
 import { StarterChecklist } from './components/canvas/StarterChecklist';
@@ -51,7 +52,7 @@ import { FeedbackModal } from './components/ui/FeedbackModal';
 function createStarterRootNode(): Node[] {
   return [
     {
-      id: `root-${Date.now()}`,
+      id: uuidv7(),
       type: 'chat',
       position: { x: 120, y: 160 },
       draggable: false,
@@ -463,7 +464,7 @@ function MainApp() {
       openRechargeModal('免费版用户最多支持创建 3 个独立画板。升级 Pro 会员解锁无限画板与无限节点！');
       return;
     }
-    const newId = `board-${Date.now()}`;
+    const newId = uuidv7();
     const newName = `探索课题 #${boards.length + 1}`;
     const starterNodes = createStarterRootNode();
     const emptyBoard: StoredBoard = {
@@ -502,14 +503,14 @@ function MainApp() {
           openRechargeModal('免费版用户最多支持创建 3 个独立画板。升级 Pro 会员解锁无限画板！');
           return;
         }
-        const newId = `board-${Date.now()}`;
+        const newId = uuidv7();
         const newBoard: StoredBoard = {
           id: newId,
           name: presetTopic,
           updatedAt: Date.now(),
           nodes: [
             {
-              id: `root-${Date.now()}`,
+              id: uuidv7(),
               type: 'chat',
               position: { x: 120, y: 160 },
               draggable: false,
@@ -603,7 +604,7 @@ function MainApp() {
       return;
     }
 
-    const boardId = `board-${Date.now()}`;
+    const boardId = uuidv7();
     const boardName = String(body.title || '克隆的分享画板').slice(0, 60);
     saveBoard({ id: boardId, name: boardName, updatedAt: Date.now(), nodes, edges });
     markShareCloned(intent.code);
