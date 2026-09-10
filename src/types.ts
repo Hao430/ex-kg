@@ -44,12 +44,16 @@ export interface ChatNodeData {
   /** 自动命名：手动改过标题后永不被 LLM 命名覆盖；autoTitled = 已消耗唯一一次自动命名机会 */
   titleManual?: boolean;
   autoTitled?: boolean;
+  /** 只读模式（分享页/示例画布）：隐藏交互控件，仅保留展示 */
+  readOnly?: boolean;
 }
 
 export interface NoteNodeData {
   title: string;
   content: string;
   color?: string;
+  /** 只读模式（分享页/示例画布）：隐藏交互控件，仅保留展示 */
+  readOnly?: boolean;
 }
 
 export interface DeepDiveBoardMeta {

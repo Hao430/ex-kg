@@ -822,17 +822,55 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
     return descendants;
   }, []);
 
+  // 手动连线校验（isValidConnection）：同一条推导链上的节点禁止互连——
+  // 祖先方向（会成环，服务端 NODE_PARENT_CYCLE 兜底）与后代方向（同链捷径）都拦；
+  // 同时拦截自连与重复连线。跨分支连线不受限。
+  const isValidConnection = useCallback(
+    (connection: Connection): boolean => {
+      const { source, target } = connection;
+      if (!source || !target || source === target) return false;
+
+      // target 是 source 的祖先（沿入边上溯；含 source===target 已被上方拦截）
+      let cur: string | undefined = target;
+      const visited = new Set<string>();
+      while (cur && !visited.has(cur)) {
+        if (cur === source) return false;
+        visited.add(cur);
+        cur = edgesRef.current.find((e) => e.target === cur)?.source;
+      }
+
+      // target 是 source 的后代（下溯）
+      if (getDescendantNodeIds(source).has(target)) return false;
+
+      // 已存在同向连线
+      return !edgesRef.current.some((e) => e.source === source && e.target === target);
+    },
+    [getDescendantNodeIds]
+  );
+
+  // 拆除连接线：双击边直接移除（键盘 Delete/Backspace 删除选中边经 onBeforeDelete 放行）
+  const handleEdgeDoubleClick = useCallback(
+    (_: React.MouseEvent, edge: Edge) => {
+      setEdges((eds) => eds.filter((e) => e.id !== edge.id));
+    },
+    [setEdges]
+  );
+
+  // 键盘删除守卫：只放行边的移除；节点删除必须走卡片删除按钮（级联确认弹窗），
+  // 防止选中节点按 Delete 绕过确认造成孤儿子节点（上下文链断裂）
+  const handleBeforeDelete = useCallback(async ({ edges: pendingEdges }: { nodes: Node[]; edges: Edge[] }) => {
+    return { nodes: [], edges: pendingEdges };
+  }, []);
+
   // Internal execution of deleting specific node IDs
+  // 删除后不重排版/不 fitView（工单反馈：删除触发全局缩放观感差）——画布布局交由用户自行安排
   const executeDeleteNodeIds = useCallback(
     (targetIds: string[]) => {
       const targetSet = new Set(targetIds);
       setNodes((nds) => nds.filter((n) => !targetSet.has(n.id)));
       setEdges((eds) => eds.filter((e) => !targetSet.has(e.source) && !targetSet.has(e.target)));
-      setTimeout(() => {
-        applyLayout();
-      }, 50);
     },
-    [applyLayout, setNodes, setEdges]
+    [setNodes, setEdges]
   );
 
   // Delete node trigger: if it has child nodes, prompt with modal; otherwise delete immediately
@@ -1412,6 +1450,10 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          isValidConnection={isValidConnection}
+          onEdgeDoubleClick={handleEdgeDoubleClick}
+          onBeforeDelete={handleBeforeDelete}
+          deleteKeyCode={['Backspace', 'Delete']}
           onPaneClick={handlePaneClick}
           onNodeDragStart={handleNodeDragStart}
           onNodeDragStop={handleNodeDragStop}

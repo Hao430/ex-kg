@@ -153,6 +153,8 @@ const STREAM_RENDER_INTERVAL_MS = 150;
 
 export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selected }) => {
   const nodeData = data as unknown as ChatNodeData;
+  // 只读模式（分享页/示例画布）：隐藏交互控件，仅保留展示；动作经 readOnlyNodeActions 桩兜底
+  const readOnly = Boolean(nodeData.readOnly);
   const nodeActions = useNodeActions();
   const { openAuthModal, openRechargeModal } = useAuth();
 
@@ -394,14 +396,16 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
             </span>
           </div>
 
-          <Tooltip content="关闭该探索建议" side="top">
-            <button
-              onClick={handleDelete}
-              className="p-1 text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded-md transition-colors opacity-80 hover:opacity-100 cursor-pointer"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </Tooltip>
+          {!readOnly && (
+            <Tooltip content="关闭该探索建议" side="top">
+              <button
+                onClick={handleDelete}
+                className="p-1 text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded-md transition-colors opacity-80 hover:opacity-100 cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </Tooltip>
+          )}
         </div>
 
         {/* Suggestion Question Body */}
@@ -415,16 +419,18 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
             </Tooltip>
           </div>
 
-          <Tooltip content="点击以此问题创建独立的思维分支" side="bottom">
-            <button
-              onClick={handleActivateSuggestion}
-              className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-gradient-to-r from-indigo-600 via-indigo-500 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white text-xs font-semibold shadow-sm shadow-indigo-500/25 hover:shadow-md hover:shadow-indigo-500/35 transition-all active:scale-[0.98] cursor-pointer"
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>展开深度探讨</span>
-              <ArrowRight className="w-3.5 h-3.5 ml-0.5" />
-            </button>
-          </Tooltip>
+          {!readOnly && (
+            <Tooltip content="点击以此问题创建独立的思维分支" side="bottom">
+              <button
+                onClick={handleActivateSuggestion}
+                className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-gradient-to-r from-indigo-600 via-indigo-500 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white text-xs font-semibold shadow-sm shadow-indigo-500/25 hover:shadow-md hover:shadow-indigo-500/35 transition-all active:scale-[0.98] cursor-pointer"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>展开深度探讨</span>
+                <ArrowRight className="w-3.5 h-3.5 ml-0.5" />
+              </button>
+            </Tooltip>
+          )}
         </div>
 
         {/* Outgoing Handle */}
@@ -489,15 +495,18 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
               className="px-2 py-0.5 text-xs font-semibold text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-800 border border-indigo-500 dark:border-indigo-400 rounded-lg outline-none w-full"
             />
           ) : (
-            <Tooltip content="双击可重命名此节点标题" side="top">
+            <Tooltip content={readOnly ? nodeData.title : '双击可重命名此节点标题'} side="top">
               <span
                 // stopPropagation：阻断冒泡到 React Flow 的 d3-zoom（zoomOnDoubleClick 默认开），
                 // 否则双击重命名会先触发视口放大，重命名被缩放淹没
                 onDoubleClick={(e) => {
                   e.stopPropagation();
+                  if (readOnly) return;
                   setEditingTitle(true);
                 }}
-                className="text-xs font-semibold text-slate-800 dark:text-slate-100 truncate cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+                className={`text-xs font-semibold text-slate-800 dark:text-slate-100 truncate transition-colors ${
+                  readOnly ? '' : 'cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400'
+                }`}
               >
                 {nodeData.title}
               </span>
@@ -519,16 +528,18 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
           )}
         </div>
 
-        {/* Header Action Buttons */}
+        {/* Header Action Buttons（只读模式仅保留复制：其余动作在分享页/示例画布无意义） */}
         <div className="flex items-center gap-1 shrink-0">
-          <Tooltip content="将以此节点为起点的子分支导出为独立画板" side="top">
-            <button
-              onClick={() => nodeActions?.exportSubBranch?.(id)}
-              className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 rounded-lg transition-colors cursor-pointer"
-            >
-              <FolderPlus className="w-3.5 h-3.5" />
-            </button>
-          </Tooltip>
+          {!readOnly && (
+            <Tooltip content="将以此节点为起点的子分支导出为独立画板" side="top">
+              <button
+                onClick={() => nodeActions?.exportSubBranch?.(id)}
+                className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 rounded-lg transition-colors cursor-pointer"
+              >
+                <FolderPlus className="w-3.5 h-3.5" />
+              </button>
+            </Tooltip>
+          )}
 
           <Tooltip content={copied ? '已复制到剪贴板' : '复制节点完整问答内容'} side="top">
             <button
@@ -539,23 +550,27 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
             </button>
           </Tooltip>
 
-          <Tooltip content={nodeData.isCollapsed ? '展开节点内容' : '折叠收起节点'} side="top">
-            <button
-              onClick={handleToggleCollapse}
-              className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200/50 dark:hover:bg-slate-800/60 rounded-lg transition-colors cursor-pointer"
-            >
-              {nodeData.isCollapsed ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
-            </button>
-          </Tooltip>
+          {!readOnly && (
+            <>
+              <Tooltip content={nodeData.isCollapsed ? '展开节点内容' : '折叠收起节点'} side="top">
+                <button
+                  onClick={handleToggleCollapse}
+                  className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200/50 dark:hover:bg-slate-800/60 rounded-lg transition-colors cursor-pointer"
+                >
+                  {nodeData.isCollapsed ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
+                </button>
+              </Tooltip>
 
-          <Tooltip content="删除此节点" side="top">
-            <button
-              onClick={handleDelete}
-              className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded-lg transition-colors cursor-pointer"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
-          </Tooltip>
+              <Tooltip content="删除此节点" side="top">
+                <button
+                  onClick={handleDelete}
+                  className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded-lg transition-colors cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </Tooltip>
+            </>
+          )}
         </div>
       </div>
 
@@ -594,7 +609,7 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
             className="nodrag nowheel nopan p-4 max-h-[380px] overflow-y-auto overscroll-contain flex flex-col gap-3 text-sm text-slate-700 dark:text-slate-200 select-text cursor-text"
           >
             {/* If node is an empty root node without a question yet */}
-            {!hasQuestion && (
+            {!hasQuestion && !readOnly && (
               <div className="py-2">
                 <p className="text-xs text-slate-600 dark:text-slate-400 font-medium mb-2.5">
                   输入你想探索的科学、哲学或工程议题：
@@ -643,6 +658,10 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
                   </div>
                 </div>
               </div>
+            )}
+
+            {!hasQuestion && readOnly && (
+              <p className="text-xs text-slate-400 dark:text-slate-500">（暂无内容）</p>
             )}
 
             {/* Answer Content with Full Markdown and LaTeX Math Support */}
@@ -771,32 +790,36 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
                   <span className="leading-snug flex-1 font-medium">{nodeData.errorMessage || '生成失败，请重试'}</span>
                 </div>
                 <div className="flex items-center justify-end gap-2 pt-1 border-t border-rose-200/60 dark:border-rose-900/50">
-                  {nodeData.errorMessage?.includes('登录') && (
-                    <button
-                      onClick={() => openAuthModal('signin')}
-                      className="nodrag flex items-center gap-1 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium transition-colors cursor-pointer shadow-sm text-[11px]"
-                    >
-                      <span>登录 / 注册</span>
-                      <ArrowRight className="w-3 h-3" />
-                    </button>
+                  {!readOnly && (
+                    <>
+                      {nodeData.errorMessage?.includes('登录') && (
+                        <button
+                          onClick={() => openAuthModal('signin')}
+                          className="nodrag flex items-center gap-1 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium transition-colors cursor-pointer shadow-sm text-[11px]"
+                        >
+                          <span>登录 / 注册</span>
+                          <ArrowRight className="w-3 h-3" />
+                        </button>
+                      )}
+                      {(nodeData.errorMessage?.includes('会员') || nodeData.errorMessage?.includes('充值') || nodeData.errorMessage?.includes('升级')) && (
+                        <button
+                          onClick={() => openRechargeModal()}
+                          className="nodrag flex items-center gap-1 px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-medium transition-colors cursor-pointer shadow-sm text-[11px]"
+                        >
+                          <span>升级/续费会员</span>
+                        </button>
+                      )}
+                      <Tooltip content="重新推演该问题" side="top">
+                        <button
+                          onClick={handleRetry}
+                          className="nodrag flex items-center gap-1 px-2.5 py-1 bg-slate-700 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 text-white rounded-lg font-medium transition-colors cursor-pointer text-[11px]"
+                        >
+                          <RotateCw className="w-3 h-3" />
+                          <span>重试</span>
+                        </button>
+                      </Tooltip>
+                    </>
                   )}
-                  {(nodeData.errorMessage?.includes('会员') || nodeData.errorMessage?.includes('充值') || nodeData.errorMessage?.includes('升级')) && (
-                    <button
-                      onClick={() => openRechargeModal()}
-                      className="nodrag flex items-center gap-1 px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-medium transition-colors cursor-pointer shadow-sm text-[11px]"
-                    >
-                      <span>升级/续费会员</span>
-                    </button>
-                  )}
-                  <Tooltip content="重新推演该问题" side="top">
-                    <button
-                      onClick={handleRetry}
-                      className="nodrag flex items-center gap-1 px-2.5 py-1 bg-slate-700 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 text-white rounded-lg font-medium transition-colors cursor-pointer text-[11px]"
-                    >
-                      <RotateCw className="w-3 h-3" />
-                      <span>重试</span>
-                    </button>
-                  </Tooltip>
                 </div>
               </div>
             )}
@@ -805,7 +828,7 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
           </div>
 
           {/* Node Footer / Follow-up Input: Always spawns a NEW child node */}
-          {hasQuestion && (
+          {hasQuestion && !readOnly && (
             <div className="p-2.5 border-t border-slate-100 dark:border-slate-800/80 bg-slate-50/60 dark:bg-slate-900/40 rounded-b-2xl">
               <form onSubmit={handleFollowUpSubmit} className="relative flex items-center">
                 <input

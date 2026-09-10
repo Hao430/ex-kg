@@ -2,7 +2,7 @@
  * Spec K5（跟踪清单 D1）：示例画布只读查看器（模态浮层）。
  *
  * - 内容来自 src/lib/sample-boards.ts（纯前端静态，不占用户画板配额）。
- * - 复用 K2 分享页只读节点（shareNodeTypes）：React Flow 全禁交互，仅浏览/缩放。
+ * - 复用主画布节点组件（ChatCardNode/NoteCardNode + data.readOnly）：与属主画布渲染一致，仅禁交互。
  * - 内置 3 个示例的切换 tab；关闭按钮 + 点击遮罩关闭。
  * - 打开时上报 K4 事件 sample_view（data.persona 人群标签，非 PII）。
  */
@@ -10,7 +10,10 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { ReactFlow, Background, BackgroundVariant, ReactFlowProvider, type Node, type Edge } from '@xyflow/react';
 import { X } from 'lucide-react';
 import { SAMPLE_BOARDS, type SampleBoard } from '../../lib/sample-boards';
-import { shareNodeTypes } from '../share/ShareReadOnlyNode';
+import { ChatCardNode } from '../nodes/ChatCardNode';
+import { NoteCardNode } from '../nodes/NoteCardNode';
+import { withErrorBoundary } from '../ErrorBoundary';
+import { NodeActionsContext, readOnlyNodeActions } from '../../context/NodeActionsContext';
 import { trackEvent } from '../../lib/analytics';
 
 interface SampleBoardViewerProps {
@@ -19,24 +22,33 @@ interface SampleBoardViewerProps {
   onClose: () => void;
 }
 
+/** 与主画布同款节点组件（技术债 #0032：同样经 withErrorBoundary 包裹），仅禁交互 */
+const readOnlyNodeTypes = {
+  chat: withErrorBoundary(ChatCardNode),
+  note: withErrorBoundary(NoteCardNode),
+};
+
 /** 只读画布：轻量包装，切 tab 时用 key 重挂载以重置 fitView */
 const ReadOnlyFlow: React.FC<{ nodes: Node[]; edges: Edge[] }> = ({ nodes, edges }) => (
-  <ReactFlow
-    nodes={nodes}
-    edges={edges}
-    nodeTypes={shareNodeTypes}
-    nodesDraggable={false}
-    nodesConnectable={false}
-    elementsSelectable={false}
-    edgesFocusable={false}
-    proOptions={{ hideAttribution: true }}
-    fitView
-    fitViewOptions={{ padding: 0.15 }}
-    minZoom={0.1}
-    maxZoom={1.5}
-  >
-    <Background variant={BackgroundVariant.Dots} gap={28} size={1.5} />
-  </ReactFlow>
+  <NodeActionsContext.Provider value={readOnlyNodeActions}>
+    <ReactFlow
+      nodes={nodes}
+      edges={edges}
+      nodeTypes={readOnlyNodeTypes}
+      nodesDraggable={false}
+      nodesConnectable={false}
+      elementsSelectable={false}
+      edgesFocusable={false}
+      zoomOnDoubleClick={false}
+      proOptions={{ hideAttribution: true }}
+      fitView
+      fitViewOptions={{ padding: 0.15 }}
+      minZoom={0.1}
+      maxZoom={1.5}
+    >
+      <Background variant={BackgroundVariant.Dots} gap={28} size={1.5} />
+    </ReactFlow>
+  </NodeActionsContext.Provider>
 );
 
 export const SampleBoardViewer: React.FC<SampleBoardViewerProps> = ({ initialIndex = 0, onClose }) => {

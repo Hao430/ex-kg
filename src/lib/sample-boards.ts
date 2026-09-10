@@ -4,7 +4,7 @@
  * 设计约束：
  * - 纯前端静态内容，不写入 localStorage、不落服务端画布 —— 因此不占用
  *   免费版 3 画板配额、不产生服务端存储与同步（与用户画板完全隔离）。
- * - 只读渲染复用 K2 分享页节点组件（ShareReadOnlyNode），展示
+ * - 只读渲染复用主画布节点组件（ChatCardNode/NoteCardNode + data.readOnly），展示
  *   「提问 → AI 解答 → 划词分支 → 继续推演」的完整产品心智模型。
  * - 内容红线：不含模型品牌名、内部术语；解答为通用可靠的知识性内容；
  *   覆盖三类人群：学者 / 架构师 / 自学者。
@@ -27,16 +27,30 @@ type SampleCardData = {
   title?: string;
   question?: string;
   answer?: string;
-  isNote?: boolean;
-  noteContent?: string;
 };
 
 function chatNode(id: string, x: number, y: number, data: SampleCardData): Node {
-  return { id, type: 'share', position: { x, y }, data, draggable: false };
+  // 与主画布同款 chat 卡片渲染（readOnly 隐藏交互控件），status 取 idle 命中问答卡形态
+  return {
+    id,
+    type: 'chat',
+    position: { x, y },
+    draggable: false,
+    data: { ...data, status: 'idle', model: '', readOnly: true },
+  };
 }
 
 function edge(source: string, target: string): Edge {
-  return { id: `e-${source}-${target}`, source, target, type: 'smoothstep', animated: false };
+  // 边样式与主画布 AI 推导线一致（靛蓝 + 箭头），type 走 React Flow 默认 bezier
+  return {
+    id: `e-${source}-${target}`,
+    source,
+    target,
+    type: 'default',
+    animated: false,
+    style: { stroke: '#6366f1', strokeWidth: 2 },
+    markerEnd: { type: 'arrowclosed' as const, color: '#6366f1' },
+  };
 }
 
 /** 学者：论文选题怎么拆解 */
@@ -122,11 +136,12 @@ const architectureBoard: SampleBoard = {
     }),
     {
       id: 's2-note',
-      type: 'share',
+      type: 'note',
       position: { x: 420, y: 400 },
+      draggable: false,
       data: {
-        isNote: true,
-        noteContent: `拆分决策清单
+        title: '拆分决策清单',
+        content: `拆分决策清单
 □ 领域边界是否稳定 ≥ 6 个月？
 □ 是否 ≥ 2 个团队并行开发？
 □ 运维/可观测基建是否就绪？
@@ -134,6 +149,7 @@ const architectureBoard: SampleBoard = {
 
 → 全部满足才动手；
 → 否则继续投资模块化单体。`,
+        readOnly: true,
       },
     } as Node,
   ],

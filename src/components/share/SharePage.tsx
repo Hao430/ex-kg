@@ -1,9 +1,10 @@
 /**
  * Spec K2（跟踪清单 B1）：公开只读分享页。
  *
- * 裸页面（无 AuthProvider，同 /verify-email 分流模式）：凭 shareCode 拉取快照，
- * 以 React Flow 只读画布渲染（禁拖拽/连线/选中），底部品牌条引导访客进主应用。
- * 使用独立的轻量只读节点组件（不复用 ChatCardNode——其交互回调/配额逻辑与登录态耦合）。
+ * 凭 shareCode 拉取快照，以 React Flow 只读画布渲染（禁拖拽/连线/选中），
+ * 底部品牌条引导访客进主应用。节点复用主画布 ChatCardNode/NoteCardNode
+ * （data.readOnly 隐藏交互控件 + readOnlyNodeActions 桩兜底），保证分享快照
+ * 与属主画布渲染一致（工单 2026-09-10）；AuthProvider 仅为主卡片组件提供登录态上下文。
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import {
@@ -18,10 +19,18 @@ import { motion } from 'framer-motion';
 import { Sparkles, ArrowRight, Sun, Moon } from 'lucide-react';
 import { trackEvent } from '../../lib/analytics';
 import { recordCloneIntent } from '../../lib/share-clone';
-import { shareNodeTypes } from './ShareReadOnlyNode';
+import { ChatCardNode } from '../nodes/ChatCardNode';
+import { NoteCardNode } from '../nodes/NoteCardNode';
+import { withErrorBoundary } from '../ErrorBoundary';
+import { NodeActionsContext, readOnlyNodeActions } from '../../context/NodeActionsContext';
+import { AuthProvider } from '../../context/AuthContext';
 import '@xyflow/react/dist/style.css';
 
-/** 只读卡片节点与 nodeTypes 已抽取为共享模块 ShareReadOnlyNode.tsx（K5 示例画布复用） */
+/** 与主画布同款节点组件（技术债 #0032：同样经 withErrorBoundary 包裹），仅禁交互 */
+const readOnlyNodeTypes = {
+  chat: withErrorBoundary(ChatCardNode),
+  note: withErrorBoundary(NoteCardNode),
+};
 
 
 /**
@@ -77,12 +86,13 @@ const SharePageInner: React.FC<{ shareCode: string }> = ({ shareCode }) => {
         }
         const body = (await res.json()) as any;
         if (cancelled) return;
-        // 快照节点 → React Flow 节点（position 缺省兜底；isNote 由 type 映射）
+        // 快照节点 → React Flow 节点：type 直通（chat/note 走主画布组件），
+        // data 直通并注入 readOnly 隐藏交互控件
         const nodes: Node[] = (body.nodes || []).map((n: any) => ({
           id: n.id,
-          type: 'share',
+          type: (n.type || 'chat') === 'note' ? 'note' : 'chat',
           position: n.position || { x: 0, y: 0 },
-          data: { ...n.data, isNote: (n.type || 'chat') === 'note' },
+          data: { ...n.data, readOnly: true },
         }));
         // 边样式直通快照（与属主编排一致），仅做形状兜底——不再硬编码覆盖
         const edges: Edge[] = (body.edges || []).map((e: any) => ({
@@ -169,25 +179,31 @@ const SharePageInner: React.FC<{ shareCode: string }> = ({ shareCode }) => {
           </div>
           {/* flex-1 + min-h-0：画布占满剩余高度（移动端不引入 480px 硬兜底导致的页面滚动） */}
           <div className="flex-1 min-h-0">
-            <ReactFlowProvider>
-              <ReactFlow
-                nodes={state.nodes}
-                edges={state.edges}
-                nodeTypes={shareNodeTypes}
-                nodesDraggable={false}
-                nodesConnectable={false}
-                elementsSelectable={false}
-                edgesFocusable={false}
-                // 移动端手势：React Flow 默认支持单指拖拽平移 + 双指捏合缩放（zoomOnPinch）
-                proOptions={{ hideAttribution: true }}
-                fitView
-                fitViewOptions={{ padding: 0.2 }}
-                minZoom={0.1}
-                maxZoom={1.5}
-              >
-                <Background variant={BackgroundVariant.Dots} gap={28} size={1.5} />
-              </ReactFlow>
-            </ReactFlowProvider>
+            {/* AuthProvider：ChatCardNode 内部 useAuth 需要；访客态 user=null 即可 */}
+            <AuthProvider>
+              <NodeActionsContext.Provider value={readOnlyNodeActions}>
+                <ReactFlowProvider>
+                  <ReactFlow
+                    nodes={state.nodes}
+                    edges={state.edges}
+                    nodeTypes={readOnlyNodeTypes}
+                    nodesDraggable={false}
+                    nodesConnectable={false}
+                    elementsSelectable={false}
+                    edgesFocusable={false}
+                    zoomOnDoubleClick={false}
+                    // 移动端手势：React Flow 默认支持单指拖拽平移 + 双指捏合缩放（zoomOnPinch）
+                    proOptions={{ hideAttribution: true }}
+                    fitView
+                    fitViewOptions={{ padding: 0.2 }}
+                    minZoom={0.1}
+                    maxZoom={1.5}
+                  >
+                    <Background variant={BackgroundVariant.Dots} gap={28} size={1.5} />
+                  </ReactFlow>
+                </ReactFlowProvider>
+              </NodeActionsContext.Provider>
+            </AuthProvider>
           </div>
           {/* 底部品牌传播条：CTA 点击记录克隆意图（Spec K6/B1），注册/登录后自动克隆该画布 */}
           <footer className="px-4 sm:px-5 py-3 border-t border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/80 backdrop-blur flex items-center justify-between gap-3">
@@ -201,7 +217,7 @@ const SharePageInner: React.FC<{ shareCode: string }> = ({ shareCode }) => {
               onClick={() => recordCloneIntent(shareCode)}
               className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 text-white text-xs font-semibold shadow-lg"
             >
-              用 AI 深挖我的问题
+              克隆续问
               <ArrowRight className="w-3.5 h-3.5" />
             </motion.a>
           </footer>

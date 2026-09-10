@@ -155,12 +155,16 @@ export async function initDbSchema(): Promise<boolean> {
         label VARCHAR(255) DEFAULT '',
         animated BOOLEAN DEFAULT FALSE,
         type VARCHAR(32) DEFAULT 'smoothstep',
+        style JSONB,
+        marker_end JSONB,
         created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
       );
       ALTER TABLE edges ADD COLUMN IF NOT EXISTS source_handle VARCHAR(64);
       ALTER TABLE edges ADD COLUMN IF NOT EXISTS target_handle VARCHAR(64);
       ALTER TABLE edges ADD COLUMN IF NOT EXISTS label VARCHAR(255) DEFAULT '';
       ALTER TABLE edges ADD COLUMN IF NOT EXISTS animated BOOLEAN DEFAULT FALSE;
+      ALTER TABLE edges ADD COLUMN IF NOT EXISTS style JSONB;
+      ALTER TABLE edges ADD COLUMN IF NOT EXISTS marker_end JSONB;
     `);
 
     // 6. Orders (会员订阅订单表)

@@ -166,7 +166,8 @@ CREATE TABLE IF NOT EXISTS edges (
   target_handle VARCHAR(64), -- 'in', 'left'
   label VARCHAR(255) DEFAULT '',
   animated BOOLEAN DEFAULT FALSE,
-  style JSONB DEFAULT '{}'::jsonb,
+  style JSONB,                       -- React Flow 边样式（stroke/strokeWidth/strokeDasharray 等，2026-09-10 与 schema.ts 对齐）
+  marker_end JSONB,                  -- React Flow 箭头 markerEnd（2026-09-10：分享快照与属主画布渲染一致）
   type VARCHAR(32) DEFAULT 'smoothstep',
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
 );

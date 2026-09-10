@@ -168,6 +168,9 @@ export async function getCanvas(canvasId: string, userId?: string, isAdmin = fal
         label: er.label || undefined,
         animated: er.animated ?? false,
         type: er.type || 'smoothstep',
+        // 边样式与箭头随画布持久化（K2 分享快照与属主画布渲染一致的前提）
+        style: er.style || undefined,
+        markerEnd: er.marker_end || undefined,
       }));
 
       return {
@@ -407,6 +410,8 @@ export async function saveCanvas(
         edge.label || null,
         Boolean(edge.animated),
         edge.type || 'smoothstep',
+        edge.style || null,
+        edge.markerEnd || null,
       ]);
 
       const EDGE_BATCH_SIZE = 500;
@@ -418,7 +423,7 @@ export async function saveCanvas(
         await client.query(
           `INSERT INTO edges (
             id, canvas_id, source_id, target_id, source_handle, target_handle,
-            label, animated, type
+            label, animated, type, style, marker_end
           )
           VALUES ${tuples.join(', ')}
           ON CONFLICT (id) DO NOTHING`,
