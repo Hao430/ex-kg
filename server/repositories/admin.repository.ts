@@ -44,7 +44,7 @@ export async function listAdminUsers(params: {
 
       const listRes = await p.query(
         `SELECT u.*,
-                COALESCE((SELECT COUNT(*) FROM canvases c WHERE c.user_id = u.id), 0)::int as canvas_count,
+                COALESCE((SELECT COUNT(*) FROM canvases c WHERE c.user_id = u.id AND c.deleted_at IS NULL), 0)::int as canvas_count,
                 COALESCE((SELECT SUM(total_tokens) FROM ai_request_logs al WHERE al.user_id = u.id AND al.status = 'success'), 0)::int as total_tokens_used
          FROM users u
          WHERE ${whereClause}
@@ -80,7 +80,8 @@ export async function listAdminUsers(params: {
 
   const total = list.length;
   const paginated = list.slice(offset, offset + limit).map((u) => {
-    const canvasCount = Array.from(inMemoryStore.canvases.values()).filter((c) => c.user_id === u.id).length;
+    // 与 listCanvases / getAdminOverview 同口径：排除软删画布（否则删除后数字只增不减）
+    const canvasCount = Array.from(inMemoryStore.canvases.values()).filter((c) => c.user_id === u.id && !c.deleted_at).length;
     const totalTokens = inMemoryStore.aiRequestLogs
       .filter((l) => l.user_id === u.id && l.status === 'success')
       .reduce((sum, l) => sum + l.total_tokens, 0);

@@ -9,10 +9,9 @@ import { Topbar } from './components/ui/Topbar';
 import { DeepDiveCanvas } from './components/canvas/DeepDiveCanvas';
 import { LandingPage } from './components/landing/LandingPage';
 import {
-  loadBoardList,
   loadBoard,
   saveBoard,
-  deleteBoard,
+  deleteBoardLocally,
   exportBoardToJson,
   exportBoardToMarkdown,
   fetchBoardFromServer,
@@ -20,8 +19,13 @@ import {
   StoredBoard,
 } from './lib/storage';
 import { exportCanvasAsPng } from './lib/canvas-image-export';
-import { DeepDiveBoardMeta, ChatNodeData } from './types';
+import { ChatNodeData } from './types';
 import { onSyncState } from './lib/sync-queue';
+import * as boardStore from './lib/board-store';
+import * as boardScope from './lib/board-scope';
+import * as quotaStore from './lib/quota-store';
+import * as syncQueue from './lib/sync-queue';
+import { useBoards } from './hooks/useBoards';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { trackEvent } from './lib/analytics';
 import { markChecklistStep } from './lib/checklist';
@@ -86,7 +90,7 @@ function MainApp() {
     return 'landing';
   });
 
-  const [boards, setBoards] = useState<DeepDiveBoardMeta[]>([]);
+  const boards = useBoards();
   const [currentBoardId, setCurrentBoardId] = useState<string>('default-board');
   const [boardName, setBoardName] = useState<string>('量子计算深度探索');
   const [initialNodes, setInitialNodes] = useState<Node[] | undefined>(undefined);
@@ -94,7 +98,7 @@ function MainApp() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [nodeCount, setNodeCount] = useState<number>(1);
 
-  const { isVip, openRechargeModal, user, resendVerification } = useAuth();
+  const { isVip, openRechargeModal, user, resendVerification, loading: authLoading } = useAuth();
 
   // Spec K5（D1）：示例画布只读查看器开关（Topbar「示例画布」入口）
   const [sampleViewerOpen, setSampleViewerOpen] = useState(false);
@@ -225,8 +229,25 @@ function MainApp() {
   const syncIdleTimerRef = useRef<number | null>(null);
   useEffect(() => {
     const onConflict = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { message?: string };
+      const detail = (e as CustomEvent).detail as { message?: string; code?: string };
+      // 配额/会员类：引导升级，草稿保留待升级后自动补传
+      if (detail?.code === 'BOARD_LIMIT_REACHED' || detail?.code === 'VIP_EXPIRED') {
+        openRechargeModal(detail?.message || '免费版画板额度已用完，升级 Pro 解锁无限画板');
+        return;
+      }
+      if (detail?.code === 'NOT_FOUND') {
+        showToast(detail?.message || '画板已在其他设备被删除');
+        return;
+      }
+      if (detail?.code === 'UNAUTHORIZED') {
+        showToast(detail?.message || '登录状态已失效，请重新登录');
+        return;
+      }
       showToast(detail?.message || '画板已在其他窗口被修改，请刷新后重试');
+    };
+    const onRemoteDeleted = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { name?: string };
+      showToast(`画板「${detail?.name || ''}」已在其他设备被删除`);
     };
     const offSync = onSyncState((state, boardId) => {
       if (boardId !== currentBoardIdRef.current) return;
@@ -240,12 +261,41 @@ function MainApp() {
       }
     });
     window.addEventListener('deepdive:canvas-save-conflict', onConflict);
+    window.addEventListener('deepdive:board-remote-deleted', onRemoteDeleted);
     return () => {
       window.removeEventListener('deepdive:canvas-save-conflict', onConflict);
+      window.removeEventListener('deepdive:board-remote-deleted', onRemoteDeleted);
       offSync();
       if (syncIdleTimerRef.current !== null) clearTimeout(syncIdleTimerRef.current);
     };
   }, []);
+
+  // 网络恢复立即刷新配额；页面隐藏/卸载前尽力 flush 同步队列（防丢最后一段编辑）
+  useEffect(() => {
+    const onOnline = () => {
+      void quotaStore.refreshQuota();
+      void syncQueue.flush();
+    };
+    const onPageHide = () => {
+      void syncQueue.flush();
+    };
+    window.addEventListener('online', onOnline);
+    window.addEventListener('pagehide', onPageHide);
+    window.addEventListener('visibilitychange', onPageHide);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('pagehide', onPageHide);
+      window.removeEventListener('visibilitychange', onPageHide);
+    };
+  }, []);
+
+  // 升级成功（isVip 变 true）：刷新配额并重试被额度拦下的草稿/克隆
+  useEffect(() => {
+    if (!isVip) return;
+    void quotaStore.refreshQuota();
+    syncQueue.recoverDirtyDrafts(boardStore.getDirtyIds());
+    void syncQueue.flush();
+  }, [isVip]);
 
   const applyLoadedBoard = useCallback((loaded: StoredBoard) => {
     setCurrentBoardId(loaded.id);
@@ -258,61 +308,125 @@ function MainApp() {
     setBoardReady(true);
   }, []);
 
-  // Load boards on startup（Spec A2：已登录时服务端为真源，失败回退本地）
+  /** 服务端与本地均无内容时：给引导节点，绝不复用被删画布的内容 */
+  const applyStarterBoard = useCallback(
+    (id: string, name: string) => {
+      const starter = createStarterRootNode();
+      applyLoadedBoard({
+        id,
+        name,
+        updatedAt: Date.now(),
+        nodes: starter,
+        edges: [],
+      });
+    },
+    [applyLoadedBoard]
+  );
+
+  // Load boards on startup（local-first：本地立即出画面，服务端后台对账）
   const loadSeqRef = useRef(0);
+  const boundScopeRef = useRef<string | null>(null);
   useEffect(() => {
+    if (authLoading) return; // 身份未定，避免 guest→user 双 boot
     let cancelled = false;
     const seq = ++loadSeqRef.current;
-    const boot = async () => {
-      const localList = loadBoardList();
-      let activeId: string | undefined;
-      let activeList: DeepDiveBoardMeta[] = localList;
 
-      if (user) {
-        const serverList = await fetchBoardListFromServer();
-        if (cancelled || seq !== loadSeqRef.current) return;
-        if (serverList) {
-          // 服务端为主，本地独有画板（未同步草稿）保留在尾部
-          const merged = [...serverList];
-          for (const b of localList) {
-            if (!merged.some((m) => m.id === b.id)) merged.push(b);
+    const scopeKey = boardScope.scopeKeyFor(user?.id);
+    const scopeChanged = boundScopeRef.current !== scopeKey;
+    boardStore.bindScope(scopeKey); // 幂等，StrictMode 双跑安全
+    syncQueue.bindQueueScope(scopeKey);
+    boundScopeRef.current = scopeKey;
+
+    if (scopeChanged) {
+      quotaStore.setScope(scopeKey);
+      // 游客 → 账号：自动认领纯本地草稿并上传
+      if (user && scopeKey !== 'guest' && !boardScope.isGuestClaimed(user.id)) {
+        const { claimable } = boardScope.planGuestClaim(user.id);
+        if (claimable.length > 0) {
+          boardStore.hydrateClaimedDrafts(claimable, user.id);
+          for (const m of claimable) {
+            quotaStore.markPendingCreate(m.id);
+            syncQueue.enqueue(m.id);
           }
-          activeList = merged;
+          showToast(`已将 ${claimable.length} 个本地画板同步到你的账号`);
+        } else {
+          boardScope.markGuestClaimed(user.id);
         }
       }
+      // 持久化队列续跑 + dirty 兜底
+      try {
+        syncQueue.hydrateQueue(boardScope.readJson(boardScope.queueKey(scopeKey), []));
+      } catch { /* ignore */ }
+      syncQueue.recoverDirtyDrafts(boardStore.getDirtyIds());
+    }
 
-      if (activeList.length > 0) {
-        setBoards(activeList);
-        activeId = activeList[0].id;
-      } else {
-        // Spec B: 新账号/无任何画布时初始为「新画布 + 待填写主题」引导节点（不再注入量子演示画布）
-        const defaultMeta: DeepDiveBoardMeta = {
-          id: 'default-board',
-          name: '未命名思维画布',
-          updatedAt: Date.now(),
-          nodeCount: 1,
-        };
-        setBoards([defaultMeta]);
-        setInitialNodes(createStarterRootNode());
-        setInitialEdges([]);
-        setNodeCount(1);
-        setBoardReady(true);
-        return;
+    const boot = async () => {
+      // 1) 本地列表立即决定活动画板（无网络等待）
+      const localList = boardStore.getBoardList();
+      let activeId: string | undefined = localList[0]?.id;
+      const DEFAULT_META = () => ({
+        id: 'default-board',
+        name: '未命名思维画布',
+        updatedAt: Date.now(),
+        nodeCount: 1,
+      });
+      if (!activeId) {
+        activeId = 'default-board';
+        // 游客直接落一棵默认板；登录用户先渲染引导态，等服务端列表确认后再落（避免已有画板者多出空板）
+        if (!user) boardStore.upsertLocal(DEFAULT_META(), { dirty: false });
       }
 
-      if (!activeId) return;
-      let loaded: StoredBoard | null = null;
-      if (user) loaded = await fetchBoardFromServer(activeId);
+      // 2) 本地内容立即渲染
+      const cached = loadBoard(activeId);
+      if (cached) {
+        applyLoadedBoard(cached);
+      } else {
+        const starter = createStarterRootNode();
+        applyLoadedBoard({
+          id: activeId,
+          name: boardStore.getBoardList().find((b) => b.id === activeId)?.name || '未命名思维画布',
+          updatedAt: Date.now(),
+          nodes: starter,
+          edges: [],
+        });
+      }
       if (cancelled || seq !== loadSeqRef.current) return;
-      if (!loaded) loaded = loadBoard(activeId);
-      if (loaded) applyLoadedBoard(loaded);
-      else setBoardReady(true);
+
+      // 3) 后台对账（不阻塞 UI）
+      if (!user) return;
+      void quotaStore.refreshQuota();
+      void fetchBoardListFromServer().then((serverList) => {
+        if (cancelled || seq !== loadSeqRef.current) return;
+        if (serverList && serverList.length > 0) {
+          // 冷启动引导态（未编辑、未落盘）→ 自动切到最近一块真实画板
+          const onFreshDefault =
+            currentBoardIdRef.current === 'default-board' &&
+            !loadBoard('default-board') &&
+            !boardStore.isDirty('default-board');
+          if (onFreshDefault) {
+            void fetchBoardFromServer(serverList[0].id).then((loaded) => {
+              if (cancelled || seq !== loadSeqRef.current || !loaded) return;
+              applyLoadedBoard(loaded);
+            });
+          }
+          return;
+        }
+        // 服务端确认为空（或离线拉取失败）：落一棵默认板，保证列表可见
+        if (!boardStore.getBoardList().some((b) => b.id === 'default-board')) {
+          boardStore.upsertLocal(DEFAULT_META(), { dirty: false });
+        }
+      });
+      void fetchBoardFromServer(activeId).then((loaded) => {
+        if (cancelled || seq !== loadSeqRef.current || !loaded) return;
+        if (boardStore.isDirty(loaded.id)) return; // 本地未同步改动优先
+        applyLoadedBoard(loaded);
+      });
     };
     void boot();
     return () => {
       cancelled = true;
     };
-  }, [user?.id, applyLoadedBoard]);
+  }, [user?.id, authLoading, applyLoadedBoard]);
 
   // Debounced auto-save whenever nodes or edges change
   const handleCanvasChange = useCallback(
@@ -334,8 +448,7 @@ function MainApp() {
           nodes,
           edges,
         };
-        saveBoard(boardToSave);
-        setBoards(loadBoardList());
+        saveBoard(boardToSave); // board-store 订阅自动刷新列表
       }, 600);
     },
     [currentBoardId, boardName, boardReady]
@@ -356,14 +469,9 @@ function MainApp() {
     //（否则加载窗口内被删内容会经挂载 effect + handleCanvasChange 污染下一块画板）
     setBoardReady(false);
 
-    const result = await deleteBoard(targetId);
-    if (!result.ok) {
-      setBoardReady(true); // 删除失败：停留在原画布，恢复编辑能力
-      showToast('删除失败，请稍后重试');
-      return;
-    }
-    const remaining = boards.filter((b) => b.id !== targetId);
-    setBoards(remaining);
+    // 乐观删除：本地立即隐藏（墓碑）；服务端画板后台确认，失败自动回滚
+    deleteBoardLocally(targetId);
+    const remaining = boardStore.getBoardList().filter((b) => b.id !== targetId);
     showToast(`已删除画板「${target.name}」`);
 
     if (targetId !== currentBoardId) {
@@ -373,37 +481,21 @@ function MainApp() {
     if (remaining.length > 0) {
       const nextId = remaining[0].id;
       const seq = ++loadSeqRef.current;
-      let loaded: StoredBoard | null = null;
-      if (user) loaded = await fetchBoardFromServer(nextId);
-      if (seq !== loadSeqRef.current) return; // 期间用户已手动切换画板，丢弃本次结果
-      if (!loaded) loaded = loadBoard(nextId);
-      if (loaded) {
-        // setCurrentBoardId 与 setInitialNodes 同批提交（applyLoadedBoard）：
-        // key remount 拿到的就是新内容——先切 id 后加载数据会让画布显示被删内容
-        applyLoadedBoard(loaded);
+      // 本地先出画面；无缓存再拉服务端（有未同步改动则本地版胜出）
+      const cached = loadBoard(nextId);
+      if (cached) {
+        applyLoadedBoard(cached);
+      } else if (user && !boardStore.isDirty(nextId)) {
+        const loaded = await fetchBoardFromServer(nextId);
+        if (seq !== loadSeqRef.current) return; // 期间用户已手动切换画板，丢弃本次结果
+        if (loaded && !boardStore.isDirty(loaded.id)) applyLoadedBoard(loaded);
+        else applyStarterBoard(nextId, remaining[0].name);
       } else {
-        // 服务端与本地均无内容：给引导节点，绝不复用被删画布的内容
-        setCurrentBoardId(nextId);
-        setBoardName(remaining[0].name);
-        const starter = createStarterRootNode();
-        setInitialNodes(starter);
-        setInitialEdges([]);
-        currentNodesRef.current = starter;
-        currentEdgesRef.current = [];
-        setNodeCount(1);
-        setBoardReady(true);
+        applyStarterBoard(nextId, remaining[0].name);
       }
     } else {
       // 全部删除：初始化「新画布 + 待填写主题」引导节点（对齐新账号语义）
-      setCurrentBoardId('default-board');
-      setBoardName('未命名思维画布');
-      const starter = createStarterRootNode();
-      setInitialNodes(starter);
-      setInitialEdges([]);
-      currentNodesRef.current = starter;
-      currentEdgesRef.current = [];
-      setNodeCount(1);
-      setBoardReady(true);
+      applyStarterBoard('default-board', '未命名思维画布');
     }
   };
 
@@ -417,7 +509,6 @@ function MainApp() {
       edges: currentEdgesRef.current,
     };
     saveBoard(boardToSave);
-    setBoards(loadBoardList());
     showToast(`画板已重命名为「${newName}」`);
   };
 
@@ -437,7 +528,6 @@ function MainApp() {
         nodes: currentNodesRef.current,
         edges: currentEdgesRef.current,
       });
-      setBoards(loadBoardList());
       showToast(`画板已自动命名为「${safe}」`);
     };
     window.addEventListener('deepdive:board-autotitle', handler);
@@ -447,20 +537,29 @@ function MainApp() {
   const handleSwitchBoard = async (targetId: string) => {
     if (targetId === currentBoardId) return;
     const seq = ++loadSeqRef.current; // 过期的加载结果直接丢弃（Spec A2 审计修复）
-    let loaded: StoredBoard | null = null;
-    if (user) loaded = await fetchBoardFromServer(targetId); // Spec A2：服务端优先
-    if (seq !== loadSeqRef.current) return; // 期间用户又切换了画板
-    if (!loaded) loaded = loadBoard(targetId); // 回退本地草稿
-    if (loaded) {
-      applyLoadedBoard(loaded); // 加载完成后再整体切换，避免旧数据污染新画板
-      showToast(`已载入画板「${loaded.name}」`);
-    } else {
+    // 本地先出画面（无网络等待）
+    const cached = loadBoard(targetId);
+    if (cached) {
+      applyLoadedBoard(cached);
+      showToast(`已载入画板「${cached.name}」`);
+    }
+    // 后台校验服务端版本（有未同步改动则本地版胜出，不覆盖）
+    if (user && (!cached || !boardStore.isDirty(targetId))) {
+      const loaded = await fetchBoardFromServer(targetId);
+      if (seq !== loadSeqRef.current || !loaded) {
+        if (!cached && seq === loadSeqRef.current) showToast('画板加载失败，请稍后重试');
+        return;
+      }
+      if (boardStore.isDirty(loaded.id)) return;
+      applyLoadedBoard(loaded);
+      if (!cached) showToast(`已载入画板「${loaded.name}」`);
+    } else if (!cached) {
       showToast('画板加载失败，请稍后重试');
     }
   };
 
   const handleNewBoard = () => {
-    if (!isVip && boards.length >= 3) {
+    if (quotaStore.canCreate(isVip) === 'block') {
       openRechargeModal('免费版用户最多支持创建 3 个独立画板。升级 Pro 会员解锁无限画板与无限节点！');
       return;
     }
@@ -474,9 +573,8 @@ function MainApp() {
       nodes: starterNodes,
       edges: [],
     };
+    quotaStore.markPendingCreate(newId);
     saveBoard(emptyBoard);
-    const updatedList = loadBoardList();
-    setBoards(updatedList);
     setCurrentBoardId(newId);
     setBoardName(newName);
     setInitialNodes(starterNodes);
@@ -499,7 +597,7 @@ function MainApp() {
       if (existing) {
         handleSwitchBoard(existing.id);
       } else {
-        if (!isVip && boards.length >= 3) {
+        if (quotaStore.canCreate(isVip) === 'block') {
           openRechargeModal('免费版用户最多支持创建 3 个独立画板。升级 Pro 会员解锁无限画板！');
           return;
         }
@@ -526,11 +624,10 @@ function MainApp() {
           ],
           edges: [],
         };
+        quotaStore.markPendingCreate(newId);
         saveBoard(newBoard);
         trackEvent('board_create'); // K4 事件 5：画板创建（不携带画板名，避免 PII）
         markChecklistStep('board'); // K5/D1：checklist 第 1 步
-        const updatedList = loadBoardList();
-        setBoards(updatedList);
         setCurrentBoardId(newId);
         setBoardName(presetTopic);
         setInitialNodes(newBoard.nodes);
@@ -585,7 +682,7 @@ function MainApp() {
 
     // 画板配额客户端预检（与 handleEnterCanvas 同口径；服务端 save 仍有硬拦截）。
     // 预检失败意图保留：充值成功（isVip 变化）或删板腾位（boards.length 变化）后本钩子自动重试
-    if (!isVip && loadBoardList().length >= 3) {
+    if (quotaStore.canCreate(isVip) === 'block') {
       openRechargeModal('免费版用户最多支持创建 3 个独立画板，升级 Pro 会员解锁无限画板后再来克隆吧！');
       return;
     }
@@ -606,12 +703,11 @@ function MainApp() {
 
     const boardId = uuidv7();
     const boardName = String(body.title || '克隆的分享画板').slice(0, 60);
+    quotaStore.markPendingCreate(boardId);
     saveBoard({ id: boardId, name: boardName, updatedAt: Date.now(), nodes, edges });
     markShareCloned(intent.code);
     takeCloneIntent(); // 克隆成功：焚毁意图
 
-    const updatedList = loadBoardList();
-    setBoards(updatedList);
     setCurrentBoardId(boardId);
     setBoardName(boardName);
     setInitialNodes(nodes);
@@ -685,9 +781,17 @@ function MainApp() {
 
   const handleResetBoard = () => {
     if (window.confirm('确定要清空当前画板的所有节点吗？此操作无法撤销。')) {
-      localStorage.removeItem(`deepdive_board_${currentBoardId}`);
-      localStorage.removeItem(`rabbithole_board_${currentBoardId}`);
-      window.location.reload();
+      const starter = createStarterRootNode();
+      const resetBoard: StoredBoard = {
+        id: currentBoardId,
+        name: boardName,
+        updatedAt: Date.now(),
+        nodes: starter,
+        edges: [],
+      };
+      saveBoard(resetBoard); // 走 scope 正确的持久化 + 同步（不再裸删键 + reload）
+      applyLoadedBoard(resetBoard);
+      showToast('已清空当前画板');
     }
   };
 

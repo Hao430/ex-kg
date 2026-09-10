@@ -56,7 +56,8 @@ docker compose -f docker-compose.pg-smoke.yml up -d postgres && \
 ### 前端结构
 
 - `src/main.tsx` 按 pathname 分流：`/reset-password`、`/verify-email` 独立落地页（无 AuthProvider，裸 fetch）；其余走 `App.tsx`（AuthProvider 包裹的画布应用）。
-- 画布保存与删除：`src/lib/storage.ts` 本地 + `sync-queue`（状态机 `pending/saved/conflict/error`；saved 3 秒后回退 idle）。乐观锁冲突派发 `deepdive:canvas-save-conflict` 事件。`deleteBoard` 是**确认制**：仅服务端 2xx/404 才清本地并 `sync-queue.dequeue(boardId)`（防删除后被自动保存写回复活），403/断网保留本地并返回 `{ok:false}` 由 App 提示。
+- **画布列表真相（技术债 #0082，2026-09-10 local-first 重构）**：列表唯一来源是 `src/lib/board-store.ts`（服务端快照 ∪ 本地未同步草稿 − 墓碑，按 id 去重，`useSyncExternalStore` 稳定快照），`App.tsx` 不得再用 `setBoards(loadBoardList())` 以本地索引覆盖合并态。`loadBoardList()` 现为 board-store 视图。localStorage 按 scope 隔离（`src/lib/board-scope.ts`，guest/userId），旧无作用域索引首次绑定时迁移；游客登录自动认领纯本地草稿。`src/lib/quota-store.ts` 以 `/api/quota` 为权威 + pendingCreates 驱动顶栏「画板 X/3」与新建闸门（不再用本地索引硬拦）。
+- 画布保存与删除：`src/lib/storage.ts` 本地 + `sync-queue`（状态机 `pending/saved/conflict/error`；saved 3 秒后回退 idle）。队列**持久化**（绑 scope 后写 localStorage，`hydrateQueue` 刷新续跑 + `recoverDirtyDrafts` 兜底）。乐观锁冲突派发 `deepdive:canvas-save-conflict`（detail 带 `code`：`BOARD_LIMIT_REACHED`/`VIP_EXPIRED`/`NOT_FOUND`/`UNAUTHORIZED`）。删除是**乐观 + 墓碑**：`deleteBoardLocally` 立即隐藏并入删除队列，2xx/404 确认清理、403/401 回滚、断网保留墓碑待重试；游客/纯本地草稿直接本地删（无需服务端）；远端已删（save 404）派发 `deepdive:board-remote-deleted` 并收敛幽灵板。
 - 新用户引导：空白初始画布（新账号/画板全删空/新建画板）统一经 `App.tsx` 的 `createStarterRootNode()` 注入「新探索主题」待填根节点，不允许出现纯空白画布。
 - **错误边界纪律（技术债 #0032）**：ReactFlow 自定义节点必须经 `withErrorBoundary()` 包裹（见 `nodeTypes`），画布子树有 canvas 级 `ErrorBoundary` 兜底——新增节点类型同样要包，否则单节点抛错会拖垮整画布。
 - 品牌与文案（面向用户的文案一律不出现内部术语）：模型品牌/型号、Google 字样、开源库名（KaTeX 等）、「商业级/多租户/RBAC/沙箱/鉴权/IDOR」这类架构自述词一律不用（如需提及用「前沿大模型」「实时联网检索」「数据按用户严格隔离」）。推荐探索课题为可深挖的学习型议题（哲学概念、AI 概念等），不用遥远的前沿论文题。

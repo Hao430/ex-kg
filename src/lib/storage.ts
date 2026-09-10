@@ -1,19 +1,24 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
+ *
+ * 画板本地持久化 + 服务端同步（2026-09-10 重构为 local-first）。
+ * - 列表真相移交 board-store（服务端快照 ∪ 本地草稿 − 墓碑）
+ * - 同步队列升级为持久化的上传/删除意图队列
+ * - 删除改乐观 + 墓碑，游客/纯本地草稿无需服务端
  */
-
 import { Node, Edge } from '@xyflow/react';
 import { DeepDiveBoardMeta, ChatNodeData } from '../types';
-import { enqueue, dequeue, setSyncExecutor } from './sync-queue';
+import { enqueue, dequeue, enqueueDelete, setSyncExecutor, setDeleteExecutor } from './sync-queue';
+import * as boardScope from './board-scope';
+import * as boardStore from './board-store';
+import * as quotaStore from './quota-store';
 import { trackEvent } from './analytics';
 
-const STORAGE_BOARDS_INDEX_KEY = 'deepdive_boards_index_v1';
-const LEGACY_STORAGE_BOARDS_INDEX_KEY = 'rabbithole_boards_index_v1';
-const STORAGE_BOARD_PREFIX = 'deepdive_board_';
-const LEGACY_STORAGE_BOARD_PREFIX = 'rabbithole_board_';
+const STORAGE_BOARD_PREFIX = boardScope.BOARD_BLOB_PREFIX;
+const LEGACY_STORAGE_BOARD_PREFIX = boardScope.LEGACY_BOARD_BLOB_PREFIX;
 /** serverUpdatedAt 独立小键：保存成功后免整板 JSON parse/stringify（性能优化） */
-const SERVER_TS_PREFIX = 'deepdive_board_server_ts_';
+const SERVER_TS_PREFIX = boardScope.SERVER_TS_PREFIX;
 
 export interface StoredBoard {
   id: string;
@@ -26,20 +31,15 @@ export interface StoredBoard {
   serverUpdatedAt?: string;
 }
 
+/** 本地列表：以 board-store 为准（已合并服务端快照/本地草稿/墓碑） */
 export function loadBoardList(): DeepDiveBoardMeta[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_BOARDS_INDEX_KEY) || localStorage.getItem(LEGACY_STORAGE_BOARDS_INDEX_KEY);
-    if (!raw) return [];
-    return JSON.parse(raw);
-  } catch (e) {
-    console.error('Failed to load boards index:', e);
-    return [];
-  }
+  return boardStore.getBoardList();
 }
 
+/** @deprecated 兼容入口：直接写 scoped 索引（正常路径经 board-store） */
 export function saveBoardList(boards: DeepDiveBoardMeta[]): void {
   try {
-    localStorage.setItem(STORAGE_BOARDS_INDEX_KEY, JSON.stringify(boards));
+    boardScope.writeScopedIndex(boards);
   } catch (e) {
     console.error('Failed to save boards index:', e);
   }
@@ -91,7 +91,7 @@ export function saveBoard(board: StoredBoard): void {
       nodes: deduplicateNodes(board.nodes),
       edges: deduplicateEdges(board.edges),
     };
-    persistBoard(cleanedBoard);
+    persistBoard(cleanedBoard, { dirty: true });
     // Asynchronously sync to backend (PostgreSQL) via retry queue (Spec A5)
     enqueueBoardSync(cleanedBoard.id);
   } catch (e) {
@@ -99,33 +99,29 @@ export function saveBoard(board: StoredBoard): void {
   }
 }
 
-/** 纯本地持久化（写画布记录 + 更新索引），不触发服务端入队 */
-function persistBoard(cleanedBoard: StoredBoard): void {
+/** 纯本地持久化（写画布记录 + 通知 board-store），可指定是否为未同步改动 */
+function persistBoard(cleanedBoard: StoredBoard, opts?: { dirty?: boolean }): void {
   // 兜底合并：调用点构造的 StoredBoard 不携带 serverUpdatedAt 时，从权威小键读回注入，
   // 防止覆写 blob 抹掉内嵌版本号（App 层各 saveBoard 调用点均不传该字段）
   if (!cleanedBoard.serverUpdatedAt) {
-    const serverTs = localStorage.getItem(`${SERVER_TS_PREFIX}${cleanedBoard.id}`);
-    if (serverTs) cleanedBoard.serverUpdatedAt = serverTs;
+    try {
+      const serverTs = localStorage.getItem(`${SERVER_TS_PREFIX}${cleanedBoard.id}`);
+      if (serverTs) cleanedBoard.serverUpdatedAt = serverTs;
+    } catch { /* ignore */ }
   }
   localStorage.setItem(
     `${STORAGE_BOARD_PREFIX}${cleanedBoard.id}`,
     JSON.stringify(cleanedBoard)
   );
-  // Update index
-  const list = loadBoardList();
-  const existingIndex = list.findIndex((b) => b.id === cleanedBoard.id);
-  const meta: DeepDiveBoardMeta = {
-    id: cleanedBoard.id,
-    name: cleanedBoard.name,
-    updatedAt: cleanedBoard.updatedAt,
-    nodeCount: cleanedBoard.nodes.length,
-  };
-  if (existingIndex >= 0) {
-    list[existingIndex] = meta;
-  } else {
-    list.unshift(meta);
-  }
-  saveBoardList(list);
+  boardStore.upsertLocal(
+    {
+      id: cleanedBoard.id,
+      name: cleanedBoard.name,
+      updatedAt: cleanedBoard.updatedAt,
+      nodeCount: cleanedBoard.nodes.length,
+    },
+    { dirty: opts?.dirty !== false }
+  );
 }
 
 /**
@@ -133,21 +129,26 @@ function persistBoard(cleanedBoard: StoredBoard): void {
  * - 携带 serverUpdatedAt 作为乐观锁版本（Spec A4）
  * - 409 冲突静默自愈：用响应的 latest_updated_at 推进版本号、原样重发本地内容
  *   （本地版胜出、覆盖服务端，用户无感知）；上限 MAX_CONFLICT_ATTEMPTS 次，
- *   耗尽或响应异常（解析失败/缺 latest_updated_at）才派发 deepdive:canvas-save-conflict
- *   事件（App 层 toast 提示）。收到合法 latest 的瞬间即落小键，即使本轮后续失败，
- *   下轮队列重跑也已携带新鲜版本。
+ *   耗尽或响应异常才派发 deepdive:canvas-save-conflict 事件（App 层 toast/弹窗）。
+ * - 403/404 带 code：BOARD_LIMIT_REACHED/VIP_EXPIRED 保留草稿待升级；NOT_FOUND 收敛幽灵板。
  */
 /** 409 静默自愈的总尝试次数（含首次） */
 const MAX_CONFLICT_ATTEMPTS = 3;
 
-/** 冲突/失败提示事件统一派发（detail 形状向后兼容，App 层只读 message） */
-function dispatchConflictEvent(boardId: string, message?: string, latestUpdatedAt?: string): void {
+/** 冲突/失败提示事件统一派发（detail 向后兼容，新增 code 字段） */
+function dispatchConflictEvent(
+  boardId: string,
+  message?: string,
+  latestUpdatedAt?: string,
+  code?: string
+): void {
   window.dispatchEvent(
     new CustomEvent('deepdive:canvas-save-conflict', {
       detail: {
         boardId,
         message,
         latestUpdatedAt,
+        code,
       },
     })
   );
@@ -177,14 +178,23 @@ export async function syncBoardToBackend(board: StoredBoard): Promise<'ok' | 'co
 
     // 401 会话失效（如改密/重置密码后被踢下线）：重试无意义——提示重新登录并停止重试
     if (res.status === 401) {
-      dispatchConflictEvent(board.id, '登录状态已失效，请重新登录后再保存画板');
+      dispatchConflictEvent(board.id, '登录状态已失效，请重新登录后再保存画板', undefined, 'UNAUTHORIZED');
       return 'conflict';
     }
 
-    // 配额/权限类 403 为永久失败，重试无意义——直接提示（Spec B1/B4）
+    // 配额/权限类 403 为永久失败，重试无意义——弹升级窗/提示并保留草稿（Spec B1/B4）
     if (res.status === 403) {
       const body = await res.json().catch(() => null) as any;
-      dispatchConflictEvent(board.id, body?.error || '画板保存被拒绝');
+      dispatchConflictEvent(board.id, body?.error || '画板保存被拒绝', undefined, body?.code || 'FORBIDDEN');
+      return 'conflict';
+    }
+
+    // 404：画板已在其他设备软删/不存在——收敛幽灵板，停止重试风暴
+    if (res.status === 404) {
+      const body = await res.json().catch(() => null) as any;
+      boardStore.reconcileRemoteDeletion(board.id);
+      quotaStore.unmarkPendingCreate(board.id);
+      dispatchConflictEvent(board.id, body?.error || '画板已在其他设备被删除', undefined, 'NOT_FOUND');
       return 'conflict';
     }
 
@@ -194,7 +204,7 @@ export async function syncBoardToBackend(board: StoredBoard): Promise<'ok' | 'co
       const latest = body?.latest_updated_at;
       // 降级 1：latest 缺失/非法 → 退回提示路径，不重试
       if (typeof latest !== 'string' || !latest) {
-        dispatchConflictEvent(board.id, body?.error || '画板已在其他窗口被修改');
+        dispatchConflictEvent(board.id, body?.error || '画板已在其他窗口被修改', undefined, 'CANVAS_SAVE_CONFLICT');
         return 'conflict';
       }
       // 立即落服务端事实版本：即使本轮重试失败，下轮 executor 重跑也已带新鲜版本
@@ -202,7 +212,7 @@ export async function syncBoardToBackend(board: StoredBoard): Promise<'ok' | 'co
       persistServerUpdatedAt(board.id, latest);
       // 降级 2：重试耗尽 → 退回提示路径
       if (attempt === MAX_CONFLICT_ATTEMPTS) {
-        dispatchConflictEvent(board.id, body?.error || '画板已在其他窗口被修改', latest);
+        dispatchConflictEvent(board.id, body?.error || '画板已在其他窗口被修改', latest, 'CANVAS_SAVE_CONFLICT');
         return 'conflict';
       }
       console.warn(
@@ -218,8 +228,7 @@ export async function syncBoardToBackend(board: StoredBoard): Promise<'ok' | 'co
         board.serverUpdatedAt = body.canvas.updatedAt;
         persistServerUpdatedAt(board.id, body.canvas.updatedAt);
       }
-      // 冲突自愈成功埋点（K4 扩展事件，attempt 为冲突发生次数，纯计数无 PII）：
-      // 自愈发生在客户端，服务端无法感知 409→重试成功的配对，统计走 Umami 通道
+      // 冲突自愈成功埋点（K4 扩展事件，attempt 为冲突发生次数，纯计数无 PII）
       if (attempt > 1) {
         trackEvent('conflict_healed', { attempt });
       }
@@ -241,23 +250,76 @@ function persistServerUpdatedAt(boardId: string, serverUpdatedAt: string): void 
 
 // ---- 重试队列接线（Spec A5）----
 setSyncExecutor(async (boardId) => {
+  if (boardStore.getState().tombstones.has(boardId)) return 'ok'; // 已删除，勿复活
   const board = loadBoard(boardId);
   if (!board) return 'ok'; // 本地已无该画布，视为完成
   const localVersion = board.updatedAt;
   const outcome = await syncBoardToBackend(board);
-  // 同步期间本地又被编辑过：以新数据重新入队，避免"标记已同步但云端是旧数据"
-  //（走索引元数据比对，免整板 parse；索引缺失的 legacy 板回退整板比对）
   if (outcome === 'ok') {
-    const meta = loadBoardList().find((b) => b.id === boardId);
-    const latestVersion = meta
-      ? meta.updatedAt
-      : loadBoard(boardId)?.updatedAt;
+    boardStore.confirmServerSave(boardId);
+    quotaStore.confirmCreate(boardId);
+    // 同步期间本地又被编辑过：以新数据重新入队，避免"标记已同步但云端是旧数据"
+    const meta = boardStore.getBoardList().find((b) => b.id === boardId);
+    const latestVersion = meta ? meta.updatedAt : loadBoard(boardId)?.updatedAt;
     if (latestVersion !== undefined && latestVersion !== localVersion) {
       enqueue(boardId);
     }
   }
   return outcome;
 });
+
+// ---- 删除执行器：乐观本地删除 + 后台确认，防复活 ----
+setDeleteExecutor(async (boardId) => {
+  // 纯本地草稿 / 从未同步：无需请求服务端
+  if (!boardScope.hasServerVersion(boardId)) {
+    boardStore.confirmServerDelete(boardId);
+    return 'ok';
+  }
+  let res: Response;
+  try {
+    res = await fetch(`/api/canvases/${encodeURIComponent(boardId)}`, {
+      method: 'DELETE',
+      credentials: 'include',
+    });
+  } catch {
+    return 'fail'; // 网络失败：保留墓碑，稍后重试
+  }
+  if (res.ok || res.status === 404) {
+    boardStore.confirmServerDelete(boardId);
+    quotaStore.confirmDelete();
+    quotaStore.unmarkPendingCreate(boardId);
+    return 'ok';
+  }
+  if (res.status === 401) {
+    boardStore.restoreFromTombstone(boardId); // 回滚，画板重新可见
+    dispatchConflictEvent(boardId, '登录状态已失效，请重新登录后再删除画板', undefined, 'UNAUTHORIZED');
+    return 'conflict';
+  }
+  if (res.status === 403) {
+    const body = await res.json().catch(() => null) as any;
+    boardStore.restoreFromTombstone(boardId);
+    dispatchConflictEvent(boardId, body?.error || '无权删除此画板', undefined, body?.code || 'CANVAS_FORBIDDEN');
+    return 'conflict';
+  }
+  return 'fail';
+});
+
+/**
+ * 乐观删除：本地立即隐藏（墓碑）并后台确认。
+ * - 游客/纯本地草稿：直接清理，不请求服务端（修「未登录无法删板」）
+ * - 服务端画板：入删除队列，2xx/404 后清理；403/401 回滚
+ */
+export function deleteBoardLocally(boardId: string): { needsServer: boolean } {
+  dequeue(boardId); // 取消待上传，防删除后被保存写回
+  quotaStore.unmarkPendingCreate(boardId);
+  if (!boardScope.hasServerVersion(boardId)) {
+    boardStore.confirmServerDelete(boardId);
+    return { needsServer: false };
+  }
+  boardStore.addTombstone(boardId);
+  enqueueDelete(boardId);
+  return { needsServer: true };
+}
 
 /** 画布保存入队：断网/失败自动退避重试，恢复网络立即补传 */
 export function enqueueBoardSync(boardId: string): void {
@@ -286,9 +348,11 @@ export async function fetchBoardFromServer(boardId: string): Promise<StoredBoard
       edges: deduplicateEdges(data.edges || []),
       serverUpdatedAt: data.updatedAt,
     };
-    persistBoard(board);
-    // 同步刷新权威小键：刷新/切板即重置版本源，斩断「冲突 → 小键停留旧值 → 保存再 409」死锁
-    persistServerUpdatedAt(board.id, board.serverUpdatedAt!);
+    // 本地有未同步改动时不覆盖内容（本地版胜出，避免抹掉离线编辑）
+    if (!boardStore.isDirty(board.id)) {
+      persistBoard(board, { dirty: false });
+      persistServerUpdatedAt(board.id, board.serverUpdatedAt!);
+    }
     return board;
   } catch (e) {
     return null;
@@ -296,7 +360,7 @@ export async function fetchBoardFromServer(boardId: string): Promise<StoredBoard
 }
 
 /**
- * Spec A2：从服务端拉取画板列表（跨设备登录后恢复画板清单）。失败 → null。
+ * Spec A2：从服务端拉取画板列表（跨设备登录后恢复画板清单）并水合 board-store。失败 → null。
  */
 export async function fetchBoardListFromServer(): Promise<DeepDiveBoardMeta[] | null> {
   try {
@@ -304,45 +368,17 @@ export async function fetchBoardListFromServer(): Promise<DeepDiveBoardMeta[] | 
     if (!res.ok) return null;
     const data = await res.json() as any[];
     if (!Array.isArray(data)) return null;
-    return data.map((c) => ({
+    const list: DeepDiveBoardMeta[] = data.map((c) => ({
       id: c.id,
       name: c.title || '未命名思维探索',
       updatedAt: Date.parse(c.updatedAt) || 0,
       nodeCount: c.nodeCount || 0,
     }));
+    boardStore.hydrateFromServer(list); // 写通本地索引（修列表缩水）
+    return list;
   } catch (e) {
     return null;
   }
-}
-
-/**
- * 删除画板（H1 竞态修复）：服务端为真源——仅当删除被确认（2xx）或画布从未同步/已不存在（404）
- * 才清理本地缓存、索引并移除待同步任务；403/5xx/断网时保留本地并返回失败，
- * 由调用方提示用户（否则远端画板会在下次拉取列表时「复活」，与「无法撤销」承诺矛盾）。
- */
-export async function deleteBoard(boardId: string): Promise<{ ok: boolean; status?: number }> {
-  let status = 0;
-  let networkFail = false;
-  try {
-    const res = await fetch(`/api/canvases/${encodeURIComponent(boardId)}`, {
-      method: 'DELETE',
-      credentials: 'include',
-    });
-    status = res.status;
-  } catch (e) {
-    networkFail = true;
-  }
-  if (networkFail || (status >= 300 && status !== 404)) {
-    return { ok: false, status: networkFail ? 0 : status };
-  }
-  dequeue(boardId); // 移除待同步任务，杜绝删除后自动保存把画板写回远端
-  try {
-    localStorage.removeItem(`${STORAGE_BOARD_PREFIX}${boardId}`);
-    localStorage.removeItem(`${LEGACY_STORAGE_BOARD_PREFIX}${boardId}`);
-    localStorage.removeItem(`${SERVER_TS_PREFIX}${boardId}`);
-    saveBoardList(loadBoardList().filter((b) => b.id !== boardId));
-  } catch (e) {}
-  return { ok: true };
 }
 
 export function exportBoardToJson(board: StoredBoard): void {

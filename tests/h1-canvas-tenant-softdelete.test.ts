@@ -229,22 +229,24 @@ describe('H1 画布删除链路安全加固（后端）', () => {
 // 注意：stub 在本 describe 的 before 钩子内设置并动态 import（此时后端用例已跑完，
 // 覆盖 globalThis.fetch 不再影响后端；动态 import 保证 stub 先于模块顶层副作用就位）。
 
-describe('H1 前端 deleteBoard 确认制与 dequeue', () => {
+describe('H1 前端乐观删除（墓碑）与 dequeue', () => {
   const store = new Map<string, string>();
   let fetchResponse: { status: number; body?: any } | null = null;
   let fetchError: Error | null = null;
 
-  let deleteBoard: (id: string) => Promise<{ ok: boolean; status?: number }>;
+  let deleteBoardLocally: (id: string) => { needsServer: boolean };
   let loadBoard: (id: string) => any;
   let loadBoardList: () => any[];
-  let saveBoardList: (b: any[]) => void;
   let enqueue: (id: string) => void;
   let dequeue: (id: string) => void;
   let hasPending: (id: string) => boolean;
+  let isDeleteQueued: (id: string) => boolean;
   let flush: () => Promise<void>;
   let resetForTest: () => void;
   let setSyncExecutor: (fn: any) => void;
   let setBackoffBaseForTest: (ms: number) => void;
+  let boardStore: any;
+  let boardScope: any;
 
   before(async () => {
     (globalThis as any).window = {
@@ -257,6 +259,16 @@ describe('H1 前端 deleteBoard 确认制与 dequeue', () => {
       setItem: (k: string, v: string) => void store.set(k, v),
       removeItem: (k: string) => void store.delete(k),
     };
+    if (typeof (globalThis as any).CustomEvent === 'undefined') {
+      (globalThis as any).CustomEvent = class {
+        type: string;
+        detail: any;
+        constructor(type: string, opts?: { detail?: any }) {
+          this.type = type;
+          this.detail = opts?.detail;
+        }
+      };
+    }
     (globalThis as any).fetch = async () => {
       if (fetchError) throw fetchError;
       return {
@@ -268,13 +280,15 @@ describe('H1 前端 deleteBoard 确认制与 dequeue', () => {
 
     const storageMod: any = await import('../src/lib/storage.ts');
     const queueMod: any = await import('../src/lib/sync-queue.ts');
-    deleteBoard = storageMod.deleteBoard;
+    boardStore = await import('../src/lib/board-store.ts');
+    boardScope = await import('../src/lib/board-scope.ts');
+    deleteBoardLocally = storageMod.deleteBoardLocally;
     loadBoard = storageMod.loadBoard;
     loadBoardList = storageMod.loadBoardList;
-    saveBoardList = storageMod.saveBoardList;
     enqueue = queueMod.enqueue;
     dequeue = queueMod.dequeue;
     hasPending = queueMod.hasPending;
+    isDeleteQueued = queueMod.isDeleteQueued;
     flush = queueMod.flush;
     resetForTest = queueMod.resetForTest;
     setSyncExecutor = queueMod.setSyncExecutor;
@@ -287,47 +301,69 @@ describe('H1 前端 deleteBoard 确认制与 dequeue', () => {
   });
 
   const BOARD_KEY = 'deepdive_board_h1-fe-board';
+  const ID = 'h1-fe-board';
 
-  const seedLocal = () => {
+  /** server=true：造出「已同步」画板（有 server ts 小键），否则纯本地草稿 */
+  const seed = (server: boolean) => {
     store.clear();
-    store.set(BOARD_KEY, JSON.stringify({ id: 'h1-fe-board', name: 'FE板', updatedAt: 1, nodes: [], edges: [] }));
-    saveBoardList([{ id: 'h1-fe-board', name: 'FE板', updatedAt: 1, nodeCount: 0 } as any]);
+    resetForTest();
+    boardStore.resetForTest();
+    boardStore.bindScope('guest');
+    store.set(BOARD_KEY, JSON.stringify({ id: ID, name: 'FE板', updatedAt: 1, nodes: [], edges: [] }));
+    if (server) store.set(`${boardScope.SERVER_TS_PREFIX}${ID}`, '2026-01-01T00:00:00.000Z');
+    boardStore.upsertLocal({ id: ID, name: 'FE板', updatedAt: 1, nodeCount: 0 }, { dirty: false });
   };
 
-  test('200 确认删除 → 清本地缓存与索引', async () => {
-    seedLocal();
+  test('游客/纯本地草稿：直接删除，无需服务端请求', () => {
+    seed(false);
     fetchResponse = { status: 200, body: { success: true } };
-    const result = await deleteBoard('h1-fe-board');
-    assert.deepEqual(result, { ok: true });
+    const r = deleteBoardLocally(ID);
+    assert.equal(r.needsServer, false);
+    assert.equal(store.has(BOARD_KEY), false, 'blob 应清理');
+    assert.equal(loadBoardList().some((b) => b.id === ID), false);
+  });
+
+  test('已同步画板乐观删除：立即隐藏，后台 200 确认后清 blob', async () => {
+    seed(true);
+    fetchResponse = { status: 200, body: { success: true } };
+    const r = deleteBoardLocally(ID);
+    assert.equal(r.needsServer, true);
+    assert.equal(loadBoardList().some((b) => b.id === ID), false, '应即时隐藏（墓碑）');
+    assert.ok(isDeleteQueued(ID), '应入删除队列');
+    await flush();
+    assert.equal(store.has(BOARD_KEY), false, '服务端确认后清 blob');
+    assert.equal(hasPending(ID), false);
+  });
+
+  test('404（远端已删）→ 视为成功清理', async () => {
+    seed(true);
+    fetchResponse = { status: 404, body: { error: 'not found', code: 'NOT_FOUND' } };
+    deleteBoardLocally(ID);
+    await flush();
     assert.equal(store.has(BOARD_KEY), false);
-    assert.equal(loadBoardList().some((b) => b.id === 'h1-fe-board'), false);
+    assert.equal(loadBoard(ID), null);
   });
 
-  test('404（从未同步）→ 视为成功，清本地草稿', async () => {
-    seedLocal();
-    fetchResponse = { status: 404, body: { error: 'not found' } };
-    const result = await deleteBoard('h1-fe-board');
-    assert.deepEqual(result, { ok: true });
-    assert.equal(loadBoard('h1-fe-board'), null);
-  });
-
-  test('403 删除被拒 → ok:false，本地保留', async () => {
-    seedLocal();
+  test('403 删除被拒 → 墓碑回滚，画板重新可见且本地保留', async () => {
+    seed(true);
     fetchResponse = { status: 403, body: { error: '无权删除此画板', code: 'CANVAS_FORBIDDEN' } };
-    const result = await deleteBoard('h1-fe-board');
-    assert.equal(result.ok, false);
-    assert.equal((result as any).status, 403);
-    assert.ok(loadBoard('h1-fe-board'), '本地画板应保留');
-    assert.ok(loadBoardList().some((b) => b.id === 'h1-fe-board'), '索引应保留');
+    deleteBoardLocally(ID);
+    await flush();
+    assert.ok(loadBoard(ID), '本地 blob 应保留（回滚）');
+    assert.ok(loadBoardList().some((b) => b.id === ID), '画板应重新可见');
   });
 
-  test('断网 → ok:false，本地保留', async () => {
-    seedLocal();
+  test('断网 → 墓碑保留（隐藏防复活），待恢复网络重试', async () => {
+    seed(true);
+    setBackoffBaseForTest(10000); // 退避放大，避免测试期定时器自动重试
     fetchError = new Error('network down');
-    const result = await deleteBoard('h1-fe-board');
-    assert.equal(result.ok, false);
-    assert.ok(loadBoard('h1-fe-board'), '本地画板应保留');
+    deleteBoardLocally(ID);
+    await flush();
+    assert.equal(loadBoardList().some((b) => b.id === ID), false, '断网期间保持隐藏');
+    assert.equal(isDeleteQueued(ID), true, '删除意图保留待重试');
     fetchError = null;
+    resetForTest();
+    setBackoffBaseForTest(2000);
   });
 
   test('dequeue：删除后待同步任务被移除，flush 不再触发保存', async () => {

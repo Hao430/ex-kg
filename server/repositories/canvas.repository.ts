@@ -40,7 +40,7 @@ export async function listCanvases(userId?: string, isAdmin = false): Promise<Ca
           COUNT(DISTINCT n.id)::int as node_count,
           COUNT(DISTINCT e.id)::int as edge_count
         FROM canvases c
-        LEFT JOIN nodes n ON n.canvas_id = c.id
+        LEFT JOIN nodes n ON n.canvas_id = c.id AND n.deleted_at IS NULL
         LEFT JOIN edges e ON e.canvas_id = c.id
         ${whereClause}
         GROUP BY c.id
@@ -226,6 +226,49 @@ function assertAcyclicParentChain(nodes: any[]): void {
   }
 }
 
+/**
+ * 归一化保存负载（PG/内存双分支共用，非导出以免触发双模判据）：
+ * - 按 id 去重节点：同一 payload 内重复 id 会让多值 INSERT 撞 nodes_pkey（前端合并/冲突自愈后偶发）
+ * - 按 id 去重边 + 丢弃端点不在本次节点集合内的边：nodes 每次整体重建，edges 的 FK 指向 nodes.id，
+ *   悬挂边会让整个事务 FK 失败 → 500，用户画布从此存不进去
+ * 内存分支同样走此归一化，保证与 PG 分支的 nodeCount/edgeCount 一致。
+ */
+function normalizeCanvasPayload(data: { id: string; nodes: any[]; edges: any[] }): { nodes: any[]; edges: any[] } {
+  const seenNodeIds = new Set<string>();
+  const nodes = (data.nodes || []).filter((node: any) => {
+    if (!node || !node.id || seenNodeIds.has(node.id)) {
+      if (node?.id) console.warn(`[saveCanvas] 丢弃重复节点 id=${node.id} canvas=${data.id}`);
+      return false;
+    }
+    seenNodeIds.add(node.id);
+    return true;
+  });
+
+  const nodeIdSet = new Set(nodes.map((n: any) => n.id));
+  const seenEdgeIds = new Set<string>();
+  const danglingEdges: any[] = [];
+  const edges = (data.edges || []).filter((e: any) => {
+    if (!e || !e.id || seenEdgeIds.has(e.id)) return false;
+    if (!nodeIdSet.has(e.source) || !nodeIdSet.has(e.target)) {
+      danglingEdges.push(e);
+      return false;
+    }
+    seenEdgeIds.add(e.id);
+    return true;
+  });
+  if (danglingEdges.length > 0) {
+    console.warn(
+      `[saveCanvas] 丢弃 ${danglingEdges.length} 条端点缺失的边 canvas=${data.id}：` +
+        danglingEdges
+          .slice(0, 5)
+          .map((e) => `${e.id}(${e.source}→${e.target})`)
+          .join(', ')
+    );
+  }
+
+  return { nodes, edges };
+}
+
 export async function saveCanvas(
   data: {
     id: string;
@@ -249,6 +292,8 @@ export async function saveCanvas(
 
   // 环链校验在权限/事务之前统一执行，PG 与内存双分支共用（技术债 #0006）
   assertAcyclicParentChain(data.nodes);
+  // 去重节点/边、丢悬挂边；两分支共用同一份归一化结果，保证计数与落库一致
+  const normalized = normalizeCanvasPayload(data);
 
   /** 乐观锁：画布已存在且调用方声明了其已知版本时校验，防止并发静默覆盖 */
   const assertNoConflict = (serverUpdatedAt: string | null | undefined): void => {
@@ -327,18 +372,7 @@ export async function saveCanvas(
       // Clean & Re-insert Nodes（批量多值 INSERT，分块控制参数数量）
       await client.query('DELETE FROM nodes WHERE canvas_id = $1', [data.id]);
       const nodeRows: any[][] = [];
-      // 同一 payload 内重复的节点 id 会让多值 INSERT 直接撞 nodes_pkey（生产日志里已出现 48 次，
-      // 前端合并/冲突自愈后偶发重复节点）→ 整块画布 500 存不进去。这里按 id 去重 + 告警。
-      const seenNodeIds = new Set<string>();
-      const uniqueNodes = (data.nodes || []).filter((node: any) => {
-        if (seenNodeIds.has(node.id)) {
-          console.warn(`[saveCanvas] 丢弃重复节点 id=${node.id} canvas=${data.id}`);
-          return false;
-        }
-        seenNodeIds.add(node.id);
-        return true;
-      });
-      for (const node of uniqueNodes) {
+      for (const node of normalized.nodes) {
         const d = node.data || {};
         const pos = node.position || { x: 0, y: 0 };
         const nodeType = node.type || 'chat';
@@ -409,29 +443,9 @@ export async function saveCanvas(
         );
       }
 
-      // Clean & Re-insert Edges（批量多值 INSERT）
+      // Clean & Re-insert Edges（归一化已按 id 去重 + 丢弃悬挂边）
       await client.query('DELETE FROM edges WHERE canvas_id = $1', [data.id]);
-      // 丢弃端点不在本次节点集合内的边：nodes 已在上方整体重建，而 edges.source_id/target_id
-      // 有外键约束指向 nodes.id —— 前端一旦漏删「已删除节点的边」（多标签页/同步竞态/程序化删节点），
-      // 整个保存事务会 FK 失败 → 500，用户画布从此再也存不进去。这里做自愈式过滤 + 告警：
-      // 保存保持可用，客户端问题仍能在日志里看到。2026-09-10
-      const nodeIdSet = new Set((data.nodes || []).map((n: any) => n.id));
-      const allEdges: any[] = data.edges || [];
-      const danglingEdges = allEdges.filter(
-        (e: any) => !nodeIdSet.has(e.source) || !nodeIdSet.has(e.target)
-      );
-      if (danglingEdges.length > 0) {
-        console.warn(
-          `[saveCanvas] 丢弃 ${danglingEdges.length} 条端点缺失的边 canvas=${data.id}：` +
-            danglingEdges
-              .slice(0, 5)
-              .map((e: any) => `${e.id}(${e.source}→${e.target})`)
-              .join(', ')
-        );
-      }
-      const edgeRows: any[][] = allEdges
-        .filter((e: any) => nodeIdSet.has(e.source) && nodeIdSet.has(e.target))
-        .map((edge: any) => [
+      const edgeRows: any[][] = normalized.edges.map((edge: any) => [
         edge.id,
         data.id,
         edge.source,
@@ -475,10 +489,10 @@ export async function saveCanvas(
         enableWebSearch: data.enableWebSearch ?? true,
         createdAt: new Date(upsertRes.rows[0].created_at).toISOString(),
         updatedAt: new Date(upsertRes.rows[0].updated_at).toISOString(),
-        nodes: data.nodes,
-        edges: data.edges,
-        nodeCount: (data.nodes || []).length,
-        edgeCount: (data.edges || []).length,
+        nodes: normalized.nodes,
+        edges: normalized.edges,
+        nodeCount: normalized.nodes.length,
+        edgeCount: normalized.edges.length,
       };
     } catch (e) {
       await client.query('ROLLBACK');
@@ -516,10 +530,10 @@ export async function saveCanvas(
     enableWebSearch: data.enableWebSearch ?? true,
     createdAt: existing?.createdAt || now,
     updatedAt: now,
-    nodes: data.nodes,
-    edges: data.edges,
-    nodeCount: data.nodes.length,
-    edgeCount: data.edges.length,
+    nodes: normalized.nodes,
+    edges: normalized.edges,
+    nodeCount: normalized.nodes.length,
+    edgeCount: normalized.edges.length,
   };
   inMemoryStore.canvases.set(data.id, record);
   return record;
@@ -604,7 +618,7 @@ export async function countCanvasNodes(canvasId: string): Promise<number> {
   if (p) {
     try {
       await initDbSchema();
-      const res = await p.query('SELECT COUNT(*)::int as count FROM nodes WHERE canvas_id = $1 AND type = $2', [
+      const res = await p.query('SELECT COUNT(*)::int as count FROM nodes WHERE canvas_id = $1 AND type = $2 AND deleted_at IS NULL', [
         canvasId,
         'chat',
       ]);

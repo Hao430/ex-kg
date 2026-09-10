@@ -30,7 +30,8 @@ import { getLayoutedElements } from '../../lib/layout';
 import { exportCanvasAsPng } from '../../lib/canvas-image-export';
 import { buildAncestorContext } from '../../lib/context';
 import { onSyncState } from '../../lib/sync-queue';
-import { saveBoard, loadBoardList, StoredBoard, deduplicateNodes, deduplicateEdges } from '../../lib/storage';
+import { saveBoard, StoredBoard, deduplicateNodes, deduplicateEdges } from '../../lib/storage';
+import { canCreate, markPendingCreate } from '../../lib/quota-store';
 import { NodeActionsContext, NodeActionsContextValue } from '../../context/NodeActionsContext';
 import { useAuth } from '../../context/AuthContext';
 import { useRenderMonitor } from '../../hooks/useRenderMonitor';
@@ -1058,12 +1059,9 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       const rootNode = nodesRef.current.find((n) => n.id === rootNodeId);
       if (!rootNode) return;
 
-      if (!isVip) {
-        const existingBoards = loadBoardList();
-        if (existingBoards.length >= 3) {
-          openRechargeModal('免费版用户最多创建 3 个独立画板。升级 Pro 解锁无限画板与子分支导出！');
-          return;
-        }
+      if (canCreate(isVip) === 'block') {
+        openRechargeModal('免费版用户最多创建 3 个独立画板。升级 Pro 解锁无限画板与子分支导出！');
+        return;
       }
 
       // Breadth-First-Search down the directed tree to collect all descendants
@@ -1081,6 +1079,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
         '子思维分支';
       const newBoardId = generateUniqueId();
       const newBoardName = `分支导出: ${title}`;
+      markPendingCreate(newBoardId);
 
       const minX = Math.min(...subNodes.map((n) => n.position.x));
       const minY = Math.min(...subNodes.map((n) => n.position.y));
