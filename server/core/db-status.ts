@@ -5,6 +5,24 @@ import { isProductionDbRequired, notePgError, pgDegraded } from './db-guard.js';
 import type { DbStatus } from './records.js';
 
 /**
+ * 内存模式统一口径（2026-09-10 计数对齐）：排除已注销用户及其画板/节点，
+ * 与 admin 用户列表 / getAdminOverview 一致。
+ */
+function memoryCounts(): { userCount: number; canvasCount: number; nodeCount: number } {
+  const userCount = Array.from(inMemoryStore.users.values()).filter((u) => !u.deleted_at).length;
+  const liveCanvases = Array.from(inMemoryStore.canvases.values()).filter((c) => {
+    if (c.deleted_at) return false;
+    const owner = inMemoryStore.users.get(c.user_id);
+    return Boolean(owner && !owner.deleted_at);
+  });
+  return {
+    userCount,
+    canvasCount: liveCanvases.length,
+    nodeCount: liveCanvases.reduce((acc, c) => acc + (c.nodes?.length || 0), 0),
+  };
+}
+
+/**
  * Check DB Status
  * Spec J1：新增 degraded 健康信号——生产环境配置了 DATABASE_URL 而 PG 故障时为 true，
  * 供部署层（探活/编排）持续 degraded >60s 告警或重启；本端点自身保持 200 不参与 fail-fast。
@@ -16,9 +34,7 @@ export async function checkDbStatus(): Promise<DbStatus> {
       connected: false,
       type: 'in-memory-fallback',
       message: 'DATABASE_URL 未配置。当前运行于高性能内存回退模式，数据与会话全量就绪。',
-      userCount: inMemoryStore.users.size,
-      canvasCount: Array.from(inMemoryStore.canvases.values()).filter((c) => !c.deleted_at).length,
-      nodeCount: Array.from(inMemoryStore.canvases.values()).reduce((acc, c) => acc + (c.nodes?.length || 0), 0),
+      ...memoryCounts(),
       databaseUrlConfigured: false,
       degraded: false,
     };
@@ -28,9 +44,19 @@ export async function checkDbStatus(): Promise<DbStatus> {
     await initDbSchema();
     const client = await p.connect();
     try {
-      const uRes = await client.query('SELECT COUNT(*) as count FROM users');
-      const cRes = await client.query('SELECT COUNT(*) as count FROM canvases WHERE deleted_at IS NULL');
-      const nRes = await client.query('SELECT COUNT(*) as count FROM nodes');
+      // 与 admin 用户列表 / overview 同口径：排除已注销用户及其画板/节点
+      const uRes = await client.query('SELECT COUNT(*) as count FROM users WHERE deleted_at IS NULL');
+      const cRes = await client.query(
+        `SELECT COUNT(*) as count FROM canvases c
+         JOIN users u ON u.id = c.user_id
+         WHERE c.deleted_at IS NULL AND u.deleted_at IS NULL`
+      );
+      const nRes = await client.query(
+        `SELECT COUNT(*) as count FROM nodes n
+         JOIN canvases c ON c.id = n.canvas_id
+         JOIN users u ON u.id = c.user_id
+         WHERE c.deleted_at IS NULL AND u.deleted_at IS NULL`
+      );
       return {
         connected: true,
         type: 'postgresql',
@@ -53,9 +79,7 @@ export async function checkDbStatus(): Promise<DbStatus> {
       message: isProductionDbRequired()
         ? `PostgreSQL 连接异常: ${err?.message || err}。生产模式下写请求将返回 503，请立即检查数据库。`
         : `PostgreSQL 连接异常: ${err?.message || err}。当前自动切换至内存模式保障服务。`,
-      userCount: inMemoryStore.users.size,
-      canvasCount: Array.from(inMemoryStore.canvases.values()).filter((c) => !c.deleted_at).length,
-      nodeCount: Array.from(inMemoryStore.canvases.values()).reduce((acc, c) => acc + (c.nodes?.length || 0), 0),
+      ...memoryCounts(),
       databaseUrlConfigured: true,
       degraded,
     };

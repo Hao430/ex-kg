@@ -90,6 +90,18 @@ async function canvasCountOf(targetEmail: string): Promise<number> {
   return row.canvas_count;
 }
 
+async function globalCanvasCount(): Promise<number> {
+  const res = await fetch(`${base}/api/db/status`);
+  assert.equal(res.status, 200);
+  return ((await res.json()) as any).canvasCount;
+}
+
+async function overviewTotalCanvases(): Promise<number> {
+  const res = await fetch(`${base}/api/admin/overview`, { headers: { cookie: adminCookie } });
+  assert.equal(res.status, 200, 'admin/overview 应 200');
+  return ((await res.json()) as any).overview.totalCanvases;
+}
+
 describe('P0 admin 每用户画布数排除软删', () => {
   before(async () => {
     const app = createApp();
@@ -123,5 +135,55 @@ describe('P0 admin 每用户画布数排除软删', () => {
 
     assert.equal((await delBoard(userCookie, 'p-admin-board-2')).status, 200);
     assert.equal(await canvasCountOf(EMAIL), 1, '删一块后应计 1');
+  });
+
+  test('注销用户的画板不计入总数：db/status、overview 与用户列表三处对齐', async () => {
+    const delEmail = 'p-admin-del@test.local';
+    await registerViaCode(delEmail, PASSWORD, 'DelUser');
+    const delCookie = await signIn(delEmail, PASSWORD);
+
+    const before = await globalCanvasCount();
+    assert.equal((await saveBoard(delCookie, 'p-admin-del-board')).status, 200);
+    assert.equal(await globalCanvasCount(), before + 1, '新建后总数 +1');
+
+    // 自助注销（软删用户）：画板行仍在，但属主已注销
+    const delRes = await fetch(`${base}/api/auth/account`, {
+      method: 'DELETE',
+      headers: { cookie: delCookie },
+    });
+    assert.equal(delRes.status, 200, '注销应成功');
+
+    assert.equal(await globalCanvasCount(), before, '注销用户的画板不应计入画板总数');
+
+    const url = new URL(`${base}/api/admin/users`);
+    url.searchParams.set('search', delEmail);
+    url.searchParams.set('limit', '10');
+    const usersBody = (await (await fetch(url, { headers: { cookie: adminCookie } })).json()) as any;
+    assert.equal(usersBody.users.length, 0, '注销用户不应出现在用户列表');
+
+    assert.equal(await overviewTotalCanvases(), before, 'overview 应与 db/status 同口径');
+  });
+
+  test('内存模式硬清理级联删除画板数据（对齐 PG CASCADE）', async () => {
+    const { getPool } = await import('../server/core/pool.js');
+    if (getPool()) return; // 连了真库时交由 tests/pg 覆盖，避免误删
+
+    const { inMemoryStore } = await import('../server/core/memory-store.js');
+    const { cleanupDeletedUsers } = await import('../server/repositories/user.repository.js');
+
+    // 注销用户的画板在保留期内仍留在内存
+    assert.ok(
+      Array.from(inMemoryStore.canvases.values()).some((c) => c.id === 'p-admin-del-board'),
+      '注销保留期内画板仍在'
+    );
+
+    await cleanupDeletedUsers(0); // retention<=0：硬清理全部非 admin 用户
+
+    assert.equal(
+      Array.from(inMemoryStore.canvases.values()).some((c) => c.id === 'p-admin-del-board'),
+      false,
+      '硬清理应级联删除该用户画板'
+    );
+    assert.equal(inMemoryStore.users.has(userId), false, '用户应被硬删除');
   });
 });

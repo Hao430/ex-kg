@@ -109,12 +109,19 @@ export async function getAdminOverview(): Promise<{
   if (p) {
     try {
       await initDbSchema();
-      const uRes = await p.query('SELECT COUNT(*) as count FROM users');
+      // 与 listAdminUsers 同口径（2026-09-10）：排除已注销用户及其画板，保证两处数字可对齐
+      const uRes = await p.query('SELECT COUNT(*) as count FROM users WHERE deleted_at IS NULL');
       const wauRes = await p.query(
-        `SELECT COUNT(DISTINCT user_id) as count FROM sessions WHERE created_at >= NOW() - INTERVAL '7 days'`
+        `SELECT COUNT(DISTINCT s.user_id) as count FROM sessions s
+         JOIN users u ON u.id = s.user_id
+         WHERE s.created_at >= NOW() - INTERVAL '7 days' AND u.deleted_at IS NULL`
       );
-      const vipRes = await p.query(`SELECT COUNT(*) as count FROM users WHERE role = 'vip'`);
-      const cRes = await p.query('SELECT COUNT(*) as count FROM canvases WHERE deleted_at IS NULL');
+      const vipRes = await p.query(`SELECT COUNT(*) as count FROM users WHERE role = 'vip' AND deleted_at IS NULL`);
+      const cRes = await p.query(
+        `SELECT COUNT(*) as count FROM canvases c
+         JOIN users u ON u.id = c.user_id
+         WHERE c.deleted_at IS NULL AND u.deleted_at IS NULL`
+      );
       const todayTokensRes = await p.query(
         `SELECT COALESCE(SUM(total_tokens), 0) as total FROM ai_request_logs WHERE created_at >= CURRENT_DATE AND status = 'success'`
       );
@@ -147,10 +154,14 @@ export async function getAdminOverview(): Promise<{
 
   // In-memory fallback overview
   // TODO(A3): 内存模式 overview 的 modelDistribution/activeUsers7d 为演示伪造数据，二期接入真实统计
-  const totalUsers = inMemoryStore.users.size;
-  const vipUsers = Array.from(inMemoryStore.users.values()).filter((u) => u.role === 'vip').length;
-  // 与 listCanvases 同口径：排除软删画布（含软删会让管理端数字只增不减）
-  const totalCanvases = Array.from(inMemoryStore.canvases.values()).filter((c) => !c.deleted_at).length;
+  // 与 listAdminUsers 同口径：排除已注销用户及其画板（含注销会让两处数字对不上）
+  const totalUsers = Array.from(inMemoryStore.users.values()).filter((u) => !u.deleted_at).length;
+  const vipUsers = Array.from(inMemoryStore.users.values()).filter((u) => u.role === 'vip' && !u.deleted_at).length;
+  const totalCanvases = Array.from(inMemoryStore.canvases.values()).filter((c) => {
+    if (c.deleted_at) return false;
+    const owner = inMemoryStore.users.get(c.user_id);
+    return Boolean(owner && !owner.deleted_at);
+  }).length;
   const successLogs = inMemoryStore.aiRequestLogs.filter((l) => l.status === 'success');
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);

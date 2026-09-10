@@ -475,6 +475,28 @@ export async function deleteAccount(userId: string): Promise<boolean> {
  * retentionDays <= 0 表示全清（与 cleanupOldAuditLogs(0) 的全清语义一致，测试用），
  * 管理员账号不属业务清理范围、始终保留（保留 admin 账号以免破坏种子/运维登录）。返回删除条数。双模。
  */
+/**
+ * 内存模式级联：删除某用户的画板、相关分享，并把其画板的 AI 日志 canvas_id 置空
+ * （对齐 PG 外键 ON DELETE CASCADE / ai_request_logs.canvas_id ON DELETE SET NULL）。
+ * 2026-09-10 修复：原内存分支仅删会话，注销用户画板永久残留并被管理端统计计入。
+ */
+function purgeUserDataMemory(userId: string): void {
+  const removedCanvasIds = new Set<string>();
+  for (const [canvasId, canvas] of inMemoryStore.canvases.entries()) {
+    if (canvas.user_id === userId) {
+      inMemoryStore.canvases.delete(canvasId);
+      removedCanvasIds.add(canvasId);
+    }
+  }
+  if (removedCanvasIds.size === 0) return;
+  for (const [shareId, share] of inMemoryStore.shares.entries()) {
+    if (removedCanvasIds.has(share.canvas_id)) inMemoryStore.shares.delete(shareId);
+  }
+  for (const log of inMemoryStore.aiRequestLogs) {
+    if (log.canvas_id && removedCanvasIds.has(log.canvas_id)) log.canvas_id = null;
+  }
+}
+
 export async function cleanupDeletedUsers(retentionDays: number): Promise<number> {
   const p = getPool();
   if (p) {
@@ -501,6 +523,7 @@ export async function cleanupDeletedUsers(retentionDays: number): Promise<number
     }
     for (const id of removedIds) {
       await deleteUserSessions(id);
+      purgeUserDataMemory(id);
     }
     return removedIds.length;
   }
@@ -514,9 +537,10 @@ export async function cleanupDeletedUsers(retentionDays: number): Promise<number
       removedIds.push(id);
     }
   }
-  // 级联清理残留会话（对应 PG 外键 ON DELETE CASCADE）
+  // 级联清理残留会话与画板数据（对应 PG 外键 ON DELETE CASCADE）
   for (const id of removedIds) {
     await deleteUserSessions(id);
+    purgeUserDataMemory(id);
   }
   return removedIds.length;
 }

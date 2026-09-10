@@ -94,6 +94,12 @@ async function canvasCountOf(targetEmail: string): Promise<number> {
   return row.canvas_count;
 }
 
+async function dbCanvasCount(): Promise<number> {
+  const res = await fetch(`${base}/api/db/status`);
+  assert.equal(res.status, 200);
+  return ((await res.json()) as any).canvasCount;
+}
+
 describe('P0 PG admin 每用户画布数排除软删', () => {
   before(async () => {
     const app = createApp();
@@ -114,5 +120,27 @@ describe('P0 PG admin 每用户画布数排除软删', () => {
     assert.equal(await canvasCountOf(EMAIL), 1);
     assert.equal((await delBoard(userCookie, 'p-pg-admin-board-1')).status, 200);
     assert.equal(await canvasCountOf(EMAIL), 0, '软删后 PG 计数应回落');
+  });
+
+  t('注销用户的画板不计入总数（db/status 与 overview 对齐用户列表）', async () => {
+    const delEmail = 'p-pg-del@test.local';
+    await registerViaCode(delEmail, PASSWORD, 'DelUser');
+    const delCookie = await signIn(delEmail, PASSWORD);
+
+    const before = await dbCanvasCount();
+    assert.equal((await saveBoard(delCookie, 'p-pg-del-board')).status, 200);
+    assert.equal(await dbCanvasCount(), before + 1, '新建后总数 +1');
+
+    const delRes = await fetch(`${base}/api/auth/account`, {
+      method: 'DELETE',
+      headers: { cookie: delCookie },
+    });
+    assert.equal(delRes.status, 200, '注销应成功');
+
+    assert.equal(await dbCanvasCount(), before, '注销用户画板不应计入画板总数');
+    const ov = (await (
+      await fetch(`${base}/api/admin/overview`, { headers: { cookie: adminCookie } })
+    ).json()) as any;
+    assert.equal(ov.overview.totalCanvases, before, 'overview 应与 db/status 同口径');
   });
 });
