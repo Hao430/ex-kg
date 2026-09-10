@@ -45,7 +45,7 @@ const FeedbackSchema = z.object({
 });
 
 const SubscribeSchema = z.object({
-  plan: z.enum(['weekly', 'monthly', 'yearly']),
+  plan: z.enum(['weekly', 'monthly']),
 });
 
 const ForgotPasswordSchema = z.object({
@@ -356,7 +356,6 @@ authRouter.post('/subscribe', authMiddleware, asyncHandler(async (req: Request, 
   const planNames = {
     weekly: '周度 Pro 会员 (7天)',
     monthly: '月度 Pro 会员 (30天)',
-    yearly: '年度 Pro 会员 (365天)',
   };
 
   res.json({

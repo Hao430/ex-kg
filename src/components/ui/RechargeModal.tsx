@@ -1,10 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { Crown, Check, Sparkles, X, ShieldCheck, Flame, Infinity, Layers, Network, Calendar, AlertCircle, MessageCircle } from 'lucide-react';
+import { Crown, Check, Sparkles, X, ShieldCheck, Flame, Infinity, Layers, Network, Calendar, AlertCircle, Loader2 } from 'lucide-react';
 import { SubscriptionPlan, SubscriptionPlanId } from '../../types';
-
-// 一期过渡支付：客服微信人工充值（微信号经 .env 的 VITE_SUPPORT_WECHAT_ID 配置，为空时公告不显示微信号）
-const SUPPORT_WECHAT_ID = import.meta.env.VITE_SUPPORT_WECHAT_ID?.trim() || '';
 
 /** GET /api/quota 返回的余量形状（Spec J2/K7，仅取本弹窗所需字段） */
 interface QuotaInfo {
@@ -17,6 +14,12 @@ interface QuotaInfo {
 /** 配额接口失败时的兜底口径（与服务端 BOARD_LIMIT/NODE_LIMIT 常量一致） */
 const FALLBACK_BOARD_LIMIT = 3;
 const FALLBACK_NODE_LIMIT = 10;
+
+/** 在线支付轮询参数（ADR-0014）：3s 间隔、5 分钟超时；到账判定以服务端为准 */
+const POLL_INTERVAL_MS = 3000;
+const POLL_TIMEOUT_MS = 5 * 60 * 1000;
+
+type PayStage = 'idle' | 'creating' | 'awaiting' | 'paid';
 
 const PLANS: SubscriptionPlan[] = [
   {
@@ -37,24 +40,92 @@ const PLANS: SubscriptionPlan[] = [
     desc: '学者与高频创作者标配，30 天无限制画板与节点探索',
     badge: '最受欢迎',
   },
-  {
-    id: 'yearly',
-    name: '年度 Pro 会员',
-    durationDays: 365,
-    price: '¥ 199',
-    popular: false,
-    desc: '365 天全量特权，折合仅 ¥16.6/月，较月卡立省 33%',
-    badge: '立省 33%',
-  },
 ];
 
 export const RechargeModal: React.FC = () => {
-  const { user, isVip, rechargeModalOpen, rechargeCanvasId, closeRechargeModal, upgradeModalReason } = useAuth();
+  const { user, isVip, rechargeModalOpen, rechargeCanvasId, closeRechargeModal, upgradeModalReason, refreshUser } = useAuth();
   const [selectedPlan, setSelectedPlan] = useState<SubscriptionPlanId>('monthly');
   // Spec K7（D3）：真实权益数据——打开弹窗时拉取 /api/quota（余量与配额口径同源），
   // 触发点带画板上下文时一并返回当前画板节点余量；失败时为 null，
   // 权益对比回退到默认常量、用量行隐藏，绝不展示虚构数字
   const [quota, setQuota] = useState<QuotaInfo | null>(null);
+
+  // 在线支付状态机（ADR-0014）：idle → creating → awaiting → paid；错误回 idle
+  const [payStage, setPayStage] = useState<PayStage>('idle');
+  const [payError, setPayError] = useState<string | null>(null);
+  const pollTimerRef = useRef<number | null>(null);
+  const pollStartRef = useRef<number>(0);
+
+  const stopPolling = () => {
+    if (pollTimerRef.current !== null) {
+      window.clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+  };
+
+  // 弹窗关闭即停止轮询
+  useEffect(() => {
+    if (!rechargeModalOpen) stopPolling();
+    return stopPolling;
+  }, [rechargeModalOpen]);
+
+  const pollOrderStatus = (orderNo: string) => {
+    stopPolling();
+    pollStartRef.current = Date.now();
+    pollTimerRef.current = window.setInterval(async () => {
+      if (Date.now() - pollStartRef.current > POLL_TIMEOUT_MS) {
+        stopPolling();
+        setPayStage('idle');
+        setPayError('等待支付超时。如已完成付款，会员将自动开通，可稍后刷新页面查看');
+        return;
+      }
+      try {
+        const res = await fetch(`/api/subscriptions/orders/${encodeURIComponent(orderNo)}`, {
+          credentials: 'include',
+        });
+        if (!res.ok) return;
+        const body = await res.json().catch(() => null);
+        if (body?.status !== 'paid') return;
+        stopPolling();
+        await refreshUser();
+        setPayStage('paid');
+        setPayError(null);
+      } catch {
+        // 网络抖动：继续等下一轮
+      }
+    }, POLL_INTERVAL_MS);
+  };
+
+  const handlePay = async () => {
+    setPayError(null);
+    setPayStage('creating');
+    try {
+      const res = await fetch('/api/subscriptions/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ plan: selectedPlan }),
+      });
+      const body = await res.json().catch(() => null);
+      if (res.status === 503) {
+        setPayStage('idle');
+        setPayError('在线支付暂未开放，请稍后再试');
+        return;
+      }
+      if (!res.ok || !body?.payUrl) {
+        setPayStage('idle');
+        setPayError(body?.error || '下单失败，请稍后重试');
+        return;
+      }
+      const win = window.open(body.payUrl, '_blank');
+      if (!win) window.location.href = body.payUrl; // 弹窗被拦截：当前页跳转收银台
+      setPayStage('awaiting');
+      pollOrderStatus(String(body.orderNo));
+    } catch {
+      setPayStage('idle');
+      setPayError('网络异常，请稍后重试');
+    }
+  };
 
   React.useEffect(() => {
     if (!rechargeModalOpen) return;
@@ -145,20 +216,6 @@ export const RechargeModal: React.FC = () => {
           </div>
         )}
 
-        {/* WeChat manual recharge announcement (Phase 1 transitional payment) */}
-        <div className="mx-6 mt-4 p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 flex items-start gap-2.5 text-xs text-emerald-900 dark:text-emerald-200">
-          <MessageCircle className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-          <div>
-            <span className="font-semibold">充值公告：</span>
-            一期支持添加客服微信人工充值，微信转账时备注<strong>注册邮箱</strong>与所购档位，站长确认到账后 VIP 即刻开通。
-            {SUPPORT_WECHAT_ID && (
-              <span>
-                客服微信号：<span className="font-semibold">{SUPPORT_WECHAT_ID}</span>
-              </span>
-            )}
-          </div>
-        </div>
-
         {/* Body */}
         <div className="p-6">
           {/* Current VIP status if active */}
@@ -175,7 +232,7 @@ export const RechargeModal: React.FC = () => {
           )}
 
           {/* Plan Selection Cards */}
-          <div className="grid grid-cols-3 gap-3 mb-5">
+          <div className="grid grid-cols-2 gap-3 mb-5">
             {PLANS.map((plan) => {
               const isSelected = selectedPlan === plan.id;
               return (
@@ -287,11 +344,51 @@ export const RechargeModal: React.FC = () => {
             </div>
           </div>
 
-          {/* 一期未接在线支付：仅展示档位，引导人工充值（公告见上方） */}
-          <div className="w-full py-3 px-4 rounded-xl text-sm font-medium flex items-center justify-center gap-2 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800/60">
-            <MessageCircle className="w-4 h-4" />
-            请添加客服微信转账充值，站长确认到账后开通所选档位
-          </div>
+          {/* 在线支付操作区（ADR-0014）：下单 → 跳转收银台 → 轮询到账自动更新 */}
+          {payError && (
+            <div className="mb-3 px-3 py-2 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/60 text-xs text-rose-700 dark:text-rose-300 flex items-center gap-2">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+              {payError}
+            </div>
+          )}
+
+          {payStage === 'paid' ? (
+            <div className="w-full py-3 px-4 rounded-xl text-sm font-medium flex items-center justify-center gap-2 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800/60">
+              <Check className="w-4 h-4" />
+              支付成功，会员已开通
+              {isVip && user?.vip_expires_at && (
+                <span className="text-xs">（有效期至 {formatExpiry(user.vip_expires_at)}）</span>
+              )}
+            </div>
+          ) : payStage === 'awaiting' ? (
+            <div className="w-full py-3 px-4 rounded-xl text-sm font-medium flex flex-col items-center gap-1.5 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-800 dark:text-indigo-200 border border-indigo-200 dark:border-indigo-800/60">
+              <span className="flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                已跳转支付，等待支付完成…
+              </span>
+              <span className="text-[11px] text-indigo-500 dark:text-indigo-300/80">
+                完成付款后本弹窗将自动更新，无需其他操作
+              </span>
+            </div>
+          ) : (
+            <button
+              onClick={() => void handlePay()}
+              disabled={payStage === 'creating'}
+              className="w-full py-3 px-4 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-white shadow-sm transition-all active:scale-[0.99] disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
+            >
+              {payStage === 'creating' ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  正在创建支付订单…
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4" />
+                  支付宝支付 {currentPlan.price}
+                </>
+              )}
+            </button>
+          )}
 
           <div className="mt-4 flex items-center justify-center gap-4 text-[11px] text-slate-400">
             <span className="flex items-center gap-1">

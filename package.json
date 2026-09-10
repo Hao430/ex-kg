@@ -24,6 +24,7 @@
     "@types/pg": "^8.23.1",
     "@vitejs/plugin-react": "^5.0.4",
     "@xyflow/react": "^12.11.6",
+    "alipay-sdk": "^4.14.0",
     "cookie-parser": "^1.4.7",
     "dagre": "^0.8.5",
     "dotenv": "^17.2.3",

@@ -34,6 +34,8 @@ export function createApp(): express.Express {
 
   app.use(cookieParser());
   app.use(express.json({ limit: '10mb' }));
+  // form-urlencoded 解析：支付宝异步通知（POST /api/subscriptions/notify）以该格式回调（ADR-0014）
+  app.use(express.urlencoded({ extended: false }));
 
   // Health check
   app.get('/api/health', (_req, res) => {

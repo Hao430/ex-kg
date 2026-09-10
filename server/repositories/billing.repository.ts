@@ -40,9 +40,11 @@ export async function createOrder(data: {
   if (p) {
     try {
       await initDbSchema();
+      // paid_at 仅在 paid 状态落库（此前 hardcode NOW() 会让 pending 单被盖上支付时间，
+      // 破坏支付宝 notify 幂等核对与对账口径）
       const res = await p.query(
         `INSERT INTO orders (order_no, user_id, plan_id, plan_name, amount_cents, currency, status, duration_days, payment_method, created_at, paid_at)
-         VALUES ($1, $2, $3, $4, $5, 'CNY', $6, $7, $8, NOW(), NOW())
+         VALUES ($1, $2, $3, $4, $5, 'CNY', $6, $7, $8, NOW(), CASE WHEN $6 = 'paid' THEN NOW() ELSE NULL END)
          RETURNING *`,
         [
           orderNo,

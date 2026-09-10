@@ -132,7 +132,7 @@ describe('E1+E2 支付抽象与 Mock 生命周期', () => {
     const order = await fetch(`${base}/api/subscriptions/orders`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', cookie: adminCookie },
-      body: JSON.stringify({ plan: 'yearly' }),
+      body: JSON.stringify({ plan: 'monthly' }), // yearly 已下架（2026-09-10 单笔限额），原用例改用 monthly
     });
     const orderBody = await order.json() as any;
 

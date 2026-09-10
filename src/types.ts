@@ -109,7 +109,7 @@ export interface FeedbackPayload {
   contactInfo?: string;
 }
 
-export type SubscriptionPlanId = 'weekly' | 'monthly' | 'yearly';
+export type SubscriptionPlanId = 'weekly' | 'monthly';
 
 export interface SubscriptionPlan {
   id: SubscriptionPlanId;

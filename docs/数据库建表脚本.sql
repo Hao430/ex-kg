@@ -255,7 +255,7 @@ CREATE TABLE IF NOT EXISTS orders (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   order_no VARCHAR(64) UNIQUE NOT NULL,
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  plan_id VARCHAR(32) NOT NULL, -- 'weekly', 'monthly', 'yearly'
+  plan_id VARCHAR(32) NOT NULL, -- 'weekly', 'monthly'（yearly 已于 2026-09-10 下架：支付宝渠道单笔限额 ¥50，存量行保留）
   plan_name VARCHAR(64) NOT NULL,
   amount_cents INT NOT NULL,
   currency VARCHAR(10) DEFAULT 'CNY' NOT NULL,
