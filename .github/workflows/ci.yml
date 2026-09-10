@@ -110,25 +110,45 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -p ${{ secrets.DEPLOY_PORT }} ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: 备份线上产物（铁律：不备份不发布）
+      - name: 备份线上产物 + 数据库（铁律：不备份不发布）
         run: |
           ssh -i ~/.ssh/deploy_key -p ${{ secrets.DEPLOY_PORT }} \
             ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} 'bash -s' <<'REMOTE'
-          set -e
+          set -euo pipefail
           TS=$(date +%Y%m%d_%H%M)
           DIR=/www/ex-kg.releases/$TS
-          mkdir -p $DIR
-          cp -a /www/wwwroot/ex-kg/dist $DIR/dist
-          cp -a /www/wwwroot/ex-kg/package.json /www/wwwroot/ex-kg/package-lock.json $DIR/ 2>/dev/null || true
-          cp -a /www/wwwroot/ex-kg/index.html $DIR/ 2>/dev/null || true
-          ( cd /www/ex-kg.releases && tar czf $TS.tar.gz $TS/dist )
+          DB_CONTAINER=postgres-info-hub
+          DB_NAME=arborize
+          if [ -e "$DIR" ]; then echo "快照 $TS 已存在，拒绝覆盖"; exit 1; fi
+          mkdir -p "$DIR/db"
+          cp -a /www/wwwroot/ex-kg/dist "$DIR/dist"
+          cp -a /www/wwwroot/ex-kg/package.json /www/wwwroot/ex-kg/package-lock.json "$DIR/" 2>/dev/null || true
+          cp -a /www/wwwroot/ex-kg/index.html "$DIR/" 2>/dev/null || true
+
+          # 数据库备份：pg-host 同机 Docker 容器（宿主 35432，库 arborize）。
+          # pg_dump 失败 / gzip 损坏 → pipefail + -t 校验直接失败，绝不"无库备份"继续发布。
+          docker exec "$DB_CONTAINER" pg_dump -U postgres -d "$DB_NAME" | gzip > "$DIR/db/arborize_$TS.sql.gz"
+          gzip -t "$DIR/db/arborize_$TS.sql.gz"
+          test -s "$DIR/db/arborize_$TS.sql.gz"
+
+          ( cd /www/ex-kg.releases && tar czf "$TS.tar.gz" "$TS/dist" "$TS/db" )
           {
             echo '【ex-kg 回退快照】'
             echo "备份时间(服务器): $(date '+%Y-%m-%d %H:%M:%S')"
             echo '触发源: GitHub Actions CD'
             echo "源码 commit: ${{ github.sha }}"
             echo "支付开关: $(grep -m1 ^PAYMENT_ENABLED /www/wwwroot/ex-kg/.env || echo unknown)"
-          } > $DIR/RELEASE_INFO.txt
+            echo "数据库备份: db/arborize_$TS.sql.gz ($(du -h "$DIR/db/arborize_$TS.sql.gz" | cut -f1))"
+            echo "恢复命令: gunzip -c $DIR/db/arborize_$TS.sql.gz | docker exec -i $DB_CONTAINER psql -U postgres -d $DB_NAME"
+          } > "$DIR/RELEASE_INFO.txt"
+
+          # 保留最近 5 份快照（目录 + tar.gz 同步清理；DB 备份在目录内随之一并轮转）
+          for old in $(find /www/ex-kg.releases -maxdepth 1 -mindepth 1 -type d -printf '%f\n' \
+                       | grep -E '^[0-9]{8}_[0-9]{4}$' | sort -r | tail -n +6); do
+            echo "清理旧快照 $old"
+            rm -rf "/www/ex-kg.releases/$old" "/www/ex-kg.releases/$old.tar.gz"
+          done
+
           echo "SNAPSHOT=$TS"
           REMOTE
 
