@@ -1,0 +1,58 @@
+# CI 门禁（ADR 见 docs/adr/；CD 后续以独立 deploy.yml 接入）
+# 门禁链：tsc → 全量测试（内存模式）→ 架构守护 → 构建 → PG 真库冒烟
+# PG service 与 docker-compose.pg-smoke.yml 同参（postgres:16 / 5433:5432 / arborize_test），
+# tests/pg/*.test.ts 内置默认连接串 127.0.0.1:5433，无需注入 Secrets
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: arborize_test
+        ports:
+          - '5433:5432'
+        options: >-
+          --health-cmd "pg_isready -U postgres -d arborize_test"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 类型检查（tsc --noEmit）
+        run: npm run lint
+
+      - name: 全量测试（默认套件，内存模式）
+        run: npm test
+
+      - name: 架构守护测试（双模纪律 / 限流器纪律）
+        run: npx tsx --test 'arch-tests/*.test.mjs'
+
+      - name: 构建（vite build + esbuild 打包后端）
+        run: npm run build
+
+      - name: PG 真库冒烟（tests/pg/*.test.ts，PG_SMOKE 门控）
+        run: PG_SMOKE=1 npx tsx --test 'tests/pg/*.test.ts'
