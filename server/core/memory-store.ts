@@ -20,6 +20,8 @@ export const inMemoryStore = {
   emailVerificationCodes: new Map<string, import('./records.js').EmailCodeRecord>(),
   /** Spec K1：分享记录（canvas_id 为 key，一画板至多一个分享行，与 PG 唯一索引对齐） */
   shares: new Map<string, import('./records.js').ShareRecord>(),
+  /** Spec L1：单层画板分组（id 为 key） */
+  folders: new Map<string, import('./records.js').FolderRecord>(),
 };
 
 /** 审计日志内存上限：最新在前，超出裁剪最旧记录 */

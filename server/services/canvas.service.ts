@@ -3,8 +3,10 @@ import {
   getCanvas,
   saveCanvas,
   deleteCanvas,
+  updateCanvasMeta,
   searchNodes,
 } from '../repositories/canvas.repository.js';
+import type { CanvasMetaPatch } from '../repositories/canvas.repository.js';
 import { NotFoundError } from '../lib/errors.js';
 import { assertCanCreateBoard } from './quota.service.js';
 import { findUserById } from '../repositories/user.repository.js';
@@ -75,6 +77,16 @@ export async function deleteUserCanvas(canvasId: string, userId: string, isAdmin
     });
   }
   return success;
+}
+
+/** Spec L1：画板库元数据更新（收藏/归档/标题），仅服务端校验后透传仓储 */
+export async function updateUserCanvasMeta(
+  canvasId: string,
+  patch: CanvasMetaPatch,
+  userId: string,
+  isAdmin: boolean
+): Promise<CanvasRecord> {
+  return updateCanvasMeta(canvasId, patch, userId, isAdmin);
 }
 
 export async function searchUserNodes(queryText: string, canvasId?: string, userId?: string): Promise<any[]> {

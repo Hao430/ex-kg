@@ -112,6 +112,11 @@ export interface CanvasRecord {
   viewport: { x: number; y: number; zoom: number };
   defaultModel: string;
   enableWebSearch: boolean;
+  /** Spec L1 / ADR-0015：画板库管理偏好（列已存在，读取统一 COALESCE 归一为布尔） */
+  isFavorite?: boolean;
+  isArchived?: boolean;
+  /** Spec L1：单层分组归属（null = 未分组；分组删除时置 null） */
+  folderId?: string | null;
   createdAt: string;
   updatedAt: string;
   nodeCount?: number;
@@ -120,6 +125,16 @@ export interface CanvasRecord {
   edges?: any[];
   /** 画布软删除时间戳（非空 = 已删除；与 F4 用户注销 deleted_at 口径一致） */
   deleted_at?: string | null;
+}
+
+/** Spec L1 / ADR-0015：单层画板分组（folders 双模映射） */
+export interface FolderRecord {
+  id: string;
+  user_id: string;
+  name: string;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
 }
 
 /** Spec K1：快照式只读分享记录（canvas_shares 双模映射） */

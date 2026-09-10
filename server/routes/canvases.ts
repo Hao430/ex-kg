@@ -5,6 +5,7 @@ import {
   getCanvasOrFail,
   saveUserCanvas,
   deleteUserCanvas,
+  updateUserCanvasMeta,
   searchUserNodes,
 } from '../services/canvas.service.js';
 import { asyncHandler } from '../lib/async-handler.js';
@@ -36,6 +37,27 @@ const SaveCanvasSchema = z.object({
   edges: z.array(z.record(z.string(), z.any())).default([]),
   expectedUpdatedAt: z.string().datetime({ message: 'expectedUpdatedAt 必须是 ISO 时间串' }).optional(),
 });
+
+/**
+ * Spec L1：PATCH /api/canvases/:id/meta 入参。
+ * 至少一个字段；只允许白名单三项，title 长度对齐列宽 VARCHAR(255)。
+ */
+const UpdateCanvasMetaSchema = z
+  .object({
+    title: z.string().min(1, '画板名不能为空').max(255, '画板名过长').optional(),
+    isFavorite: z.boolean().optional(),
+    isArchived: z.boolean().optional(),
+    /** null = 移出分组；字符串 = 移入该分组（服务端校验归属） */
+    folderId: z.string().max(64).nullable().optional(),
+  })
+  .refine(
+    (v) =>
+      v.title !== undefined ||
+      v.isFavorite !== undefined ||
+      v.isArchived !== undefined ||
+      v.folderId !== undefined,
+    { message: '至少提供一个可更新字段' }
+  );
 
 // Apply auth to all canvas management routes for multi-tenant isolation
 canvasesRouter.use(authMiddleware);
@@ -145,6 +167,23 @@ canvasesRouter.delete('/:id', asyncHandler(async (req: Request, res: Response) =
   const isAdmin = user.role === 'admin';
   const success = await deleteUserCanvas(req.params.id, user.id, isAdmin);
   res.json({ success });
+}));
+
+/**
+ * PATCH /api/canvases/:id/meta（Spec L1）
+ * 画板库元数据更新：收藏 / 归档 / 标题。轻量端点，不接收 nodes/edges、不走内容乐观锁。
+ * 严格属主制：非属主 403 CANVAS_FORBIDDEN；共享默认板禁改；软删/不存在 404。
+ */
+canvasesRouter.patch('/:id/meta', asyncHandler(async (req: Request, res: Response) => {
+  const user = req.user!;
+  const isAdmin = user.role === 'admin';
+  const body = validate(UpdateCanvasMetaSchema, req.body);
+
+  const canvas = await updateUserCanvasMeta(req.params.id, body, user.id, isAdmin);
+
+  // 响应瘦身：仅回画板库需要的元数据（updatedAt 供前端推进乐观锁版本）
+  const { nodes: _nodes, edges: _edges, ...canvasMeta } = canvas;
+  res.json({ success: true, canvas: canvasMeta });
 }));
 
 /**

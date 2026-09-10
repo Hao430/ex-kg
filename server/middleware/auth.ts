@@ -87,6 +87,21 @@ export const adminLogReadRateLimiter = rateLimit({
 });
 
 /**
+ * Rate limiter for folder mutations (Spec L1): 30 req/min per user（独立实例，ADR-0007）
+ */
+export const folderActionRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => (req.user ? `user_${req.user.id}` : ipKeyGenerator(req.ip || 'anonymous')),
+  message: {
+    error: '分组操作过于频繁，请稍后再试',
+    code: 'RATE_LIMIT_EXCEEDED',
+  },
+});
+
+/**
  * Rate limiter for auto-title generation: 20 req/min per user（自动命名非关键路径，防滥用刷 LLM）
  */
 export const autoTitleRateLimiter = rateLimit({

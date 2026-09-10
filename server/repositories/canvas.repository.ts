@@ -36,7 +36,7 @@ export async function listCanvases(userId?: string, isAdmin = false): Promise<Ca
       const res = await p.query(
         `SELECT
           c.id, c.user_id, c.title, c.description, c.viewport_x, c.viewport_y, c.viewport_zoom,
-          c.default_model, c.created_at, c.updated_at,
+          c.default_model, c.is_favorite, c.is_archived, c.folder_id, c.created_at, c.updated_at,
           COUNT(DISTINCT n.id)::int as node_count,
           COUNT(DISTINCT e.id)::int as edge_count
         FROM canvases c
@@ -56,6 +56,9 @@ export async function listCanvases(userId?: string, isAdmin = false): Promise<Ca
         viewport: { x: r.viewport_x, y: r.viewport_y, zoom: r.viewport_zoom },
         defaultModel: r.default_model,
         enableWebSearch: true,
+        isFavorite: r.is_favorite ?? false,
+        isArchived: r.is_archived ?? false,
+        folderId: r.folder_id ?? null,
         createdAt: r.created_at,
         updatedAt: r.updated_at,
         nodeCount: r.node_count,
@@ -72,6 +75,9 @@ export async function listCanvases(userId?: string, isAdmin = false): Promise<Ca
     .filter((c) => !c.deleted_at && (isAdmin || !userId || c.user_id === userId))
     .map((c) => ({
       ...c,
+      isFavorite: c.isFavorite ?? false,
+      isArchived: c.isArchived ?? false,
+      folderId: c.folderId ?? null,
       nodeCount: c.nodes?.length || 0,
       edgeCount: c.edges?.length || 0,
     }))
@@ -181,6 +187,9 @@ export async function getCanvas(canvasId: string, userId?: string, isAdmin = fal
         viewport: { x: c.viewport_x, y: c.viewport_y, zoom: c.viewport_zoom },
         defaultModel: c.default_model,
         enableWebSearch: true,
+        isFavorite: c.is_favorite ?? false,
+        isArchived: c.is_archived ?? false,
+        folderId: c.folder_id ?? null,
         createdAt: c.created_at,
         updatedAt: c.updated_at,
         nodes,
@@ -199,7 +208,13 @@ export async function getCanvas(canvasId: string, userId?: string, isAdmin = fal
   if (userId && !isAdmin && canvas.user_id !== userId && !isSharedDefaultCanvas(canvasId)) {
     return null;
   }
-  return { ...canvas, nodes: (canvas.nodes || []).map((n) => normalizeMemoryNode(n, canvas.defaultModel)) };
+  return {
+    ...canvas,
+    isFavorite: canvas.isFavorite ?? false,
+    isArchived: canvas.isArchived ?? false,
+    folderId: canvas.folderId ?? null,
+    nodes: (canvas.nodes || []).map((n) => normalizeMemoryNode(n, canvas.defaultModel)),
+  };
 }
 
 /**
@@ -585,6 +600,133 @@ export async function deleteCanvas(canvasId: string, userId: string, isAdmin = f
   canvas.nodes = [];
   canvas.edges = [];
   return true;
+}
+
+/** Spec L1 / ADR-0015：画板库元数据补丁（只改这几项，不触碰 nodes/edges、不走内容乐观锁） */
+export interface CanvasMetaPatch {
+  title?: string;
+  isFavorite?: boolean;
+  isArchived?: boolean;
+  /** null = 移出分组；字符串 = 挂到该分组（须属于画板属主） */
+  folderId?: string | null;
+}
+
+/**
+ * 轻量元数据更新（收藏 / 归档 / 标题）。
+ *
+ * 与 deleteCanvas 同口径的属主校验；共享默认板为全局单行（所有用户共用），
+ * 任何用户级偏好（收藏/归档）都会影响他人，故整体禁改（变更标题请走画板自身保存）。
+ * 返回最新 updated_at：canvases 的 set_timestamp_canvases 触发器会推进该列，
+ * 前端必须用它推进乐观锁版本，否则下一次内容保存会 409。
+ */
+export async function updateCanvasMeta(
+  canvasId: string,
+  patch: CanvasMetaPatch,
+  userId: string,
+  isAdmin = false
+): Promise<CanvasRecord> {
+  if (isSharedDefaultCanvas(canvasId)) {
+    throw new ForbiddenError('共享默认画板不支持收藏/归档等个性化设置', 'CANVAS_FORBIDDEN');
+  }
+
+  const p = getPool();
+  if (p) {
+    const client = await p.connect();
+    try {
+      await initDbSchema();
+      await client.query('BEGIN');
+      const check = await client.query('SELECT user_id FROM canvases WHERE id = $1 AND deleted_at IS NULL', [canvasId]);
+      if (check.rows.length === 0) {
+        throw new NotFoundError('画板不存在或已删除');
+      }
+      const canvasOwner = check.rows[0].user_id;
+      if (!isAdmin && canvasOwner !== userId) {
+        throw new ForbiddenError('无权修改其他用户的画板', 'CANVAS_FORBIDDEN');
+      }
+      // 分组归属校验：folderId 必须属于「画板属主」（而非请求者），防跨租户串联
+      if (patch.folderId != null) {
+        const f = await client.query('SELECT user_id FROM folders WHERE id = $1', [patch.folderId]);
+        if (f.rows.length === 0 || f.rows[0].user_id !== canvasOwner) {
+          throw new ValidationError('分组不存在或不属于该画板属主', 'FOLDER_INVALID');
+        }
+      }
+
+      const hasFolderPatch = patch.folderId !== undefined;
+      const res = await client.query(
+        `UPDATE canvases SET
+           title = COALESCE($2, title),
+           is_favorite = COALESCE($3, is_favorite),
+           is_archived = COALESCE($4, is_archived),
+           folder_id = CASE WHEN $5::boolean THEN $6::varchar ELSE folder_id END,
+           updated_at = NOW()
+         WHERE id = $1 AND deleted_at IS NULL
+         RETURNING id, user_id, title, description, viewport_x, viewport_y, viewport_zoom,
+                   default_model, is_favorite, is_archived, folder_id, created_at, updated_at`,
+        [
+          canvasId,
+          patch.title ?? null,
+          patch.isFavorite ?? null,
+          patch.isArchived ?? null,
+          hasFolderPatch,
+          patch.folderId ?? null,
+        ]
+      );
+      if (res.rowCount === 0) {
+        // 并发窄窗口：SELECT 之后该行被其他连接软删
+        throw new NotFoundError('画板不存在或已删除');
+      }
+      await client.query('COMMIT');
+
+      const r = res.rows[0];
+      return {
+        id: r.id,
+        user_id: r.user_id,
+        title: r.title,
+        description: r.description,
+        viewport: { x: r.viewport_x, y: r.viewport_y, zoom: r.viewport_zoom },
+        defaultModel: r.default_model,
+        enableWebSearch: true,
+        isFavorite: r.is_favorite ?? false,
+        isArchived: r.is_archived ?? false,
+        folderId: r.folder_id ?? null,
+        createdAt: new Date(r.created_at).toISOString(),
+        updatedAt: new Date(r.updated_at).toISOString(),
+      };
+    } catch (e) {
+      await client.query('ROLLBACK');
+      // 业务错误（403/404）必须穿透，不得降级落内存分支造成 200 假成功
+      if (e instanceof AppError) throw e;
+      handlePgError(e);
+      console.warn(`PG updateCanvasMeta(${canvasId}) fallback to in-memory:`, e);
+    } finally {
+      client.release();
+    }
+  }
+
+  const canvas = inMemoryStore.canvases.get(canvasId);
+  if (!canvas || canvas.deleted_at) {
+    throw new NotFoundError('画板不存在或已删除');
+  }
+  if (!isAdmin && canvas.user_id !== userId) {
+    throw new ForbiddenError('无权修改其他用户的画板', 'CANVAS_FORBIDDEN');
+  }
+  if (patch.folderId != null) {
+    const folder = inMemoryStore.folders.get(patch.folderId);
+    if (!folder || folder.user_id !== canvas.user_id) {
+      throw new ValidationError('分组不存在或不属于该画板属主', 'FOLDER_INVALID');
+    }
+  }
+  if (patch.title !== undefined) canvas.title = patch.title;
+  if (patch.isFavorite !== undefined) canvas.isFavorite = patch.isFavorite;
+  if (patch.isArchived !== undefined) canvas.isArchived = patch.isArchived;
+  if (patch.folderId !== undefined) canvas.folderId = patch.folderId;
+  canvas.updatedAt = new Date().toISOString();
+  return {
+    ...canvas,
+    isFavorite: canvas.isFavorite ?? false,
+    isArchived: canvas.isArchived ?? false,
+    folderId: canvas.folderId ?? null,
+  };
 }
 
 /** 画布是否存在（供配额判定区分新建/更新） */

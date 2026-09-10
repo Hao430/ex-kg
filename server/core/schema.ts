@@ -284,6 +284,21 @@ export async function initDbSchema(): Promise<boolean> {
       );
     `);
 
+    // 7.4b Folders (Spec L1 / ADR-0015：单层分组，无 parent_id；删除分组只解除画板归属)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS folders (
+        id VARCHAR(64) PRIMARY KEY,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name VARCHAR(64) NOT NULL,
+        sort_order INT DEFAULT 0 NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_folders_user ON folders(user_id);
+      ALTER TABLE canvases ADD COLUMN IF NOT EXISTS folder_id VARCHAR(64) REFERENCES folders(id) ON DELETE SET NULL;
+      CREATE INDEX IF NOT EXISTS idx_canvases_folder ON canvases(folder_id) WHERE deleted_at IS NULL;
+    `);
+
     // 7.5 User API Keys (BYOK - 自带密钥支持)
     await client.query(`
       CREATE TABLE IF NOT EXISTS user_api_keys (
