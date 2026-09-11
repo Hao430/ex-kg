@@ -13,6 +13,7 @@ import {
   Download,
   FileText,
   FileJson,
+  FileUp,
   ImageDown,
   StickyNote,
   RotateCcw,
@@ -62,6 +63,8 @@ interface TopbarProps {
   onAutoLayout: () => void;
   onFitView: () => void;
   onExportJson: () => void;
+  /** Spec M1：导入已导出的 JSON 备份为新画板 */
+  onImportJson: (file: File) => void;
   onExportMarkdown: () => void;
   onExportPng: () => void;
   /** 生成本画板的只读分享链接（Spec K2） */
@@ -96,6 +99,7 @@ export const Topbar: React.FC<TopbarProps> = ({
   onAutoLayout,
   onFitView,
   onExportJson,
+  onImportJson,
   onExportMarkdown,
   onExportPng,
   onShareLink,
@@ -119,6 +123,7 @@ export const Topbar: React.FC<TopbarProps> = ({
 
   const boardMenuRef = useRef<HTMLDivElement>(null);
   const canvasMoreMenuRef = useRef<HTMLDivElement>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
 
   // 点击空白地方自动收起：画布列表卡片、更多操作卡片、个人中心卡片
@@ -181,6 +186,17 @@ export const Topbar: React.FC<TopbarProps> = ({
 
   return (
     <header className="absolute top-0 left-0 right-0 h-14 bg-white/80 dark:bg-[#070b14]/85 backdrop-blur-xl border-b border-slate-200/70 dark:border-slate-800/70 px-3 sm:px-4 flex items-center justify-between z-40 shadow-[0_4px_20px_rgba(0,0,0,0.03)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.4)] transition-colors duration-200 select-none">
+      <input
+        ref={importInputRef}
+        type="file"
+        accept=".json,application/json"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = '';
+          if (file) onImportJson(file);
+        }}
+      />
       {/* ================= ZONE 1: Left - Brand & Board Identity ================= */}
       <div className="flex items-center gap-2 sm:gap-3 shrink-0">
         {/* Brand Logo */}
@@ -627,6 +643,20 @@ export const Topbar: React.FC<TopbarProps> = ({
                 <div>
                   <div className="font-medium">导出 JSON 备份</div>
                   <div className="text-[10px] text-slate-400">完整节点与思维连接状态</div>
+                </div>
+              </button>
+
+              <button
+                onClick={() => {
+                  setShowCanvasMoreMenu(false);
+                  importInputRef.current?.click();
+                }}
+                className="w-full text-left px-2.5 py-2 text-xs flex items-center gap-2.5 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl transition-colors"
+              >
+                <FileUp className="w-4 h-4 text-cyan-600 dark:text-cyan-400 shrink-0" />
+                <div>
+                  <div className="font-medium">导入 JSON 备份</div>
+                  <div className="text-[10px] text-slate-400">从已导出的备份恢复为新画板</div>
                 </div>
               </button>
 

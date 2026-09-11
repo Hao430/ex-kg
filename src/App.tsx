@@ -806,6 +806,47 @@ function MainApp() {
     showToast('已导出 JSON 画板备份');
   };
 
+  // Spec M1：JSON 备份导入——浏览器内解析（懒加载解析器，避免校验库进入主包），
+  // 生成全新 id 的新画板后走既有 saveBoard 同步链路；非法文件与配额在落库前拦截。
+  const handleImportJson = async (file: File) => {
+    let mod: typeof import('./lib/board-import');
+    try {
+      mod = await import('./lib/board-import');
+    } catch {
+      showToast('导入功能暂不可用，请刷新后重试');
+      return;
+    }
+    if (file.size > mod.MAX_IMPORT_BYTES) {
+      showToast('备份文件过大，暂支持 2MB 以内');
+      return;
+    }
+    let text: string;
+    try {
+      text = await file.text();
+    } catch {
+      showToast('读取文件失败，请重试');
+      return;
+    }
+    const result = mod.parseBoardBackup(text);
+    if (result.ok === false) {
+      showToast(result.error);
+      return;
+    }
+    if (quotaStore.canCreate(isVip) === 'block') {
+      openRechargeModal('免费版用户最多支持创建 3 个独立画板，升级 Pro 会员解锁无限画板后再导入吧！');
+      return;
+    }
+    const imported = result.board;
+    quotaStore.markPendingCreate(imported.id);
+    saveBoard(imported);
+    applyLoadedBoard(imported);
+    try {
+      sessionStorage.setItem('deepdive_active_view', 'canvas');
+    } catch {}
+    setViewMode('canvas');
+    showToast(`已导入画板《${imported.name}》`);
+  };
+
   const handleExportMarkdown = () => {
     trackEvent('export', { format: 'markdown' }); // K4 事件 8：导出点击
     markChecklistStep('export'); // K5/D1：checklist 第 4 步
@@ -983,6 +1024,7 @@ function MainApp() {
         }}
         onFitView={() => triggerFitViewRef.current?.()}
         onExportJson={handleExportJson}
+        onImportJson={handleImportJson}
         onExportMarkdown={handleExportMarkdown}
         onExportPng={handleExportPng}
         onShareLink={() => void handleShareLink()}
