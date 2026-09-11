@@ -133,6 +133,9 @@ export async function initDbSchema(): Promise<boolean> {
         tokens_used INT DEFAULT 0 NOT NULL,
         custom_data JSONB DEFAULT '{}'::jsonb,
         deleted_at TIMESTAMPTZ,
+        -- 节点级合并的行级定序判据（ADR-0017）：写入瞬间 rev = rev + 1，行锁下串行 → 严格递增。
+        -- 不能用 updated_at 代替：PG 的 NOW() 是事务开始时间，同事务内所有行共享同一个值。
+        rev BIGINT DEFAULT 1 NOT NULL,
         created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
         updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
       );
@@ -150,6 +153,7 @@ export async function initDbSchema(): Promise<boolean> {
       ALTER TABLE nodes ADD COLUMN IF NOT EXISTS tokens_used INT DEFAULT 0;
       ALTER TABLE nodes ADD COLUMN IF NOT EXISTS custom_data JSONB DEFAULT '{}'::jsonb;
       ALTER TABLE nodes ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+      ALTER TABLE nodes ADD COLUMN IF NOT EXISTS rev BIGINT NOT NULL DEFAULT 1;
     `);
 
     // 5. Edges table
@@ -166,7 +170,10 @@ export async function initDbSchema(): Promise<boolean> {
         type VARCHAR(32) DEFAULT 'smoothstep',
         style JSONB,
         marker_end JSONB,
-        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
+        deleted_at TIMESTAMPTZ,
+        rev BIGINT DEFAULT 1 NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
       );
       ALTER TABLE edges ADD COLUMN IF NOT EXISTS source_handle VARCHAR(64);
       ALTER TABLE edges ADD COLUMN IF NOT EXISTS target_handle VARCHAR(64);
@@ -174,6 +181,9 @@ export async function initDbSchema(): Promise<boolean> {
       ALTER TABLE edges ADD COLUMN IF NOT EXISTS animated BOOLEAN DEFAULT FALSE;
       ALTER TABLE edges ADD COLUMN IF NOT EXISTS style JSONB;
       ALTER TABLE edges ADD COLUMN IF NOT EXISTS marker_end JSONB;
+      ALTER TABLE edges ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+      ALTER TABLE edges ADD COLUMN IF NOT EXISTS rev BIGINT NOT NULL DEFAULT 1;
+      ALTER TABLE edges ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;
     `);
 
     // 6. Orders (会员订阅订单表)
@@ -483,7 +493,12 @@ export async function initDbSchema(): Promise<boolean> {
       CREATE INDEX IF NOT EXISTS idx_canvases_user_updated ON canvases(user_id, updated_at DESC) WHERE deleted_at IS NULL;
       DROP INDEX IF EXISTS idx_nodes_canvas_id;
       CREATE INDEX IF NOT EXISTS idx_nodes_canvas_id ON nodes(canvas_id) WHERE deleted_at IS NULL;
-      CREATE INDEX IF NOT EXISTS idx_edges_canvas_id ON edges(canvas_id);
+      -- 读路径一律带 deleted_at IS NULL（ADR-0017 墓碑语义），边索引同步改 partial
+      DROP INDEX IF EXISTS idx_edges_canvas_id;
+      CREATE INDEX IF NOT EXISTS idx_edges_canvas_id ON edges(canvas_id) WHERE deleted_at IS NULL;
+      -- 墓碑 GC 扫描路径（server/jobs/log-cleanup.ts）：只关心已删行，partial 索引体积极小
+      CREATE INDEX IF NOT EXISTS idx_nodes_deleted_at ON nodes(deleted_at) WHERE deleted_at IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_edges_deleted_at ON edges(deleted_at) WHERE deleted_at IS NOT NULL;
       CREATE INDEX IF NOT EXISTS idx_orders_user_created ON orders(user_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_ai_logs_user ON ai_request_logs(user_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_ai_logs_canvas ON ai_request_logs(canvas_id, created_at DESC);

@@ -151,7 +151,8 @@ CREATE TABLE IF NOT EXISTS nodes (
   color VARCHAR(32) DEFAULT '',
   tokens_used INT DEFAULT 0 NOT NULL,
   custom_data JSONB DEFAULT '{}'::jsonb,
-  deleted_at TIMESTAMPTZ, -- 节点级软删除
+  deleted_at TIMESTAMPTZ, -- 节点级软删除 / 墓碑（ADR-0017：删除胜出，读路径一律带 deleted_at IS NULL）
+  rev BIGINT DEFAULT 1 NOT NULL, -- 节点级合并的行级定序判据（ADR-0017）：写入瞬间 rev = rev + 1
   created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
   updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
@@ -169,7 +170,10 @@ CREATE TABLE IF NOT EXISTS edges (
   style JSONB,                       -- React Flow 边样式（stroke/strokeWidth/strokeDasharray 等，2026-09-10 与 schema.ts 对齐）
   marker_end JSONB,                  -- React Flow 箭头 markerEnd（2026-09-10：分享快照与属主画布渲染一致）
   type VARCHAR(32) DEFAULT 'smoothstep',
-  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
+  deleted_at TIMESTAMPTZ,            -- 边墓碑（ADR-0017）：与节点同语义，删除胜出
+  rev BIGINT DEFAULT 1 NOT NULL,     -- 边级合并的行级定序判据（ADR-0017）
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
 -- 2.4 节点多模态与参考资料附件表 (Node Attachments)
@@ -381,9 +385,12 @@ CREATE INDEX IF NOT EXISTS idx_folders_user ON folders(user_id);
 CREATE INDEX IF NOT EXISTS idx_nodes_canvas_id ON nodes(canvas_id) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_nodes_parent_id ON nodes(parent_id);
 CREATE INDEX IF NOT EXISTS idx_nodes_depth ON nodes(canvas_id, depth);
-CREATE INDEX IF NOT EXISTS idx_edges_canvas_id ON edges(canvas_id);
+CREATE INDEX IF NOT EXISTS idx_edges_canvas_id ON edges(canvas_id) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_edges_source_target ON edges(source_id, target_id);
 CREATE INDEX IF NOT EXISTS idx_node_attachments_node ON node_attachments(node_id);
+-- 墓碑 GC 扫描路径（server/jobs/log-cleanup.ts，保留期 CANVAS_TOMBSTONE_RETENTION_DAYS）
+CREATE INDEX IF NOT EXISTS idx_nodes_deleted_at ON nodes(deleted_at) WHERE deleted_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_edges_deleted_at ON edges(deleted_at) WHERE deleted_at IS NOT NULL;
 
 -- 版本、模版与分享索引
 -- canvas_shares.share_code 已有 UNIQUE 约束自带的唯一索引，不再重复建普通索引

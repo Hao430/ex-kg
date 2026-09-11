@@ -55,7 +55,7 @@ export async function checkDbStatus(): Promise<DbStatus> {
         `SELECT COUNT(*) as count FROM nodes n
          JOIN canvases c ON c.id = n.canvas_id
          JOIN users u ON u.id = c.user_id
-         WHERE c.deleted_at IS NULL AND u.deleted_at IS NULL`
+         WHERE c.deleted_at IS NULL AND u.deleted_at IS NULL AND n.deleted_at IS NULL`
       );
       return {
         connected: true,

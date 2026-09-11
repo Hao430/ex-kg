@@ -42,7 +42,7 @@ export async function listCanvases(userId: string): Promise<CanvasRecord[]> {
           COUNT(DISTINCT e.id)::int as edge_count
         FROM canvases c
         LEFT JOIN nodes n ON n.canvas_id = c.id AND n.deleted_at IS NULL
-        LEFT JOIN edges e ON e.canvas_id = c.id
+        LEFT JOIN edges e ON e.canvas_id = c.id AND e.deleted_at IS NULL
         ${whereClause}
         GROUP BY c.id
         ORDER BY c.updated_at DESC`,
@@ -79,8 +79,9 @@ export async function listCanvases(userId: string): Promise<CanvasRecord[]> {
       isFavorite: c.isFavorite ?? false,
       isArchived: c.isArchived ?? false,
       folderId: c.folderId ?? null,
-      nodeCount: c.nodes?.length || 0,
-      edgeCount: c.edges?.length || 0,
+      // 计数排除墓碑（与 PG 分支的 LEFT JOIN ... AND deleted_at IS NULL 同口径）
+      nodeCount: (c.nodes || []).filter((n: any) => !n?.deleted_at).length,
+      edgeCount: (c.edges || []).filter((e: any) => !e?.deleted_at).length,
     }))
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 }
@@ -139,8 +140,12 @@ export async function getCanvas(canvasId: string, userId: string): Promise<Canva
         return null;
       }
 
-      const nRes = await p.query('SELECT * FROM nodes WHERE canvas_id = $1 ORDER BY created_at ASC', [canvasId]);
-      const eRes = await p.query('SELECT * FROM edges WHERE canvas_id = $1', [canvasId]);
+      // 墓碑行不得回吐给前端（ADR-0017）：节点/边一律带 deleted_at IS NULL 过滤
+      const nRes = await p.query(
+        'SELECT * FROM nodes WHERE canvas_id = $1 AND deleted_at IS NULL ORDER BY created_at ASC',
+        [canvasId]
+      );
+      const eRes = await p.query('SELECT * FROM edges WHERE canvas_id = $1 AND deleted_at IS NULL', [canvasId]);
 
       const nodes = nRes.rows.map((nr) => ({
         id: nr.id,
@@ -214,7 +219,11 @@ export async function getCanvas(canvasId: string, userId: string): Promise<Canva
     isFavorite: canvas.isFavorite ?? false,
     isArchived: canvas.isArchived ?? false,
     folderId: canvas.folderId ?? null,
-    nodes: (canvas.nodes || []).map((n) => normalizeMemoryNode(n, canvas.defaultModel)),
+    // 与 PG 分支同口径：墓碑行不回吐（内存分支的 deleted_at 由合并写入路径落，见 saveCanvas）
+    nodes: (canvas.nodes || [])
+      .filter((n: any) => !n?.deleted_at)
+      .map((n) => normalizeMemoryNode(n, canvas.defaultModel)),
+    edges: (canvas.edges || []).filter((e: any) => !e?.deleted_at),
   };
 }
 
@@ -770,7 +779,7 @@ export async function countCanvasNodes(canvasId: string): Promise<number> {
     }
   }
   const canvas = inMemoryStore.canvases.get(canvasId);
-  return (canvas?.nodes || []).filter((n: any) => (n.type || 'chat') === 'chat').length;
+  return (canvas?.nodes || []).filter((n: any) => (n.type || 'chat') === 'chat' && !n?.deleted_at).length;
 }
 
 /**
@@ -787,13 +796,13 @@ export async function searchNodes(queryText: string, userId: string, canvasId?: 
         ? `SELECT n.id, n.canvas_id, n.question as title, n.question, n.answer, n.note as note_content, n.depth, n.model_used as model, n.created_at
            FROM nodes n
            JOIN canvases c ON c.id = n.canvas_id
-           WHERE n.canvas_id = $1 AND c.deleted_at IS NULL AND c.user_id = $2
+           WHERE n.canvas_id = $1 AND c.deleted_at IS NULL AND c.user_id = $2 AND n.deleted_at IS NULL
              AND (n.question ILIKE $3 OR n.answer ILIKE $3 OR n.note ILIKE $3)
            LIMIT 30`
         : `SELECT n.id, n.canvas_id, n.question as title, n.question, n.answer, n.note as note_content, n.depth, n.model_used as model, n.created_at
            FROM nodes n
            JOIN canvases c ON c.id = n.canvas_id
-           WHERE c.deleted_at IS NULL AND c.user_id = $1
+           WHERE c.deleted_at IS NULL AND c.user_id = $1 AND n.deleted_at IS NULL
              AND (n.question ILIKE $2 OR n.answer ILIKE $2 OR n.note ILIKE $2)
            LIMIT 30`;
       const params = canvasId
@@ -814,6 +823,7 @@ export async function searchNodes(queryText: string, userId: string, canvasId?: 
     if (canvasId && canvas.id !== canvasId) continue;
     if (canvas.user_id !== userId) continue; // 严格属主制：userId 必填，跨租户一律不返回
     for (const node of canvas.nodes || []) {
+      if (node?.deleted_at) continue; // 墓碑行不参与检索（与 PG 分支 n.deleted_at IS NULL 同口径）
       const d = node.data || {};
       // 与 PG 分支的 note 字段对齐：兼容 note 与 noteContent 两种来源
       const note = d.note ?? d.noteContent ?? '';
