@@ -102,6 +102,36 @@ export function writeJson(key: string, value: unknown): void {
   }
 }
 
+/** 本地持久化失败的通知节流间隔（配额抖动时避免刷屏） */
+const PERSIST_FAILURE_NOTIFY_INTERVAL_MS = 60_000;
+let lastPersistFailureAt = 0;
+
+/**
+ * 本地持久化失败上报：localStorage 写失败意味着**用户的编辑可能保不住**，必须让用户看见。
+ * 旧实现只 console.error，UI 无感知——dirty 标记一旦没落盘，下次启动 `fetchBoardFromServer`
+ * 的 `isDirty` 守卫就会失效，直接拿服务端内容覆盖本地，造成改动静默消失。
+ * 按 scope 调用，1 分钟节流；非浏览器环境静默降级为日志。
+ */
+export function reportPersistFailure(where: string, err: unknown): void {
+  console.error(`[persist] ${where} failed:`, err);
+  const now = Date.now();
+  if (now - lastPersistFailureAt < PERSIST_FAILURE_NOTIFY_INTERVAL_MS) return;
+  lastPersistFailureAt = now;
+  if (typeof window === 'undefined' || typeof CustomEvent === 'undefined') return;
+  try {
+    window.dispatchEvent(
+      new CustomEvent('deepdive:local-persist-failed', { detail: { where } })
+    );
+  } catch {
+    /* ignore */
+  }
+}
+
+/** 仅供测试：重置节流窗口 */
+export function resetPersistFailureThrottleForTest(): void {
+  lastPersistFailureAt = 0;
+}
+
 export function readStringSet(key: string): Set<string> {
   const arr = readJson<string[]>(key, []);
   return new Set(Array.isArray(arr) ? arr.filter((x) => typeof x === 'string') : []);

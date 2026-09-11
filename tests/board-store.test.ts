@@ -16,9 +16,14 @@ const events: Array<{ type: string; detail: any }> = [];
     return true;
   },
 };
+/** 置 true 模拟配额耗尽 / 隐私模式：localStorage 写抛异常（读仍可用） */
+let failWrites = false;
 (globalThis as any).localStorage = {
   getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
-  setItem: (k: string, v: string) => void store.set(k, v),
+  setItem: (k: string, v: string) => {
+    if (failWrites) throw new Error('QuotaExceededError');
+    store.set(k, v);
+  },
   removeItem: (k: string) => void store.delete(k),
 };
 if (typeof (globalThis as any).CustomEvent === 'undefined') {
@@ -43,7 +48,9 @@ describe('board-store 合并与一致性', () => {
   beforeEach(() => {
     store.clear();
     events.length = 0;
+    failWrites = false;
     boardStore.resetForTest();
+    boardScope.resetPersistFailureThrottleForTest();
   });
 
   test('hydrateFromServer 后列表= 服务端快照，getBoardList 稳定引用', () => {
@@ -140,6 +147,21 @@ describe('board-store 合并与一致性', () => {
       ['default-board'],
       'guest 索引只移除已认领条目'
     );
+  });
+
+  test('localStorage 写失败派发 local-persist-failed（dirty 落不了盘必须让用户看见）', () => {
+    boardStore.bindScope('u1');
+    boardStore.upsertLocal(meta('d1'), { dirty: true }); // 正常写入，先建立基线
+    events.length = 0;
+
+    failWrites = true;
+    boardStore.upsertLocal(meta('d2'), { dirty: true }); // recompute → persist 抛异常
+
+    const notify = events.filter((e) => e.type === 'deepdive:local-persist-failed');
+    assert.equal(notify.length, 1, '写失败必须派发通知事件（旧实现只 console.error）');
+    assert.equal(notify[0].detail?.where, 'board-store');
+    // 内存列表仍前进（UI 不因配额问题卡住），只是未落盘
+    assert.deepEqual(boardStore.getBoardList().map((m) => m.id), ['d1', 'd2']);
   });
 
   test('作用域隔离：u1 草稿不出现在 u2，切回 u1 仍在（持久化）', () => {

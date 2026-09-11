@@ -49,8 +49,8 @@ function persist(): void {
     scope.writeStringSet(scope.metaDirtyKey(boundScope ?? undefined), metaDirty);
     scope.saveTombstones(tombstones, boundScope ?? undefined);
   } catch (e) {
-    // localStorage 配额/隐私模式：不静默失败，交由控制台与上层提示
-    console.error('board-store persist failed:', e);
+    // localStorage 配额/隐私模式：必须让用户看见（dirty 标记丢失会导致改动静默消失）
+    scope.reportPersistFailure('board-store', e);
   }
 }
 

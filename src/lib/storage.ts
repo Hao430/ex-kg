@@ -10,6 +10,7 @@
 import { Node, Edge } from '@xyflow/react';
 import { DeepDiveBoardMeta, ChatNodeData } from '../types';
 import { enqueue, dequeue, enqueueDelete, enqueueMeta, setSyncExecutor, setDeleteExecutor, setMetaExecutor } from './sync-queue';
+import type { SyncExecOpts } from './sync-queue';
 import * as boardScope from './board-scope';
 import * as boardStore from './board-store';
 import * as quotaStore from './quota-store';
@@ -95,7 +96,8 @@ export function saveBoard(board: StoredBoard): void {
     // Asynchronously sync to backend (PostgreSQL) via retry queue (Spec A5)
     enqueueBoardSync(cleanedBoard.id);
   } catch (e) {
-    console.error(`Failed to save board ${board.id}:`, e);
+    // 本地 blob 写失败 = 这次编辑没保住，必须让用户看见（不能只打日志）
+    boardScope.reportPersistFailure('board-blob', e);
   }
 }
 
@@ -135,6 +137,15 @@ function persistBoard(cleanedBoard: StoredBoard, opts?: { dirty?: boolean }): vo
 /** 409 静默自愈的总尝试次数（含首次） */
 const MAX_CONFLICT_ATTEMPTS = 3;
 
+/**
+ * keepalive 请求体上限：浏览器对 keepalive/sendBeacon 有 ~64KB 限制，超限会直接抛错。
+ * 大画板（长对话、多节点）超限时不发这次请求，留在持久化队列里下次启动续跑，不冒险丢。
+ */
+const KEEPALIVE_MAX_BYTES = 60_000;
+
+/** keepalive 体积按真实 UTF-8 字节数判断（中文正文下 字符数 与 字节数 差 3 倍） */
+const utf8 = new TextEncoder();
+
 /** 冲突/失败提示事件统一派发（detail 向后兼容，新增 code 字段） */
 function dispatchConflictEvent(
   boardId: string,
@@ -154,22 +165,34 @@ function dispatchConflictEvent(
   );
 }
 
-export async function syncBoardToBackend(board: StoredBoard): Promise<'ok' | 'conflict' | 'fail'> {
+export async function syncBoardToBackend(
+  board: StoredBoard,
+  opts?: SyncExecOpts
+): Promise<'ok' | 'conflict' | 'fail'> {
+  const keepalive = opts?.keepalive === true;
+  // 页面卸载前的最后补传：只试一次，且不做冲突自愈（冲突决策留给下次启动的正常链路）
+  const maxAttempts = keepalive ? 1 : MAX_CONFLICT_ATTEMPTS;
   let expected = board.serverUpdatedAt;
-  for (let attempt = 1; attempt <= MAX_CONFLICT_ATTEMPTS; attempt++) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const payload = JSON.stringify({
+      title: board.name,
+      viewport: board.viewport,
+      nodes: board.nodes,
+      edges: board.edges,
+      expectedUpdatedAt: expected,
+    });
+    // keepalive 有体积上限：超限时跳过本次补传，留给持久化队列下次续跑（不冒险发注定失败的请求）
+    if (keepalive && utf8.encode(payload).length > KEEPALIVE_MAX_BYTES) {
+      return 'fail';
+    }
     let res: Response;
     try {
       res = await fetch(`/api/canvases/${encodeURIComponent(board.id)}/save`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({
-          title: board.name,
-          viewport: board.viewport,
-          nodes: board.nodes,
-          edges: board.edges,
-          expectedUpdatedAt: expected,
-        }),
+        keepalive,
+        body: payload,
       });
     } catch (e) {
       // 网络失败（含自愈重试中途）：交回 sync-queue 退避重试
@@ -200,6 +223,8 @@ export async function syncBoardToBackend(board: StoredBoard): Promise<'ok' | 'co
 
     // 409 冲突：静默自愈（本地版胜出）
     if (res.status === 409) {
+      // 卸载前的补传不做冲突决策：自愈会以本地版覆盖服务端，必须走下次启动的正常链路
+      if (keepalive) return 'fail';
       const body = await res.json().catch(() => null) as any;
       const latest = body?.latest_updated_at;
       // 降级 1：latest 缺失/非法 → 退回提示路径，不重试
@@ -249,12 +274,12 @@ function persistServerUpdatedAt(boardId: string, serverUpdatedAt: string): void 
 }
 
 // ---- 重试队列接线（Spec A5）----
-setSyncExecutor(async (boardId) => {
+setSyncExecutor(async (boardId, opts) => {
   if (boardStore.getState().tombstones.has(boardId)) return 'ok'; // 已删除，勿复活
   const board = loadBoard(boardId);
   if (!board) return 'ok'; // 本地已无该画布，视为完成
   const localVersion = board.updatedAt;
-  const outcome = await syncBoardToBackend(board);
+  const outcome = await syncBoardToBackend(board, opts);
   if (outcome === 'ok') {
     boardStore.confirmServerSave(boardId);
     quotaStore.confirmCreate(boardId);
@@ -269,7 +294,7 @@ setSyncExecutor(async (boardId) => {
 });
 
 // ---- 删除执行器：乐观本地删除 + 后台确认，防复活 ----
-setDeleteExecutor(async (boardId) => {
+setDeleteExecutor(async (boardId, opts) => {
   // 纯本地草稿 / 从未同步：无需请求服务端
   if (!boardScope.hasServerVersion(boardId)) {
     boardStore.confirmServerDelete(boardId);
@@ -280,6 +305,7 @@ setDeleteExecutor(async (boardId) => {
     res = await fetch(`/api/canvases/${encodeURIComponent(boardId)}`, {
       method: 'DELETE',
       credentials: 'include',
+      keepalive: opts?.keepalive === true,
     });
   } catch {
     return 'fail'; // 网络失败：保留墓碑，稍后重试
@@ -305,7 +331,7 @@ setDeleteExecutor(async (boardId) => {
 });
 
 // ---- 元数据执行器（Spec L1）：收藏/归档走轻量 PATCH，不与内容上传耦合 ----
-setMetaExecutor(async (boardId) => {
+setMetaExecutor(async (boardId, opts) => {
   if (boardStore.getState().tombstones.has(boardId)) return 'ok'; // 已删除，勿同步
   const meta = boardStore.getBoardList().find((b) => b.id === boardId);
   if (!meta) return 'ok'; // 本地已无该画板
@@ -320,6 +346,7 @@ setMetaExecutor(async (boardId) => {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
+      keepalive: opts?.keepalive === true,
       body: JSON.stringify({
         title: meta.name,
         isFavorite: meta.isFavorite ?? false,
@@ -423,8 +450,13 @@ export async function fetchBoardFromServer(boardId: string): Promise<StoredBoard
     };
     // 本地有未同步改动时不覆盖内容（本地版胜出，避免抹掉离线编辑）
     if (!boardStore.isDirty(board.id)) {
-      persistBoard(board, { dirty: false });
-      persistServerUpdatedAt(board.id, board.serverUpdatedAt!);
+      try {
+        persistBoard(board, { dirty: false });
+        persistServerUpdatedAt(board.id, board.serverUpdatedAt!);
+      } catch (e) {
+        // 服务端内容已取到，只是离线副本写不下去（配额/隐私模式）：不阻断本次打开，但要上报
+        boardScope.reportPersistFailure('board-hydrate', e);
+      }
     }
     return board;
   } catch (e) {

@@ -16,7 +16,11 @@ import * as boardScope from './board-scope';
 
 export type SyncOutcome = 'ok' | 'conflict' | 'fail';
 export type SyncState = 'pending' | 'saved' | 'conflict' | 'error';
-export type SyncExecutor = (boardId: string) => Promise<SyncOutcome>;
+/** 执行器可选参数：keepalive = 页面卸载前的最后补传（请求需在页面消失后仍送达） */
+export interface SyncExecOpts {
+  keepalive?: boolean;
+}
+export type SyncExecutor = (boardId: string, opts?: SyncExecOpts) => Promise<SyncOutcome>;
 export type QueueOp = 'upload' | 'delete' | 'meta';
 /** @deprecated 兼容旧字段命名（新代码用 QueueOp） */
 export type QueueTaskType = QueueOp;
@@ -26,6 +30,8 @@ export interface QueueTask {
   /** 待执行操作集合；delete 存在时其余操作被忽略（hydrate 时归一为 ['delete']） */
   ops: QueueOp[];
   attempts: number;
+  /** 已派发过 error 提示：转入慢速自愈后不再重复打扰用户（成功后清除） */
+  errorNotified?: boolean;
 }
 
 /** 旧持久化格式（一板一 type），hydrateQueue 兼容归一 */
@@ -37,6 +43,14 @@ interface LegacyQueueTask {
 }
 
 export const MAX_RETRIES = 5;
+
+/**
+ * 快退避耗尽后的**慢速自愈**间隔。
+ * 旧行为：耗尽即把任务移出队列并停摆，只能等下次启动 `recoverDirtyDrafts` 补传——
+ * 页面长时间挂着 + 网络反复抖动 = 「半天不上传」。现改为保留任务、按此间隔持续重试。
+ * 只对 'fail'（网络/5xx）生效；'conflict' 是用户决策路径，仍不自动重试。
+ */
+export const ERROR_RETRY_MS = 60_000;
 
 /** boardId -> 任务（操作集合 + 尝试次数） */
 const pending = new Map<string, QueueTask>();
@@ -116,6 +130,10 @@ export function isDeleteQueued(boardId: string): boolean {
   return pending.get(boardId)?.ops.includes('delete') ?? false;
 }
 
+/**
+ * 持久化快照。**刻意不落 errorNotified**：进程重启是新的会话，队列若仍失败，
+ * 用户有权再被提醒一次；持久化它反而会让「一直没传上去」变成无声状态。
+ */
 export function snapshotQueue(): QueueTask[] {
   return Array.from(pending.values()).map((t) => ({
     boardId: t.boardId,
@@ -256,13 +274,22 @@ export function dequeueDelete(boardId: string): void {
 }
 
 /** 断网恢复后立即补传；等待本次全部执行完成 */
-export async function flush(): Promise<void> {
+export async function flush(opts?: SyncExecOpts): Promise<void> {
   if (pending.size === 0) return;
   const ids = getPendingIds().filter((id) => !inFlight.has(id));
-  await Promise.all(ids.map((id) => runOne(id)));
+  await Promise.all(ids.map((id) => runOne(id, opts)));
 }
 
-async function runOne(boardId: string): Promise<void> {
+/**
+ * 页面隐藏/卸载前的最后补传：透传 keepalive，让请求在页面消失后仍能送达
+ * （旧实现用普通 fetch，浏览器会掐掉，注释写的「尽力 flush」实际保不住）。
+ * 单次尝试、不等待、失败不重试——本地 blob 与 dirty 已落盘，持久化队列会在下次启动续跑。
+ */
+export function flushForPageHide(): void {
+  void flush({ keepalive: true });
+}
+
+async function runOne(boardId: string, opts?: SyncExecOpts): Promise<void> {
   if (inFlight.has(boardId)) return;
   const task = pending.get(boardId);
   if (!task) return;
@@ -285,7 +312,7 @@ async function runOne(boardId: string): Promise<void> {
 
       let outcome: SyncOutcome;
       try {
-        outcome = await executor(boardId);
+        outcome = await executor(boardId, opts);
       } catch (e) {
         console.error('sync executor threw:', e);
         outcome = 'fail';
@@ -296,6 +323,7 @@ async function runOne(boardId: string): Promise<void> {
 
       if (outcome === 'ok') {
         after.ops = after.ops.filter((o) => o !== op);
+        after.errorNotified = false; // 自愈成功，恢复正常节奏
         emit('saved', boardId);
       } else if (outcome === 'conflict') {
         after.ops = after.ops.filter((o) => o !== op);
@@ -326,11 +354,20 @@ async function runOne(boardId: string): Promise<void> {
       return;
     }
 
+    // 已进入慢速自愈：不再走快速退避，只按固定长间隔重试（防重试风暴）
+    if (final.errorNotified) {
+      persist();
+      scheduleFlush(ERROR_RETRY_MS);
+      return;
+    }
     const attempts = (final.attempts || 0) + 1;
     if (attempts >= MAX_RETRIES) {
-      pending.delete(boardId);
+      // 快退避耗尽：保留任务、转入慢速自愈（旧行为是移出队列停摆，只能等下次启动补传）
+      final.attempts = 0;
+      final.errorNotified = true;
       persist();
       emit('error', boardId);
+      scheduleFlush(ERROR_RETRY_MS);
       return;
     }
     final.attempts = attempts;

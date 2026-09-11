@@ -16,6 +16,7 @@ const onlineListeners: ((...args: any[]) => void)[] = [];
 import {
   enqueue,
   flush,
+  flushForPageHide,
   getPendingIds,
   hasPending,
   MAX_RETRIES,
@@ -23,6 +24,7 @@ import {
   resetForTest,
   setBackoffBaseForTest,
   setSyncExecutor,
+  SyncExecOpts,
   SyncOutcome,
   SyncState,
 } from '../src/lib/sync-queue.ts';
@@ -79,7 +81,7 @@ describe('A5 重试队列', () => {
     assert.deepEqual(events.map((e) => e.state), ['pending', 'saved']);
   });
 
-  test('超过 MAX_RETRIES 派发 error 且不再重试', async () => {
+  test('超过 MAX_RETRIES：派发一次 error，但任务留在队列转入慢速自愈', async () => {
     setSyncExecutor(async (id) => {
       executorCalls.push(id);
       return 'fail';
@@ -91,12 +93,48 @@ describe('A5 重试队列', () => {
     }
 
     assert.equal(executorCalls.length, MAX_RETRIES);
-    assert.equal(hasPending('b1'), false);
-    assert.ok(events.some((e) => e.state === 'error'));
+    // 旧行为：耗尽即移出队列、只能等下次启动补传（「半天不上传」的根因之一）
+    assert.ok(hasPending('b1'), '快退避耗尽后任务必须保留，等待慢速自愈');
+    assert.equal(events.filter((e) => e.state === 'error').length, 1);
 
-    // 再次 flush 不产生新调用（已移出队列）
+    // 慢速自愈：任务仍在，flush 仍会重试（online/visibility 事件即走此路径）
     await flush();
-    assert.equal(executorCalls.length, MAX_RETRIES);
+    assert.equal(executorCalls.length, MAX_RETRIES + 1);
+    // 但不再重复打扰用户
+    assert.equal(events.filter((e) => e.state === 'error').length, 1);
+  });
+
+  test('慢速自愈期间恢复成功：任务清空、error 状态可再次派发', async () => {
+    setSyncExecutor(async (id) => {
+      executorCalls.push(id);
+      return executorCalls.length <= MAX_RETRIES ? 'fail' : 'ok';
+    });
+
+    enqueue('b1');
+    for (let i = 0; i < MAX_RETRIES; i++) await flush();
+    assert.ok(hasPending('b1'));
+
+    await flush(); // 第 MAX_RETRIES+1 次：成功，自愈完成
+    assert.equal(hasPending('b1'), false);
+    assert.equal(events.filter((e) => e.state === 'saved').length, 1);
+  });
+
+  test('flushForPageHide 透传 keepalive=true；常规 flush 不传', async () => {
+    // 按 boardId 记录首次调用参数：enqueue 会排一个 0ms 定时器，并发下不能靠调用顺序断言
+    const seen = new Map<string, SyncExecOpts | undefined>();
+    setSyncExecutor(async (id, opts) => {
+      executorCalls.push(id);
+      if (!seen.has(id)) seen.set(id, opts);
+      return 'ok';
+    });
+
+    enqueue('b-normal');
+    await flush();
+    assert.equal(seen.get('b-normal')?.keepalive, undefined, '常规同步不得带 keepalive（有 64KB 体积上限）');
+
+    enqueue('b-hide');
+    flushForPageHide(); // 页面卸载路径：同步进入执行器，不 await
+    assert.equal(seen.get('b-hide')?.keepalive, true);
   });
 
   test('conflict 派发 conflict 且不重试', async () => {

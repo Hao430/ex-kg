@@ -267,32 +267,41 @@ function MainApp() {
         syncIdleTimerRef.current = window.setTimeout(() => setSyncState('idle'), 3000);
       }
     });
+    const onPersistFailed = () => {
+      showToast('本地保存失败：浏览器存储空间不足或被禁用，请勿关闭页面');
+    };
     window.addEventListener('deepdive:canvas-save-conflict', onConflict);
     window.addEventListener('deepdive:board-remote-deleted', onRemoteDeleted);
+    window.addEventListener('deepdive:local-persist-failed', onPersistFailed);
     return () => {
       window.removeEventListener('deepdive:canvas-save-conflict', onConflict);
       window.removeEventListener('deepdive:board-remote-deleted', onRemoteDeleted);
+      window.removeEventListener('deepdive:local-persist-failed', onPersistFailed);
       offSync();
       if (syncIdleTimerRef.current !== null) clearTimeout(syncIdleTimerRef.current);
     };
   }, []);
 
-  // 网络恢复立即刷新配额；页面隐藏/卸载前尽力 flush 同步队列（防丢最后一段编辑）
+  // 网络恢复立即刷新配额；页面隐藏/卸载前用 keepalive 补传最后一段编辑
   useEffect(() => {
     const onOnline = () => {
       void quotaStore.refreshQuota();
       void syncQueue.flush();
     };
-    const onPageHide = () => {
-      void syncQueue.flush();
+    // pagehide：页面即将消失，普通 fetch 会被浏览器掐掉，必须走 keepalive 单次补传
+    const onPageHide = () => syncQueue.flushForPageHide();
+    // 切回前台：顺带给失败任务兜底，不等慢速自愈的长间隔
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') syncQueue.flushForPageHide();
+      else void syncQueue.flush();
     };
     window.addEventListener('online', onOnline);
     window.addEventListener('pagehide', onPageHide);
-    window.addEventListener('visibilitychange', onPageHide);
+    window.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
       window.removeEventListener('online', onOnline);
       window.removeEventListener('pagehide', onPageHide);
-      window.removeEventListener('visibilitychange', onPageHide);
+      window.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, []);
 
