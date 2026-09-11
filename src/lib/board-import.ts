@@ -1,9 +1,10 @@
 /**
- * Spec M1 — JSON 备份导入（纯函数核心）。
+ * Spec M1 — JSON 备份导入（纯函数核心）；Spec M2 起 id 重映射复用 board-remap。
  *
  * 导出的 `StoredBoard` 携带原始 id，而服务端 nodes.id / edges.id 是全局主键
  * （schema.ts），saveCanvas 先按 canvas_id 清表再按 id 插入——原样导入会与原
- * 画板撞主键。故本模块对所有 id 重映射，并清洗不可信文件中的瞬时/畸形字段。
+ * 画板撞主键。故本模块对不可信文件做校验与内容归一化后，交给 `remapBoardIds`
+ * 完成全量 id 重映射。
  *
  * 纯输入输出：不触碰 localStorage / 网络；id 与时钟可注入以保证测试确定性。
  */
@@ -11,6 +12,7 @@ import { z } from 'zod';
 import type { Node, Edge } from '@xyflow/react';
 import type { StoredBoard } from './storage.js';
 import { uuidv7 } from './uuid.js';
+import { remapBoardIds } from './board-remap.js';
 
 /** 文件体积上限（UI 读文件前用 File.size 预检；解析器不感知字节数） */
 export const MAX_IMPORT_BYTES = 2 * 1024 * 1024;
@@ -111,11 +113,13 @@ function sanitizeMessages(
   return out;
 }
 
-/** 节点 data 归一：清瞬时生成态/只读标记，清洗 messages，绑定新 parentId */
+/**
+ * 节点 data 归一：清瞬时生成态/只读标记，清洗 messages。
+ * parentId 不在本函数处理——由 remapBoardIds 按映射统一改写/剔除。
+ */
 function sanitizeNodeData(
   raw: unknown,
   type: NormalizedType,
-  remapParent: (pid: string) => string | undefined,
   generateId: () => string,
   now: () => number
 ): Record<string, unknown> {
@@ -141,15 +145,6 @@ function sanitizeNodeData(
     // 便签：标题/正文强制为字符串
     if (typeof data.title !== 'string') data.title = '';
     if (typeof data.content !== 'string') data.content = '';
-  }
-
-  const pid = data.parentId;
-  if (typeof pid === 'string' && pid) {
-    const mapped = remapParent(pid);
-    if (mapped) data.parentId = mapped;
-    else delete data.parentId;
-  } else {
-    delete data.parentId;
   }
 
   return data;
@@ -213,17 +208,16 @@ export function parseBoardBackup(raw: string, opts?: ParseOptions): ImportResult
     return err('EMPTY', '备份中没有可导入的节点');
   }
 
-  // 第一遍：逐节点校验 + 去重（同 id 保留首个），建立 old→new 映射
+  // 逐节点校验 + 去重（同 id 保留首个），暂保留原 id 供 remap 建立映射
   const parsedNodes: Array<{ oldId: string; type: NormalizedType; position: { x: number; y: number }; data: unknown }> = [];
-  const oldToNew = new Map<string, string>();
+  const seenNodeId = new Set<string>();
   for (const rawNode of rawNodes) {
     const node = RawNodeSchema.safeParse(rawNode);
     if (!node.success) {
       return err('INVALID_SHAPE', '备份中存在格式不正确的节点');
     }
-    if (oldToNew.has(node.data.id)) continue;
-    const newId = generateId();
-    oldToNew.set(node.data.id, newId);
+    if (seenNodeId.has(node.data.id)) continue;
+    seenNodeId.add(node.data.id);
     parsedNodes.push({
       oldId: node.data.id,
       type: normalizeType(node.data.type),
@@ -232,19 +226,35 @@ export function parseBoardBackup(raw: string, opts?: ParseOptions): ImportResult
     });
   }
 
-  // 第二遍：构造节点并重写 parentId
-  const nodes: Node[] = parsedNodes.map((p) => ({
-    id: oldToNew.get(p.oldId)!,
+  const intermediateNodes: Node[] = parsedNodes.map((p) => ({
+    id: p.oldId,
     type: p.type,
     position: p.position,
-    data: sanitizeNodeData(
-      p.data,
-      p.type,
-      (pid) => oldToNew.get(pid),
-      generateId,
-      now
-    ),
+    data: sanitizeNodeData(p.data, p.type, generateId, now),
   }));
+
+  // 逐边校验，暂保留原 id 与端点；去重/悬挂丢弃交给 remapBoardIds
+  const intermediateEdges: Edge[] = [];
+  for (const rawEdge of rawEdges) {
+    const parsedEdge = RawEdgeSchema.safeParse(rawEdge);
+    if (!parsedEdge.success) {
+      return err('INVALID_SHAPE', '备份中存在格式不正确的连线');
+    }
+    const e = parsedEdge.data;
+    const next: Edge = { id: e.id, source: e.source, target: e.target, type: e.type ?? 'smoothstep' };
+    if (e.animated !== undefined) next.animated = e.animated;
+    if (e.style !== undefined) next.style = e.style as Edge['style'];
+    if (e.markerEnd !== undefined) next.markerEnd = e.markerEnd as Edge['markerEnd'];
+    if (e.label !== undefined) next.label = e.label;
+    if (e.sourceHandle !== undefined) next.sourceHandle = e.sourceHandle;
+    if (e.targetHandle !== undefined) next.targetHandle = e.targetHandle;
+    intermediateEdges.push(next);
+  }
+
+  // Spec M2：全量 id 重映射（board/node/edge）由公共模块完成
+  const remap = remapBoardIds(intermediateNodes, intermediateEdges, { generateId });
+  const nodes = remap.nodes;
+  const edges = remap.edges;
 
   // 父子环校验（服务端 assertAcyclicParentChain 亦会 400，前端提前拦截避免幽灵板）
   const parentOf = new Map<string, string>();
@@ -254,35 +264,6 @@ export function parseBoardBackup(raw: string, opts?: ParseOptions): ImportResult
   }
   if (hasParentCycle(parentOf)) {
     return err('INVALID_SHAPE', '节点父子关系存在循环，无法导入');
-  }
-
-  // 第三遍：构造边——丢悬挂引用、去重原 id
-  const edges: Edge[] = [];
-  const seenOldEdge = new Set<string>();
-  let droppedEdges = 0;
-  for (const rawEdge of rawEdges) {
-    const edge = RawEdgeSchema.safeParse(rawEdge);
-    if (!edge.success) {
-      return err('INVALID_SHAPE', '备份中存在格式不正确的连线');
-    }
-    if (seenOldEdge.has(edge.data.id)) continue;
-    seenOldEdge.add(edge.data.id);
-
-    const source = oldToNew.get(edge.data.source);
-    const target = oldToNew.get(edge.data.target);
-    if (!source || !target) {
-      droppedEdges++;
-      continue;
-    }
-
-    const next: Edge = { id: generateId(), source, target, type: edge.data.type ?? 'smoothstep' };
-    if (edge.data.animated !== undefined) next.animated = edge.data.animated;
-    if (edge.data.style !== undefined) next.style = edge.data.style as Edge['style'];
-    if (edge.data.markerEnd !== undefined) next.markerEnd = edge.data.markerEnd as Edge['markerEnd'];
-    if (edge.data.label !== undefined) next.label = edge.data.label;
-    if (edge.data.sourceHandle !== undefined) next.sourceHandle = edge.data.sourceHandle;
-    if (edge.data.targetHandle !== undefined) next.targetHandle = edge.data.targetHandle;
-    edges.push(next);
   }
 
   const name =
@@ -295,7 +276,7 @@ export function parseBoardBackup(raw: string, opts?: ParseOptions): ImportResult
     : { x: 0, y: 0, zoom: 1 };
 
   const board: StoredBoard = {
-    id: generateId(),
+    id: remap.boardId,
     name,
     updatedAt: now(),
     nodes,
@@ -303,5 +284,5 @@ export function parseBoardBackup(raw: string, opts?: ParseOptions): ImportResult
     viewport,
   };
 
-  return { ok: true, board, stats: { nodes: nodes.length, edges: edges.length, droppedEdges } };
+  return { ok: true, board, stats: { nodes: nodes.length, edges: edges.length, droppedEdges: remap.droppedEdges } };
 }

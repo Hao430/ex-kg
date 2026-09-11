@@ -38,7 +38,7 @@ import {
   takeCloneFreshFlag,
   takeCloneIntent,
 } from './lib/share-clone';
-import { deduplicateNodes, deduplicateEdges } from './lib/storage';
+import { remapBoardIds } from './lib/board-remap';
 import { uuidv7 } from './lib/uuid.js';
 import { SampleBoardViewer } from './components/sample/SampleBoardViewer';
 import { ShareLinkModal } from './components/ui/ShareLinkModal';
@@ -743,21 +743,24 @@ function MainApp() {
       return;
     }
 
-    // 快照节点 → 画布节点：数据为属主画布保存时的白名单形状，直通即可；
-    // 仅归一化遗留的 generating 态（分享者中途生成就分享的极端情况），避免克隆后永久转圈
-    const nodes = deduplicateNodes(body.nodes || []).map((n: Node) => {
+    // 快照节点 → 画布节点：先归一化遗留的 generating 态（分享者中途生成就分享的极端情况），
+    // 再由 remapBoardIds 全量重映射 id —— 服务端 nodes.id 是全局主键，
+    // 直通快照 id 会与源画板撞主键导致整板保存失败（Spec M2）
+    const snapshotNodes = (body.nodes || []).map((n: Node) => {
       if (n.type !== 'chat') return n;
       const d = n.data as unknown as ChatNodeData;
       if (d.status !== 'generating') return n;
       return { ...n, data: { ...d, status: 'idle' as const, errorMessage: undefined } };
     });
-    const edges = deduplicateEdges(body.edges || []);
+    const remap = remapBoardIds(snapshotNodes, (body.edges || []) as Edge[], { generateId: uuidv7 });
+    const nodes = remap.nodes;
+    const edges = remap.edges;
     if (nodes.length === 0) {
       showToast('分享内容为空，未能克隆画板');
       return;
     }
 
-    const boardId = uuidv7();
+    const boardId = remap.boardId;
     const boardName = String(body.title || '克隆的分享画板').slice(0, 60);
     quotaStore.markPendingCreate(boardId);
     saveBoard({ id: boardId, name: boardName, updatedAt: Date.now(), nodes, edges });
