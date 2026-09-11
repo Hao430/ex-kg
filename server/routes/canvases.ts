@@ -20,10 +20,15 @@ export const canvasesRouter = Router();
 
 /**
  * Spec F3：POST /api/canvases/:id/save 入参 zod 校验（id 由路由 params 提供）
+ *
+ * ADR-0017 协议分流：`protocolVersion` 缺失 = 1 = 旧客户端的整板替换路径；>= 2 = 节点级合并。
+ * **必须靠显式版本号，不能猜结构**：旧客户端的全量 payload 与新客户端的「本次改动节点」
+ * 结构上无法区分，且空数组在旧客户端是「清空」、在新客户端是「无删除」，语义正好相反。
+ * 合并模式下 title/viewport 允许缺省——缺省即「本次没改」，服务端保留原值。
  */
 const SaveCanvasSchema = z.object({
   id: z.string().optional(),
-  title: z.string(),
+  title: z.string().optional(),
   description: z.string().optional(),
   viewport: z
     .object({
@@ -37,6 +42,10 @@ const SaveCanvasSchema = z.object({
   nodes: z.array(z.record(z.string(), z.any())).default([]),
   edges: z.array(z.record(z.string(), z.any())).default([]),
   expectedUpdatedAt: z.string().datetime({ message: 'expectedUpdatedAt 必须是 ISO 时间串' }).optional(),
+  protocolVersion: z.number().int().positive().optional(),
+  /** 合并模式下的显式墓碑：缺省 = 不删除（与旧语义「没带 = 删除」相反） */
+  deletedNodeIds: z.array(z.string()).optional(),
+  deletedEdgeIds: z.array(z.string()).optional(),
 });
 
 /**
@@ -102,6 +111,9 @@ canvasesRouter.post('/:id/save', asyncHandler(async (req: Request, res: Response
       nodes: body.nodes,
       edges: body.edges,
       expectedUpdatedAt: body.expectedUpdatedAt,
+      protocolVersion: body.protocolVersion,
+      deletedNodeIds: body.deletedNodeIds,
+      deletedEdgeIds: body.deletedEdgeIds,
     },
     user.id,
     user.role === 'admin'

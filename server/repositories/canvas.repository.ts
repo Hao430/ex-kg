@@ -238,6 +238,15 @@ function assertAcyclicParentChain(nodes: any[]): void {
   for (const node of nodes || []) {
     if (node?.id) parentOf.set(String(node.id), node?.data?.parentId ? String(node.data.parentId) : null);
   }
+  assertAcyclicParentMap(parentOf);
+}
+
+/**
+ * 环检测内核（可复用于合并模式）：`parentOf` 是完整的「节点 id → 父 id」映射。
+ * 合并模式下 payload 只带部分节点，环可能横跨「payload 节点 + 服务端存活节点」，
+ * 因此必须把两边合并后再判断，只看 payload 会漏判。
+ */
+function assertAcyclicParentMap(parentOf: Map<string, string | null>): void {
   for (const startId of parentOf.keys()) {
     const visited = new Set<string>();
     let cur: string | null = startId;
@@ -249,6 +258,69 @@ function assertAcyclicParentChain(nodes: any[]): void {
       cur = parentOf.get(cur) ?? null;
     }
   }
+}
+
+/** 按 id 去重（同批重复 id 会让 ON CONFLICT DO UPDATE 报 21000，必须先去） */
+function dedupeById<T extends { id?: string }>(items: T[] | undefined, label: string, canvasId: string): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const item of items || []) {
+    if (!item || !item.id || seen.has(item.id)) {
+      if (item?.id) console.warn(`[saveCanvas] 丢弃重复${label} id=${item.id} canvas=${canvasId}`);
+      continue;
+    }
+    seen.add(item.id);
+    out.push(item);
+  }
+  return out;
+}
+
+/**
+ * 合并模式：把节点排成「父先于子」的顺序，并修掉不可达的 parentId。
+ *
+ * 两个原因：
+ * 1. `parent_id` 是自引用 FK。多值 INSERT 内子行先于父行是否触发 FK 失败，取决于 RI
+ *    检查在语句结束时（而非逐行）执行这一实现细节——显式拓扑排序让顺序确定，不去赌它。
+ *    存量代码是整板 DELETE 后重插，父子必在同批，所以这条隐患一直没暴露。
+ * 2. 父既不在本批 payload、又不在服务端存活集合里的节点：留着 parentId 必然 FK 失败、
+ *    整单回滚——用户表现为「画板存不进去」。置空并在回执里报出修复过的 id。
+ */
+function sortNodesParentFirst(
+  nodes: any[],
+  liveNodeIds: Set<string>
+): { ordered: any[]; repairedNodeIds: string[] } {
+  const byId = new Map<string, any>(nodes.map((n) => [n.id, n]));
+  const repairedNodeIds: string[] = [];
+  const parentOf = new Map<string, string | null>();
+
+  for (const n of nodes) {
+    const raw = n?.data?.parentId ? String(n.data.parentId) : null;
+    let pid = raw;
+    if (pid && (pid === n.id || (!byId.has(pid) && !liveNodeIds.has(pid)))) {
+      pid = null;
+      repairedNodeIds.push(n.id);
+    }
+    if (pid !== raw) n.data = { ...(n.data || {}), parentId: null };
+    parentOf.set(n.id, pid);
+  }
+
+  const ordered: any[] = [];
+  const state = new Map<string, 1 | 2>(); // 1 = 访问中，2 = 已排好
+  const visit = (id: string): void => {
+    const st = state.get(id);
+    if (st === 2) return;
+    if (st === 1) {
+      throw new ValidationError('节点层级关系存在循环引用，已拒绝保存', 'NODE_PARENT_CYCLE');
+    }
+    state.set(id, 1);
+    const pid = parentOf.get(id) ?? null;
+    if (pid && byId.has(pid)) visit(pid);
+    state.set(id, 2);
+    ordered.push(byId.get(id));
+  };
+  for (const n of nodes) visit(n.id);
+
+  return { ordered, repairedNodeIds };
 }
 
 /**
@@ -294,10 +366,255 @@ function normalizeCanvasPayload(data: { id: string; nodes: any[]; edges: any[] }
   return { nodes, edges };
 }
 
+/**
+ * 节点 → 21 列行值（id/canvas_id + 19 个业务列）。写入路径的双分支共用，
+ * 保证 legacy 与 merge 落库口径逐字一致。
+ *
+ * 刻意**不含** width/height/is_pinned/tokens_used/created_at/deleted_at/canvas_id：
+ * 这些列不在前端可编辑字段里，合并语义下天然保留（legacy 的 DELETE-all + 重插
+ * 每次都把它们重置为 DEFAULT，是既有缺陷）。
+ */
+function buildNodeRow(node: any, canvasId: string, defaultModel: string): any[] {
+  const d = node.data || {};
+  const pos = node.position || { x: 0, y: 0 };
+  const nodeType = node.type || 'chat';
+  const answer = d.answer || '';
+  const noteText = d.content || d.noteContent || d.note || '';
+  const contentText = d.content || d.noteContent || '';
+
+  // Extract extra custom data
+  const {
+    title: _t, question: _q, answer: _a, content: _c, noteContent: _nc, note: _n,
+    messages: _m, status: _st, isCollapsed: _ic, branchTriggerPhrase: _btp,
+    enableWebSearch: _ews, color: _col, depth: _dep, model: _mod,
+    grounding: _gr, parentId: _pid,
+    ...customFields
+  } = d;
+
+  return [
+    node.id,
+    canvasId,
+    d.parentId || null,
+    nodeType,
+    d.title || d.question || (nodeType === 'note' ? '便签' : '思考节点'),
+    d.question || '',
+    answer,
+    noteText,
+    contentText,
+    Array.isArray(d.messages) ? JSON.stringify(d.messages) : '[]',
+    d.status || (answer ? 'idle' : 'suggested'),
+    pos.x,
+    pos.y,
+    typeof d.depth === 'number' ? d.depth : 0,
+    d.model || defaultModel || '',
+    d.grounding ? JSON.stringify(d.grounding) : '[]',
+    Boolean(d.isCollapsed),
+    d.branchTriggerPhrase || '',
+    d.enableWebSearch !== false,
+    d.color || '',
+    JSON.stringify(customFields || {}),
+  ];
+}
+
+/** 节点 INSERT 列清单（与 buildNodeRow 一一对应，改一处必须改另一处） */
+const NODE_INSERT_COLUMNS =
+  'id, canvas_id, parent_id, type, title, question, answer, note, content, ' +
+  'messages, status, pos_x, pos_y, depth, model_used, grounding, ' +
+  'is_collapsed, branch_trigger_phrase, enable_web_search, color, custom_data';
+
+const EDGE_INSERT_COLUMNS =
+  'id, canvas_id, source_id, target_id, source_handle, target_handle, ' +
+  'label, animated, type, style, marker_end';
+
+/** 把行值数组拼成多值 INSERT 的 VALUES 段，参数依次压入 values */
+function buildTuples(rows: any[][], values: any[]): string {
+  return rows.map((row) => `(${row.map((v) => `$${values.push(v)}`).join(', ')})`).join(', ');
+}
+
+function buildEdgeRow(edge: any, canvasId: string): any[] {
+  return [
+    edge.id,
+    canvasId,
+    edge.source,
+    edge.target,
+    edge.sourceHandle || null,
+    edge.targetHandle || null,
+    edge.label || null,
+    Boolean(edge.animated),
+    edge.type || 'smoothstep',
+    edge.style || null,
+    edge.markerEnd || null,
+  ];
+}
+
+interface MergeWriteResult {
+  ignoredNodeIds: string[];
+  repairedNodeIds: string[];
+  nodeCount: number;
+  edgeCount: number;
+}
+
+/**
+ * 合并写入（ADR-0017，protocolVersion >= 2）：只 upsert 本次带来的节点/边，其余原样不动。
+ * 这是「没带 = 不动」的落地点——正是它与 legacy 整板替换的语义分水岭。
+ *
+ * 执行顺序不可交换：节点 upsert → 节点墓碑（含级联边墓碑）→ 显式边墓碑 → 边 upsert。
+ * 保证同一份 payload 里既携带又声明删除的 id 一定以删除收场。
+ */
+async function mergeWriteCanvas(
+  client: pg.PoolClient,
+  canvasId: string,
+  payloadNodes: any[],
+  payloadEdges: any[],
+  deletedNodeIds: string[],
+  deletedEdgeIds: string[],
+  defaultModel: string
+): Promise<MergeWriteResult> {
+  // 1) 跨板搬节点拦截：id 是全局主键，把他人板内节点提交到本板必须拒绝（只报 id，不泄露内容）
+  if (payloadNodes.length > 0) {
+    const clash = await client.query(
+      'SELECT id FROM nodes WHERE id = ANY($1::varchar[]) AND canvas_id <> $2 LIMIT 1',
+      [payloadNodes.map((n) => n.id), canvasId]
+    );
+    if (clash.rows.length > 0) {
+      throw new ValidationError('节点不属于当前画板，已拒绝保存', 'NODE_CANVAS_MISMATCH');
+    }
+  }
+
+  // 2) 服务端存活节点（父映射 + 存活集合一次取回）
+  const liveRes = await client.query(
+    'SELECT id, parent_id FROM nodes WHERE canvas_id = $1 AND deleted_at IS NULL',
+    [canvasId]
+  );
+  const liveNodeIds = new Set<string>(liveRes.rows.map((r: any) => r.id as string));
+  const parentOf = new Map<string, string | null>(
+    liveRes.rows.map((r: any) => [r.id as string, (r.parent_id as string | null) ?? null])
+  );
+
+  // 3) 环检测：payload 的父子关系叠加到服务端存活映射上再判断。
+  //    只看 payload 会漏判「新节点 → 服务端既有节点 → 新节点」这类跨批环。
+  for (const n of payloadNodes) {
+    const pid = n?.data?.parentId ? String(n.data.parentId) : null;
+    parentOf.set(n.id, pid === n.id ? null : pid);
+  }
+  assertAcyclicParentMap(parentOf);
+
+  // 4) 父先于子排序 + 修掉不可达 parentId
+  const { ordered, repairedNodeIds } = sortNodesParentFirst(payloadNodes, liveNodeIds);
+
+  // 5) 节点 upsert。WHERE 双重守卫：删除胜出（墓碑行不得复活）+ 禁止跨板搬节点。
+  //    被守卫拒绝的行不会出现在 RETURNING 里，据此算出 ignoredNodeIds。
+  const deletedNodeSet = new Set(deletedNodeIds);
+  const returnedNodeIds = new Set<string>();
+  if (ordered.length > 0) {
+    const nodeRows = ordered.map((node) => buildNodeRow(node, canvasId, defaultModel));
+    const NODE_BATCH_SIZE = 200; // 200 × 21 参数 = 4200，远低于 PG 65535 上限
+    for (const batch of chunkRows(nodeRows, NODE_BATCH_SIZE)) {
+      const values: any[] = [];
+      const res = await client.query(
+        `INSERT INTO nodes (${NODE_INSERT_COLUMNS})
+         VALUES ${buildTuples(batch, values)}
+         ON CONFLICT (id) DO UPDATE SET
+           parent_id = EXCLUDED.parent_id, type = EXCLUDED.type, title = EXCLUDED.title,
+           question = EXCLUDED.question, answer = EXCLUDED.answer, note = EXCLUDED.note,
+           content = EXCLUDED.content, messages = EXCLUDED.messages, status = EXCLUDED.status,
+           pos_x = EXCLUDED.pos_x, pos_y = EXCLUDED.pos_y, depth = EXCLUDED.depth,
+           model_used = EXCLUDED.model_used, grounding = EXCLUDED.grounding,
+           is_collapsed = EXCLUDED.is_collapsed, branch_trigger_phrase = EXCLUDED.branch_trigger_phrase,
+           enable_web_search = EXCLUDED.enable_web_search, color = EXCLUDED.color,
+           custom_data = EXCLUDED.custom_data,
+           rev = nodes.rev + 1, updated_at = NOW()
+         WHERE nodes.canvas_id = EXCLUDED.canvas_id AND nodes.deleted_at IS NULL
+         RETURNING id`,
+        values
+      );
+      for (const row of res.rows) returnedNodeIds.add(row.id as string);
+    }
+  }
+  const ignoredNodeIds = ordered.map((n) => n.id as string).filter((id) => !returnedNodeIds.has(id));
+
+  // 6) 节点墓碑 + 级联边墓碑
+  if (deletedNodeIds.length > 0) {
+    await client.query(
+      `UPDATE nodes SET deleted_at = NOW(), rev = rev + 1, updated_at = NOW()
+       WHERE canvas_id = $1 AND deleted_at IS NULL AND id = ANY($2::varchar[])`,
+      [canvasId, deletedNodeIds]
+    );
+    await client.query(
+      `UPDATE edges SET deleted_at = NOW(), rev = rev + 1, updated_at = NOW()
+       WHERE canvas_id = $1 AND deleted_at IS NULL
+         AND (source_id = ANY($2::varchar[]) OR target_id = ANY($2::varchar[]))`,
+      [canvasId, deletedNodeIds]
+    );
+  }
+
+  // 7) 显式边墓碑
+  if (deletedEdgeIds.length > 0) {
+    await client.query(
+      `UPDATE edges SET deleted_at = NOW(), rev = rev + 1, updated_at = NOW()
+       WHERE canvas_id = $1 AND deleted_at IS NULL AND id = ANY($2::varchar[])`,
+      [canvasId, deletedEdgeIds]
+    );
+  }
+
+  // 8) 边端点校验必须对「服务端存活节点集合」，不能对 payload 节点集合——
+  //    否则 diff 语义下所有「连到未改动节点的新边」都会被误丢（合并模式最容易踩的坑）。
+  //    存活集合由「写入前的存活 − 墓碑 + 本次接受」直接推出，不必再查一次库。
+  const liveAfter = new Set<string>();
+  for (const id of liveNodeIds) if (!deletedNodeSet.has(id)) liveAfter.add(id);
+  for (const id of returnedNodeIds) if (!deletedNodeSet.has(id)) liveAfter.add(id);
+
+  const edges = payloadEdges.filter(
+    (e) => e?.source && e?.target && liveAfter.has(String(e.source)) && liveAfter.has(String(e.target))
+  );
+  if (edges.length < payloadEdges.length) {
+    // 静默丢边很难排查，留一条日志（合并语义下这应当很少发生）
+    console.warn(
+      `[saveCanvas] 合并写入丢弃 ${payloadEdges.length - edges.length} 条端点非存活的边 canvas=${canvasId}`
+    );
+  }
+
+  // 9) 边 upsert，同样带墓碑与跨板守卫
+  if (edges.length > 0) {
+    const edgeRows = edges.map((edge: any) => buildEdgeRow(edge, canvasId));
+    const EDGE_BATCH_SIZE = 500;
+    for (const batch of chunkRows(edgeRows, EDGE_BATCH_SIZE)) {
+      const values: any[] = [];
+      await client.query(
+        `INSERT INTO edges (${EDGE_INSERT_COLUMNS})
+         VALUES ${buildTuples(batch, values)}
+         ON CONFLICT (id) DO UPDATE SET
+           source_id = EXCLUDED.source_id, target_id = EXCLUDED.target_id,
+           source_handle = EXCLUDED.source_handle, target_handle = EXCLUDED.target_handle,
+           label = EXCLUDED.label, animated = EXCLUDED.animated, type = EXCLUDED.type,
+           style = EXCLUDED.style, marker_end = EXCLUDED.marker_end,
+           rev = edges.rev + 1, updated_at = NOW()
+         WHERE edges.canvas_id = EXCLUDED.canvas_id AND edges.deleted_at IS NULL`,
+        values
+      );
+    }
+  }
+
+  // 10) 计数必须在事务内重算：合并语义下 payload 长度 ≠ 板内总量
+  const counts = await client.query(
+    `SELECT
+       (SELECT COUNT(*)::int FROM nodes WHERE canvas_id = $1 AND deleted_at IS NULL) AS node_count,
+       (SELECT COUNT(*)::int FROM edges WHERE canvas_id = $1 AND deleted_at IS NULL) AS edge_count`,
+    [canvasId]
+  );
+
+  return {
+    ignoredNodeIds,
+    repairedNodeIds,
+    nodeCount: counts.rows[0].node_count,
+    edgeCount: counts.rows[0].edge_count,
+  };
+}
+
 export async function saveCanvas(
   data: {
     id: string;
-    title: string;
+    title?: string;
     description?: string;
     viewport?: { x: number; y: number; zoom: number };
     defaultModel?: string;
@@ -305,6 +622,10 @@ export async function saveCanvas(
     nodes: any[];
     edges: any[];
     expectedUpdatedAt?: string;
+    /** ADR-0017：缺失 = 1 = 整板替换（旧客户端）；>= 2 = 节点级合并 */
+    protocolVersion?: number;
+    deletedNodeIds?: string[];
+    deletedEdgeIds?: string[];
   },
   userId: string,
   /** 新建画布（exists=false）前的配额闸门；复用事务内已查的 exists，省一次独立预查 */
@@ -314,10 +635,27 @@ export async function saveCanvas(
   const now = new Date().toISOString();
   const vp = data.viewport || { x: 0, y: 0, zoom: 1 };
 
-  // 环链校验在权限/事务之前统一执行，PG 与内存双分支共用（技术债 #0006）
+  // ADR-0017 协议分流：判据只能是显式版本号。旧客户端的整板 payload 与新客户端的
+  // 「本次改动」结构上无法区分，且空数组在旧客户端是「清空」、在新客户端是「无删除」。
+  const merge = (data.protocolVersion ?? 1) >= 2;
+
+  // 熔断旧写路径（阶段 6 soaker 之后再翻）：旧客户端会命中其降级分支弹「请刷新」并停止重试。
+  // 刻意**不**带 latest_updated_at——带上会触发旧客户端的重试循环。
+  if (!merge && process.env.SAVE_LEGACY_REPLACE_ENABLED === 'false') {
+    throw new ConflictError('客户端版本过旧，请刷新页面后重试', 'CLIENT_OUTDATED');
+  }
+
+  // 环链校验在权限/事务之前统一执行，PG 与内存双分支共用（技术债 #0006）。
+  // 合并模式下这只是「payload 内」的快速拒绝，跨 payload 与服务端的环在事务内补判。
   assertAcyclicParentChain(data.nodes);
-  // 去重节点/边、丢悬挂边；两分支共用同一份归一化结果，保证计数与落库一致
-  const normalized = normalizeCanvasPayload(data);
+
+  // 归一化分两条路径，**不能共用**：
+  // - legacy：去重 + 丢悬挂边（整板重插，端点必然都在 payload 里）
+  // - merge：只去重，**绝不按 payload 端点过滤边**——diff 语义下「连到未改动节点的新边」
+  //   端点不在 payload 里，按旧规则会被全部误丢。端点校验改在服务端存活集合上做。
+  const normalized = merge
+    ? { nodes: dedupeById(data.nodes, '节点', data.id), edges: dedupeById(data.edges, '边', data.id) }
+    : normalizeCanvasPayload(data);
 
   /** 乐观锁：画布已存在且调用方声明了其已知版本时校验，防止并发静默覆盖 */
   const assertNoConflict = (serverUpdatedAt: string | null | undefined): void => {
@@ -352,7 +690,10 @@ export async function saveCanvas(
         throw new ForbiddenError('无权修改其他用户的画板', 'CANVAS_FORBIDDEN');
       }
 
-      if (existing.rows.length > 0) {
+      if (existing.rows.length > 0 && !merge) {
+        // 合并模式下**刻意不校验画板级乐观锁**：挂机两小时的设备改一个节点照样会被
+        // 409 挡下，用户报的「改完被云端的覆盖掉」就没修好。节点级 op 之间靠 rev 定序，
+        // 冲突面从整块板缩到同一个节点。title/viewport 仍是整字段 LWW（只在真的改了时上行）。
         assertNoConflict(existing.rows[0].updated_at);
       }
 
@@ -363,28 +704,35 @@ export async function saveCanvas(
 
       const assignedUserId = existingUserId || userId;
 
+      // 合并模式下 title/viewport/defaultModel 允许缺省 = 「本次没改」，用 COALESCE 保住原值；
+      // 旧路径按原样传非空值，两条路径共用同一条 SQL，legacy 行为逐字不变。
+      const titleParam = merge ? data.title ?? null : data.title || '未命名思维探索';
+      const viewportParam =
+        merge && !data.viewport ? [null, null, null] : [vp.x, vp.y, vp.zoom];
+      const modelParam = merge ? data.defaultModel ?? null : data.defaultModel || '';
+
       upsertRes = await client.query(
         `INSERT INTO canvases (id, user_id, title, description, viewport_x, viewport_y, viewport_zoom, default_model, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+         VALUES ($1, $2, COALESCE($3, '未命名思维探索'), $4, COALESCE($5, 0), COALESCE($6, 0), COALESCE($7, 1), COALESCE($8, ''), NOW())
          ON CONFLICT (id) DO UPDATE SET
-           title = EXCLUDED.title,
-           description = COALESCE(EXCLUDED.description, canvases.description),
-           viewport_x = EXCLUDED.viewport_x,
-           viewport_y = EXCLUDED.viewport_y,
-           viewport_zoom = EXCLUDED.viewport_zoom,
-           default_model = EXCLUDED.default_model,
+           title = COALESCE($3, canvases.title),
+           description = COALESCE($4, canvases.description),
+           viewport_x = COALESCE($5, canvases.viewport_x),
+           viewport_y = COALESCE($6, canvases.viewport_y),
+           viewport_zoom = COALESCE($7, canvases.viewport_zoom),
+           default_model = COALESCE($8, canvases.default_model),
            updated_at = NOW()
          WHERE canvases.deleted_at IS NULL
-         RETURNING created_at, updated_at`,
+         RETURNING created_at, updated_at, title, viewport_x, viewport_y, viewport_zoom, default_model`,
         [
           data.id,
           assignedUserId,
-          data.title || '未命名思维探索',
+          titleParam,
           data.description || null,
-          vp.x,
-          vp.y,
-          vp.zoom,
-          data.defaultModel || '',
+          viewportParam[0],
+          viewportParam[1],
+          viewportParam[2],
+          modelParam,
         ]
       );
 
@@ -393,130 +741,74 @@ export async function saveCanvas(
         throw new NotFoundError('画板不存在或已删除');
       }
 
-      // Clean & Re-insert Nodes（批量多值 INSERT，分块控制参数数量）
-      await client.query('DELETE FROM nodes WHERE canvas_id = $1', [data.id]);
-      const nodeRows: any[][] = [];
-      for (const node of normalized.nodes) {
-        const d = node.data || {};
-        const pos = node.position || { x: 0, y: 0 };
-        const nodeType = node.type || 'chat';
-        const title = d.title || d.question || (nodeType === 'note' ? '便签' : '思考节点');
-        const question = d.question || '';
-        const answer = d.answer || '';
-        const noteText = d.content || d.noteContent || d.note || '';
-        const contentText = d.content || d.noteContent || '';
-        const messages = Array.isArray(d.messages) ? JSON.stringify(d.messages) : '[]';
-        const status = d.status || (answer ? 'idle' : 'suggested');
-        const isCollapsed = Boolean(d.isCollapsed);
-        const branchTriggerPhrase = d.branchTriggerPhrase || '';
-        const enableWebSearch = d.enableWebSearch !== false;
-        const color = d.color || '';
-        const depth = typeof d.depth === 'number' ? d.depth : 0;
-        const modelUsed = d.model || data.defaultModel || '';
-        const grounding = d.grounding ? JSON.stringify(d.grounding) : '[]';
+      let mergeResult: MergeWriteResult | null = null;
 
-        // Extract extra custom data
-        const {
-          title: _t, question: _q, answer: _a, content: _c, noteContent: _nc, note: _n,
-          messages: _m, status: _st, isCollapsed: _ic, branchTriggerPhrase: _btp,
-          enableWebSearch: _ews, color: _col, depth: _dep, model: _mod,
-          grounding: _gr, parentId: _pid,
-          ...customFields
-        } = d;
+      if (!merge) {
+        // ---- 旧路径：整板替换（protocolVersion 缺失，行为逐字不变）----
+        await client.query('DELETE FROM nodes WHERE canvas_id = $1', [data.id]);
+        const nodeRows = normalized.nodes.map((node: any) =>
+          buildNodeRow(node, data.id, data.defaultModel || '')
+        );
+        const NODE_BATCH_SIZE = 200;
+        for (const batch of chunkRows(nodeRows, NODE_BATCH_SIZE)) {
+          const values: any[] = [];
+          await client.query(
+            `INSERT INTO nodes (${NODE_INSERT_COLUMNS}) VALUES ${buildTuples(batch, values)}`,
+            values
+          );
+        }
 
-        nodeRows.push([
-          node.id,
+        await client.query('DELETE FROM edges WHERE canvas_id = $1', [data.id]);
+        const edgeRows = normalized.edges.map((edge: any) => buildEdgeRow(edge, data.id));
+        const EDGE_BATCH_SIZE = 500;
+        for (const batch of chunkRows(edgeRows, EDGE_BATCH_SIZE)) {
+          const values: any[] = [];
+          await client.query(
+            `INSERT INTO edges (${EDGE_INSERT_COLUMNS})
+             VALUES ${buildTuples(batch, values)}
+             ON CONFLICT (id) DO NOTHING`,
+            values
+          );
+        }
+      } else {
+        // ---- 合并路径：只 upsert 本次改动，未带的一律不动 ----
+        mergeResult = await mergeWriteCanvas(
+          client,
           data.id,
-          d.parentId || null,
-          nodeType,
-          title,
-          question,
-          answer,
-          noteText,
-          contentText,
-          messages,
-          status,
-          pos.x,
-          pos.y,
-          depth,
-          modelUsed,
-          grounding,
-          isCollapsed,
-          branchTriggerPhrase,
-          enableWebSearch,
-          color,
-          JSON.stringify(customFields || {}),
-        ]);
-      }
-
-      const NODE_BATCH_SIZE = 200; // 200 × 21 参数 = 4200，远低于 PG 65535 上限
-      for (const batch of chunkRows(nodeRows, NODE_BATCH_SIZE)) {
-        const values: any[] = [];
-        const tuples = batch.map(
-          (row) => `(${row.map((v) => `$${values.push(v)}`).join(', ')})`
-        );
-        await client.query(
-          `INSERT INTO nodes (
-            id, canvas_id, parent_id, type, title, question, answer, note, content,
-            messages, status, pos_x, pos_y, depth, model_used, grounding,
-            is_collapsed, branch_trigger_phrase, enable_web_search, color,
-            custom_data
-          )
-          VALUES ${tuples.join(', ')}`,
-          values
-        );
-      }
-
-      // Clean & Re-insert Edges（归一化已按 id 去重 + 丢弃悬挂边）
-      await client.query('DELETE FROM edges WHERE canvas_id = $1', [data.id]);
-      const edgeRows: any[][] = normalized.edges.map((edge: any) => [
-        edge.id,
-        data.id,
-        edge.source,
-        edge.target,
-        edge.sourceHandle || null,
-        edge.targetHandle || null,
-        edge.label || null,
-        Boolean(edge.animated),
-        edge.type || 'smoothstep',
-        edge.style || null,
-        edge.markerEnd || null,
-      ]);
-
-      const EDGE_BATCH_SIZE = 500;
-      for (const batch of chunkRows(edgeRows, EDGE_BATCH_SIZE)) {
-        const values: any[] = [];
-        const tuples = batch.map(
-          (row) => `(${row.map((v) => `$${values.push(v)}`).join(', ')})`
-        );
-        await client.query(
-          `INSERT INTO edges (
-            id, canvas_id, source_id, target_id, source_handle, target_handle,
-            label, animated, type, style, marker_end
-          )
-          VALUES ${tuples.join(', ')}
-          ON CONFLICT (id) DO NOTHING`,
-          values
+          normalized.nodes,
+          normalized.edges,
+          Array.from(new Set(data.deletedNodeIds || [])),
+          Array.from(new Set(data.deletedEdgeIds || [])),
+          data.defaultModel || ''
         );
       }
 
       await client.query('COMMIT');
 
       // 以 DB 时间戳为准返回（乐观锁版本必须与下次 GET 一致），不再落穿到内存分支
+      const row = upsertRes.rows[0];
       return {
         id: data.id,
         user_id: assignedUserId,
-        title: data.title,
+        title: row.title,
         description: data.description,
-        viewport: vp,
-        defaultModel: data.defaultModel || '',
+        viewport: { x: row.viewport_x, y: row.viewport_y, zoom: row.viewport_zoom },
+        defaultModel: row.default_model,
         enableWebSearch: data.enableWebSearch ?? true,
-        createdAt: new Date(upsertRes.rows[0].created_at).toISOString(),
-        updatedAt: new Date(upsertRes.rows[0].updated_at).toISOString(),
-        nodes: normalized.nodes,
-        edges: normalized.edges,
-        nodeCount: normalized.nodes.length,
-        edgeCount: normalized.edges.length,
+        createdAt: new Date(row.created_at).toISOString(),
+        updatedAt: new Date(row.updated_at).toISOString(),
+        // 合并路径不回吐全量节点（payload 只是本次改动，回吐反而误导）；计数由事务内重算
+        nodes: mergeResult ? undefined : normalized.nodes,
+        edges: mergeResult ? undefined : normalized.edges,
+        nodeCount: mergeResult ? mergeResult.nodeCount : normalized.nodes.length,
+        edgeCount: mergeResult ? mergeResult.edgeCount : normalized.edges.length,
+        saveMode: merge ? 'merge' : 'replace',
+        ...(mergeResult
+          ? {
+              ignoredNodeIds: mergeResult.ignoredNodeIds,
+              repairedNodeIds: mergeResult.repairedNodeIds,
+            }
+          : {}),
       };
     } catch (e) {
       await client.query('ROLLBACK');
@@ -537,27 +829,129 @@ export async function saveCanvas(
   if (existing && existingUserId !== userId && !isSharedDefaultCanvas(data.id)) {
     throw new ForbiddenError('无权修改其他用户的画板', 'CANVAS_FORBIDDEN');
   }
-  if (existing) {
-    assertNoConflict(existing.updatedAt);
+  if (existing && !merge) {
+    assertNoConflict(existing.updatedAt); // 合并模式刻意不校验画板级乐观锁，见 PG 分支注释
   }
   if (!existing && quotaGate) {
     await quotaGate(false);
   }
 
+  if (!merge) {
+    const record: CanvasRecord = {
+      id: data.id,
+      user_id: existingUserId || userId,
+      title: data.title || '未命名思维探索',
+      description: data.description,
+      viewport: vp,
+      defaultModel: data.defaultModel || '',
+      enableWebSearch: data.enableWebSearch ?? true,
+      createdAt: existing?.createdAt || now,
+      updatedAt: now,
+      nodes: normalized.nodes,
+      edges: normalized.edges,
+      nodeCount: normalized.nodes.length,
+      edgeCount: normalized.edges.length,
+      saveMode: 'replace',
+    };
+    inMemoryStore.canvases.set(data.id, record);
+    return record;
+  }
+
+  // ---- 内存分支的合并写入（与 PG 分支同语义，双模输出不得漂移）----
+  const baseNodes: any[] = existing?.nodes || [];
+  const baseEdges: any[] = existing?.edges || [];
+  const liveNodeIds = new Set(baseNodes.filter((n) => !n?.deleted_at).map((n) => n.id));
+
+  // 跨板搬节点拦截（与 PG 分支同语义）。内存分支没有全局节点表，节点散在各自的
+  // canvas.nodes 里，只能扫一遍——这是降级分支，正确性优先于这点开销。
+  if (normalized.nodes.length > 0) {
+    const submitted = new Set(normalized.nodes.map((n) => n.id));
+    for (const [cid, c] of inMemoryStore.canvases) {
+      if (cid === data.id) continue;
+      if ((c.nodes || []).some((n: any) => submitted.has(n.id))) {
+        throw new ValidationError('节点不属于当前画板，已拒绝保存', 'NODE_CANVAS_MISMATCH');
+      }
+    }
+  }
+  const parentOf = new Map<string, string | null>(
+    baseNodes
+      .filter((n) => !n?.deleted_at)
+      .map((n) => [n.id, (n?.data?.parentId as string | null) ?? null] as const)
+  );
+  for (const n of normalized.nodes) {
+    const pid = n?.data?.parentId ? String(n.data.parentId) : null;
+    parentOf.set(n.id, pid === n.id ? null : pid);
+  }
+  assertAcyclicParentMap(parentOf);
+
+  const { ordered, repairedNodeIds } = sortNodesParentFirst(normalized.nodes, liveNodeIds);
+
+  const deletedNodeSet = new Set(data.deletedNodeIds || []);
+  const deletedEdgeSet = new Set(data.deletedEdgeIds || []);
+  const ignoredNodeIds: string[] = [];
+  const mergedNodes = [...baseNodes];
+
+  for (const node of ordered) {
+    const idx = mergedNodes.findIndex((n) => n.id === node.id);
+    if (idx >= 0 && mergedNodes[idx]?.deleted_at) {
+      ignoredNodeIds.push(node.id); // 删除胜出：墓碑行不得复活
+      continue;
+    }
+    if (idx >= 0) mergedNodes[idx] = node;
+    else mergedNodes.push(node);
+  }
+
+  // 节点墓碑 + 级联边墓碑（先于边 upsert，保证同批「既带又删」以删除收场）
+  const tombstonedNow = new Set<string>();
+  if (deletedNodeSet.size > 0) {
+    for (let i = 0; i < mergedNodes.length; i++) {
+      const n = mergedNodes[i];
+      if (deletedNodeSet.has(n.id) && !n.deleted_at) {
+        mergedNodes[i] = { ...n, deleted_at: now };
+        tombstonedNow.add(n.id);
+      }
+    }
+  }
+
+  const mergedEdges = [...baseEdges];
+  const edgeTouched = (e: any): boolean =>
+    deletedEdgeSet.has(e.id) ||
+    (!e.deleted_at && (tombstonedNow.has(String(e.source)) || tombstonedNow.has(String(e.target))));
+  for (let i = 0; i < mergedEdges.length; i++) {
+    const e = mergedEdges[i];
+    if (e.deleted_at) continue;
+    if (edgeTouched(e)) mergedEdges[i] = { ...e, deleted_at: now };
+  }
+
+  const liveAfter = new Set<string>();
+  for (const n of mergedNodes) if (!n.deleted_at && !tombstonedNow.has(n.id)) liveAfter.add(n.id);
+
+  for (const edge of normalized.edges) {
+    if (!edge?.source || !edge?.target) continue;
+    if (!liveAfter.has(String(edge.source)) || !liveAfter.has(String(edge.target))) continue;
+    const idx = mergedEdges.findIndex((e) => e.id === edge.id);
+    if (idx >= 0 && mergedEdges[idx]?.deleted_at) continue; // 删除胜出
+    if (idx >= 0) mergedEdges[idx] = edge;
+    else mergedEdges.push(edge);
+  }
+
   const record: CanvasRecord = {
     id: data.id,
     user_id: existingUserId || userId,
-    title: data.title,
-    description: data.description,
-    viewport: vp,
-    defaultModel: data.defaultModel || '',
-    enableWebSearch: data.enableWebSearch ?? true,
+    title: data.title ?? existing?.title ?? '未命名思维探索',
+    description: data.description ?? existing?.description,
+    viewport: data.viewport ?? existing?.viewport ?? vp,
+    defaultModel: data.defaultModel ?? existing?.defaultModel ?? '',
+    enableWebSearch: data.enableWebSearch ?? existing?.enableWebSearch ?? true,
     createdAt: existing?.createdAt || now,
     updatedAt: now,
-    nodes: normalized.nodes,
-    edges: normalized.edges,
-    nodeCount: normalized.nodes.length,
-    edgeCount: normalized.edges.length,
+    nodes: mergedNodes,
+    edges: mergedEdges,
+    nodeCount: mergedNodes.filter((n) => !n.deleted_at).length,
+    edgeCount: mergedEdges.filter((e) => !e.deleted_at).length,
+    saveMode: 'merge',
+    ignoredNodeIds,
+    repairedNodeIds,
   };
   inMemoryStore.canvases.set(data.id, record);
   return record;

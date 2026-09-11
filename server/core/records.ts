@@ -125,6 +125,12 @@ export interface CanvasRecord {
   edges?: any[];
   /** 画布软删除时间戳（非空 = 已删除；与 F4 用户注销 deleted_at 口径一致） */
   deleted_at?: string | null;
+  /** ADR-0017：本次写入走的路径（协议分流），回执给客户端便于排障与埋点 */
+  saveMode?: 'replace' | 'merge';
+  /** 合并写入回执：被墓碑守卫拒绝的节点 id（删除胜出，陈旧设备不得复活） */
+  ignoredNodeIds?: string[];
+  /** 合并写入回执：父节点不可达、parentId 被置空的节点 id */
+  repairedNodeIds?: string[];
 }
 
 /** Spec L1 / ADR-0015：单层画板分组（folders 双模映射） */
