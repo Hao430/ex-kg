@@ -32,6 +32,7 @@ import { buildAncestorContext } from '../../lib/context';
 import { onSyncState } from '../../lib/sync-queue';
 import { saveBoard, StoredBoard, deduplicateNodes, deduplicateEdges } from '../../lib/storage';
 import { canCreate, markPendingCreate } from '../../lib/quota-store';
+import { extractSuggestions, getFallbackSuggestions } from '../../lib/suggestions';
 import { NodeActionsContext, NodeActionsContextValue } from '../../context/NodeActionsContext';
 import { useAuth } from '../../context/AuthContext';
 import { useRenderMonitor } from '../../hooks/useRenderMonitor';
@@ -258,15 +259,6 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       return '请求频次较高，请稍候再试。';
     }
     return str;
-  };
-
-  // Helper to generate domain fallback suggestions if model didn't provide any
-  const getFallbackSuggestions = (topic: string): string[] => {
-    const clean = topic.replace(/^[请问如何么什]+/, '').trim() || '当前主题';
-    return [
-      `围绕「${clean}」的核心底层机理与数学/物理本质是什么？`,
-      `在实际工程应用与软硬件实现中，「${clean}」面临哪些关键瓶颈与权衡？`,
-    ];
   };
 
   // Automatically spawn suggested question nodes connected to parent
@@ -545,8 +537,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
                   rawAccumulatedText += parsed.text;
 
                   // Separate answer from suggestions in real-time
-                  const parts = rawAccumulatedText.split('---SUGGESTIONS---');
-                  const currentAnswer = parts[0].trimEnd();
+                  const currentAnswer = extractSuggestions(rawAccumulatedText).answer.trimEnd();
 
                   // Stream answer update into card
                   setNodes((nds) =>
@@ -574,14 +565,8 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
         }
 
         // Stream finished: finalize answer and parse suggestions
-        const parts = rawAccumulatedText.split('---SUGGESTIONS---');
-        const finalAnswer = parts[0].trim();
-        const suggestionsPart = parts[1] || '';
-
-        let parsedSuggestions = suggestionsPart
-          .split('\n')
-          .map((s) => s.replace(/^[\d\.\-\*•\s]+/, '').trim())
-          .filter((s) => s.length > 3 && !s.includes('SUGGESTIONS'));
+        const { answer: finalAnswer, suggestions: modelSuggestions } = extractSuggestions(rawAccumulatedText);
+        let parsedSuggestions = modelSuggestions;
 
         if (parsedSuggestions.length === 0) {
           parsedSuggestions = getFallbackSuggestions(questionText);
