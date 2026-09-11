@@ -25,6 +25,8 @@ export const BOARD_BLOB_PREFIX = 'deepdive_board_';
 export const LEGACY_BOARD_BLOB_PREFIX = 'rabbithole_board_';
 /** 服务端版本号小键前缀（全局） */
 export const SERVER_TS_PREFIX = 'deepdive_board_server_ts_';
+/** 节点级合并基线小键前缀（全局；ADR-0017 差分用，随画板删除一并清理，见 purgeBoardBlobs） */
+export const BOARD_BASE_PREFIX = 'deepdive_board_base_';
 
 let activeScope: ScopeKey = 'guest';
 
@@ -176,6 +178,7 @@ export function purgeBoardBlobs(boardId: string): void {
     store.removeItem(`${BOARD_BLOB_PREFIX}${boardId}`);
     store.removeItem(`${LEGACY_BOARD_BLOB_PREFIX}${boardId}`);
     store.removeItem(`${SERVER_TS_PREFIX}${boardId}`);
+    store.removeItem(`${BOARD_BASE_PREFIX}${boardId}`);
   } catch {
     /* ignore */
   }

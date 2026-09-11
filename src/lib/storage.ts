@@ -13,6 +13,7 @@ import { enqueue, dequeue, enqueueDelete, enqueueMeta, setSyncExecutor, setDelet
 import type { SyncExecOpts } from './sync-queue';
 import * as boardScope from './board-scope';
 import * as boardStore from './board-store';
+import * as boardOps from './board-ops';
 import * as quotaStore from './quota-store';
 import { trackEvent } from './analytics';
 import { uuidv7 } from './uuid';
@@ -237,6 +238,9 @@ export function adoptServerVersion(
     return { adopt: false, conflictCopyId };
   }
   boardStore.markDirty(id, false);
+  // 本地画面此刻就是服务端这份内容，基线跟着对齐（不变量：基线 = 本地画面继承的那份状态）。
+  // 不对齐的话，下次保存会把「服务端这段时间的改动」整批当成本设备改动重推一遍。
+  boardOps.advanceBase(id, serverBoard);
   return { adopt: true, conflictCopyId };
 }
 
@@ -269,11 +273,37 @@ export async function syncBoardToBackend(
   opts?: SyncExecOpts
 ): Promise<'ok' | 'conflict' | 'fail'> {
   const keepalive = opts?.keepalive === true;
+
+  // 差分基线 = 本设备已知与服务端一致的那份内容。缺失时补一次（升级到本版、或基线键被清）
+  let base = boardOps.readBase(board.id);
+  if (!base) {
+    // 页面卸载补传不做额外 GET；此刻也**绝不能**退化成整板 upsert——那正是
+    // 「挂机设备覆盖他人改动」的机理。留在持久化队列里下次启动续跑。
+    if (keepalive) return 'fail';
+    base = await boardOps.seedBaseFromServer(board.id);
+  }
+  const ops = boardOps.computeOps(base, board);
+  if (boardOps.isEmptyOps(ops)) {
+    // 没有任何会被持久化的字段真的变了 → 不发请求。
+    // 打开画板时 React Flow 会给每个节点发一次 dimensions（不进投影），旧实现在这里会平白
+    // 整板重传一次——「别人正在编辑，我这边一打开就把他覆盖掉」的成因之一。
+    return 'ok';
+  }
+
   const payload = JSON.stringify({
-    title: board.name,
-    viewport: board.viewport,
-    nodes: board.nodes,
-    edges: board.edges,
+    // ADR-0017 协议分流：**必须显式给版本号**。旧客户端的整板 payload 与本客户端的
+    // 「本次改动」结构上无法区分，且空数组在两边语义相反（清空 vs 无删除）。
+    protocolVersion: 2,
+    // 缺省 = 本次没改（服务端 COALESCE 保留原值）。整字段 LWW 只在真的改了时才上行，
+    // 否则挂机设备一保存就把别处的改名/视口冲回旧值。
+    title: ops.title,
+    viewport: ops.viewport,
+    nodes: ops.nodes,
+    edges: ops.edges,
+    deletedNodeIds: ops.deletedNodeIds,
+    deletedEdgeIds: ops.deletedEdgeIds,
+    // 合并模式下服务端**刻意不校验**这个画板级乐观锁（挂机设备改一个节点照样得能保存），
+    // 保留在请求里只是为了协议字段不缩水，将来若要做节点级 CAS 可直接复用。
     expectedUpdatedAt: board.serverUpdatedAt,
   });
   // keepalive 有体积上限：超限时跳过本次补传，留给持久化队列下次续跑（不冒险发注定失败的请求）
@@ -347,6 +377,12 @@ export async function syncBoardToBackend(
       board.serverUpdatedAt = body.canvas.updatedAt;
       persistServerUpdatedAt(board.id, body.canvas.updatedAt);
     }
+    // 基线推进为**本次已上行的那份快照**（不是当前画面）：飞行期间用户又改的那些，
+    // 与基线仍然不同，会被下一轮保存照常上行。反过来用当前画面推基线就会漏掉它们。
+    boardOps.advanceBase(board.id, board);
+    // 墓碑守卫拒绝的 id（删除胜出）：本次不算冲突，但要让观测看得见
+    const ignored = Array.isArray(body?.canvas?.ignoredNodeIds) ? body.canvas.ignoredNodeIds.length : 0;
+    if (ignored > 0) trackEvent('canvas_merge_ignored', { count: ignored });
     rememberConflictCopy(board.id, null); // 保存成功：本次冲突了结，下次冲突另起一块副本
     return 'ok';
   }
@@ -542,6 +578,12 @@ export async function fetchBoardFromServer(boardId: string): Promise<StoredBoard
       try {
         persistBoard(board, { dirty: false });
         persistServerUpdatedAt(board.id, board.serverUpdatedAt!);
+        // 基线 = 服务端刚回的这份内容。**只在真的采用它时才推进**，这是一条不变式：
+        // 基线必须是「本地画面所继承的那份状态」。本地有未同步改动而此处不采用时，本地
+        // 画面继承的是更早那份基线，此刻把基线换成服务端版本，本设备缺的那些他端节点就会
+        // 在下次保存时被算成「本地删除」，反手把他人的内容删掉。
+        // （采用服务端版本的路径由 adoptServerVersion 推进基线。）
+        boardOps.writeBase(board.id, boardOps.baseFromServerPayload(data));
       } catch (e) {
         // 服务端内容已取到，只是离线副本写不下去（配额/隐私模式）：不阻断本次打开，但要上报
         boardScope.reportPersistFailure('board-hydrate', e);

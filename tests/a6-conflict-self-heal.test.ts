@@ -102,6 +102,7 @@ const { syncBoardToBackend, fetchBoardFromServer, saveBoard, loadBoard, loadBoar
   await import('../src/lib/storage.ts');
 const { flush, resetForTest, setBackoffBaseForTest } = await import('../src/lib/sync-queue.ts');
 const boardStore = await import('../src/lib/board-store.js');
+const boardOps = await import('../src/lib/board-ops.ts');
 
 const BOARD_ID = 'conflict-board-1';
 const SMALL_KEY = `deepdive_board_server_ts_${BOARD_ID}`;
@@ -147,6 +148,10 @@ const serverBoardPayload = (updatedAt: string, nodes: any[] = [], id = BOARD_ID)
 function seedDirtyLocal(base: string, nodes: any[] = []): void {
   store.set(BLOB_KEY, JSON.stringify(makeBoard(base, nodes)));
   store.set(SMALL_KEY, base);
+  // 有服务端版本号的画板，必然在「上次保存成功」或「上次拉取服务端版」时写过差分基线
+  //（ADR-0017）。置空基线 = 板上内容全是本设备新增，正是这些用例要的「本地未同步改动」；
+  // 顺带避免保存路径去补拉一次基线（那是 tests/h3-board-ops 的用例）。
+  boardOps.writeBase(BOARD_ID, { nodes: {}, edges: {} });
   boardStore.bindScope('u1');
   boardStore.upsertLocal(
     { id: BOARD_ID, name: '冲突画板', updatedAt: Date.now(), nodeCount: nodes.length },
@@ -351,6 +356,39 @@ describe('A6 版本冲突收敛（服务端为准）', () => {
     assert.ok(result.conflictCopyId, '必须回传副本 id 供上层告知用户');
     assert.deepEqual(loadBoard(result.conflictCopyId!)?.nodes, [LOCAL_NODE]);
     assert.deepEqual(loadBoard(BOARD_ID)?.nodes, [SERVER_NODE]);
+  });
+
+  test('本地有未同步改动时，拉取服务端内容不推进差分基线', async () => {
+    seedDirtyLocal(LOCAL_BASE, [LOCAL_NODE]); // 本地脏（画面继承的是更早那份基线）
+    scriptGet(BOARD_ID, [{ status: 200, body: serverBoardPayload(SERVER_AHEAD, [SERVER_NODE]) }]);
+
+    const loaded = await fetchBoardFromServer(BOARD_ID);
+    assert.ok(loaded);
+
+    const base = boardOps.readBase(BOARD_ID)!;
+    assert.ok(
+      !base.nodes[SERVER_NODE.id],
+      '本地画面里根本没有他端这个节点，基线却记上它 → 下次保存会把它算成「本地删除」，' +
+        '反手删掉别人刚写的内容'
+    );
+  });
+
+  test('采用服务端版后基线对齐服务端内容（下次保存不再把他端改动重推一遍）', () => {
+    seedDirtyLocal(LOCAL_BASE, [LOCAL_NODE]);
+
+    const result = adoptServerVersion({
+      ...makeBoard(SERVER_AHEAD, [SERVER_NODE]),
+      serverUpdatedAt: SERVER_AHEAD,
+    } as any);
+    assert.equal(result.adopt, true);
+
+    const base = boardOps.readBase(BOARD_ID)!;
+    assert.ok(base.nodes[SERVER_NODE.id], '基线必须等于刚采用的这份服务端内容');
+    assert.ok(!base.nodes[LOCAL_NODE.id], '本地未同步版已挪进副本，不得留在基线里');
+    assert.ok(
+      boardOps.isEmptyOps(boardOps.computeOps(base, loadBoard(BOARD_ID) as any)),
+      '基线若不对齐，刚采用的云端内容会在下次保存时被整批当成自己的改动重推（rev 空转 + 覆盖风险）'
+    );
   });
 
   test('fetchBoardFromServer 成功 → 权威小键同步写入服务端版本', async () => {
