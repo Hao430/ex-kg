@@ -191,6 +191,13 @@ jobs:
           tail -4 /www/wwwlogs/nodejs/ex_kg.log
           grep -q "listening on http://0.0.0.0:2998" /www/wwwlogs/nodejs/ex_kg.log \
             || { echo "启动日志未见 listening 行"; tail -30 /www/wwwlogs/nodejs/ex_kg.log; exit 1; }
+          # schema 迁移校验（手册 §8）：initDbSchema 失败只打日志、不阻断监听，
+          # health/首页/bundle 验收照样过 —— 必须显式拦截最近一次启动的迁移结果。
+          SCHEMA_LINE=$(grep -E "verified and initialized|Failed to initialize PostgreSQL schema" /www/wwwlogs/nodejs/ex_kg.log | tail -1)
+          case "$SCHEMA_LINE" in
+            *"verified and initialized"*) echo "schema ok";;
+            *) echo "数据库 schema 未成功初始化（缺日志或静默失败）"; echo "${SCHEMA_LINE:-<日志中无 schema 结果行>}"; tail -30 /www/wwwlogs/nodejs/ex_kg.log; exit 1;;
+          esac
           REMOTE
 
       - name: 发布验收（health / 首页 / 新 bundle）
