@@ -6,9 +6,10 @@
  *    - 更新保存不产生 canvas_create（借 quotaGate 仅新建触发的语义做旗标）
  * 2. /api/db/status canvasCount 排除软删画布（server/core/db-status.ts）：
  *    - 与 admin overview totalCanvases 口径对齐；删除后计数回落
- * 3. conflict_healed 前端埋点（src/lib/storage.ts + src/lib/analytics.ts）：
- *    - 409 静默自愈成功（attempt>1）→ umami track('conflict_healed', {attempt})
- *    - 无冲突直连成功 / 自愈耗尽降级 → 均不上报
+ * 3. canvas_save_conflict 前端埋点（src/lib/storage.ts + src/lib/analytics.ts）：
+ *    - 409 收敛时上报 {adopted}：1 = 已采用服务端版（本地版另存了冲突副本），0 = 取服务端内容失败
+ *    - 无冲突直连成功 / keepalive 补传（不做冲突决策）→ 均不上报
+ *    2026-09-11：旧的 conflict_healed 埋点随「409 静默自愈（本地版胜出）」一并移除
  * 前端部分 stub window/localStorage/fetch，模式同 a6（node 环境动态 import 前端模块）。
  */
 import { test, describe, before, after, beforeEach } from 'node:test';
@@ -146,7 +147,7 @@ describe('S2 画布统计链路（服务端）', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 前端：conflict_healed 埋点（stub window/localStorage/fetch，模式同 a6）
+// 前端：canvas_save_conflict 埋点（stub window/localStorage/fetch，模式同 a6）
 // ---------------------------------------------------------------------------
 const store = new Map<string, string>();
 const tracked: Array<{ name: string; data?: any }> = [];
@@ -196,48 +197,54 @@ function makeBoard(): any {
   return { id: 's2-fe-board', name: '统计', updatedAt: Date.now(), nodes: [], edges: [] };
 }
 
-describe('S2 conflict_healed 前端埋点', () => {
+describe('S2 canvas_save_conflict 前端埋点', () => {
   beforeEach(() => {
     tracked.length = 0;
     fetchScript = [];
     store.clear();
   });
 
-  test('409 后重试成功 → track("conflict_healed", {attempt: 2})', async () => {
+  test('409 收敛成功（采用服务端版）→ track("canvas_save_conflict", {adopted: 1})', async () => {
     fetchScript = [
       { status: 409, body: { error: 'conflict', latest_updated_at: '2026-09-09T00:00:00.000Z' } },
-      { status: 200, body: { canvas: { updatedAt: '2026-09-09T00:00:01.000Z' } } },
+      {
+        status: 200,
+        body: {
+          id: 's2-fe-board',
+          title: '统计',
+          updatedAt: '2026-09-09T00:00:01.000Z',
+          viewport: { x: 0, y: 0, zoom: 1 },
+          nodes: [],
+          edges: [],
+        },
+      },
     ];
-    const result = await syncBoardToBackend(makeBoard());
-    assert.equal(result, 'ok');
-    const healed = tracked.filter((t) => t.name === 'conflict_healed');
-    assert.equal(healed.length, 1);
-    assert.deepEqual(healed[0].data, { attempt: 2 });
+    assert.equal(await syncBoardToBackend(makeBoard()), 'conflict');
+    const hits = tracked.filter((t) => t.name === 'canvas_save_conflict');
+    assert.equal(hits.length, 1);
+    assert.deepEqual(hits[0].data, { adopted: 1 });
   });
 
   test('无冲突直连成功 → 不上报', async () => {
     fetchScript = [{ status: 200, body: { canvas: { updatedAt: '2026-09-09T00:00:00.000Z' } } }];
     assert.equal(await syncBoardToBackend(makeBoard()), 'ok');
-    assert.equal(tracked.filter((t) => t.name === 'conflict_healed').length, 0);
+    assert.equal(tracked.filter((t) => t.name === 'canvas_save_conflict').length, 0);
   });
 
-  test('自愈重试耗尽（3 次 409）→ 降级提示路径，不上报 healed', async () => {
-    const latest = '2026-09-09T00:00:00.000Z';
-    fetchScript = [
-      { status: 409, body: { latest_updated_at: latest } },
-      { status: 409, body: { latest_updated_at: latest } },
-      { status: 409, body: { latest_updated_at: latest } },
-    ];
-    assert.equal(await syncBoardToBackend(makeBoard()), 'conflict');
-    assert.equal(tracked.filter((t) => t.name === 'conflict_healed').length, 0);
-  });
-
-  test('409 后重试遇网络失败 → fail，不上报 healed', async () => {
+  test('409 但取服务端内容失败 → fail，埋点 adopted:0（待退避重试）', async () => {
     fetchScript = [
       { status: 409, body: { latest_updated_at: '2026-09-09T00:00:00.000Z' } },
       { networkError: true },
     ];
     assert.equal(await syncBoardToBackend(makeBoard()), 'fail');
-    assert.equal(tracked.filter((t) => t.name === 'conflict_healed').length, 0);
+    const hits = tracked.filter((t) => t.name === 'canvas_save_conflict');
+    assert.equal(hits.length, 1);
+    assert.deepEqual(hits[0].data, { adopted: 0 });
+  });
+
+  test('keepalive 补传遇 409 → 不做冲突决策，不埋点', async () => {
+    fetchScript = [{ status: 409, body: { latest_updated_at: '2026-09-09T00:00:00.000Z' } }];
+    assert.equal(await syncBoardToBackend(makeBoard(), { keepalive: true }), 'fail');
+    assert.equal(tracked.filter((t) => t.name === 'canvas_save_conflict').length, 0);
   });
 });

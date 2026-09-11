@@ -17,6 +17,7 @@ import {
   exportBoardToMarkdown,
   fetchBoardFromServer,
   fetchBoardListFromServer,
+  adoptServerVersion,
   StoredBoard,
 } from './lib/storage';
 import { exportCanvasAsPng } from './lib/canvas-image-export';
@@ -76,6 +77,9 @@ function createStarterRootNode(): Node[] {
 }
 
 /** 自动命名：视为「默认名」的画板名（命中才允许 LLM 自动命名，之后永不覆盖） */
+/** 采用服务端版、把本地未同步改动另存副本时的统一文案（三个调用点共用，别各写一份） */
+const CONFLICT_COPY_TOAST = '画板已在其他设备被修改，已载入云端最新版本；你的改动已另存为一块「(冲突副本)」画板';
+
 const DEFAULT_BOARD_NAMES = ['未命名思维画布', '未命名思维探索', '新建思维画布'];
 const isDefaultBoardName = (name: string): boolean =>
   DEFAULT_BOARD_NAMES.includes(name) || /^探索课题 #\d+$/.test(name);
@@ -233,10 +237,23 @@ function MainApp() {
   useEffect(() => {
     currentBoardIdRef.current = currentBoardId;
   }, [currentBoardId]);
+  // 冲突收敛后需要刷新当前画板画面；applyLoadedBoard 定义在组件靠后位置，
+  // 用 ref 转一手，避免在 effect 依赖数组里引用它而踩 TDZ。
+  const applyLoadedBoardRef = useRef<((board: StoredBoard) => void) | null>(null);
+  // 采用服务端版会把本地未同步改动挪进「(冲突副本)」——这必须在每个调用点告诉用户，
+  // 否则用户只会发现画板列表里莫名多出一块，或者以为改动被吃掉了（不许静默挪走）。
+  const notifyConflictCopy = (conflictCopyId?: string) => {
+    if (conflictCopyId) showToast(CONFLICT_COPY_TOAST);
+  };
   const syncIdleTimerRef = useRef<number | null>(null);
   useEffect(() => {
     const onConflict = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { message?: string; code?: string };
+      const detail = (e as CustomEvent).detail as {
+        boardId?: string;
+        message?: string;
+        code?: string;
+        conflictCopyId?: string;
+      };
       // 配额/会员类：引导升级，草稿保留待升级后自动补传
       if (detail?.code === 'BOARD_LIMIT_REACHED' || detail?.code === 'VIP_EXPIRED') {
         openRechargeModal(detail?.message || '免费版画板额度已用完，升级 Pro 解锁无限画板');
@@ -248,6 +265,22 @@ function MainApp() {
       }
       if (detail?.code === 'UNAUTHORIZED') {
         showToast(detail?.message || '登录状态已失效，请重新登录');
+        return;
+      }
+      // 真冲突已收敛：本地未同步版另存了「(冲突副本)」，原画板采用了服务端当前版本。
+      // 冲突的若正是当前画板，必须刷新画面——否则内存里还是本地旧内容，下一次防抖自动
+      // 保存会带着新鲜版本号把它再推上去，把刚采用的云端改动又覆盖掉（回到「谁后同步谁赢」）。
+      if (detail?.conflictCopyId && detail.boardId === currentBoardIdRef.current) {
+        if (saveTimeoutRef.current !== null) {
+          window.clearTimeout(saveTimeoutRef.current);
+          saveTimeoutRef.current = null;
+        }
+        showToast('画板已在其他窗口被修改，已载入云端最新版本；你的改动已另存为新画板');
+        void fetchBoardFromServer(detail.boardId).then((loaded) => {
+          if (loaded && currentBoardIdRef.current === loaded.id) {
+            applyLoadedBoardRef.current?.(loaded);
+          }
+        });
         return;
       }
       showToast(detail?.message || '画板已在其他窗口被修改，请刷新后重试');
@@ -323,6 +356,10 @@ function MainApp() {
     setNodeCount(loaded.nodes.length);
     setBoardReady(true);
   }, []);
+
+  useEffect(() => {
+    applyLoadedBoardRef.current = applyLoadedBoard;
+  }, [applyLoadedBoard]);
 
   /** 服务端与本地均无内容时：给引导节点，绝不复用被删画布的内容 */
   const applyStarterBoard = useCallback(
@@ -436,7 +473,12 @@ function MainApp() {
       });
       void fetchBoardFromServer(activeId).then((loaded) => {
         if (cancelled || seq !== loadSeqRef.current || !loaded) return;
-        if (boardStore.isDirty(loaded.id)) return; // 本地未同步改动优先
+        // 本地有未同步改动时既不无条件本地胜出（旧行为，会挡住他端改动），
+        // 也不无条件服务端胜出（会抹掉还没传上去的本地编辑）：
+        // adoptServerVersion 区分「本地领先，等上传」与「真冲突，本地版另存副本后采用服务端版」
+        const { adopt, conflictCopyId } = adoptServerVersion(loaded);
+        if (!adopt) return;
+        notifyConflictCopy(conflictCopyId);
         applyLoadedBoard(loaded);
       });
     };
@@ -503,10 +545,11 @@ function MainApp() {
       const cached = loadBoard(nextId);
       if (cached) {
         applyLoadedBoard(cached);
-      } else if (user && !boardStore.isDirty(nextId)) {
+      } else if (user) {
         const loaded = await fetchBoardFromServer(nextId);
         if (seq !== loadSeqRef.current) return; // 期间用户已手动切换画板，丢弃本次结果
-        if (loaded && !boardStore.isDirty(loaded.id)) applyLoadedBoard(loaded);
+        // 走到这里说明本地无该画板缓存，不存在「本地未同步内容被覆盖」的风险，只做冲突裁决
+        if (loaded && adoptServerVersion(loaded).adopt) applyLoadedBoard(loaded);
         else applyStarterBoard(nextId, remaining[0].name);
       } else {
         applyStarterBoard(nextId, remaining[0].name);
@@ -608,14 +651,18 @@ function MainApp() {
       applyLoadedBoard(cached);
       showToast(`已载入画板「${cached.name}」`);
     }
-    // 后台校验服务端版本（有未同步改动则本地版胜出，不覆盖）
-    if (user && (!cached || !boardStore.isDirty(targetId))) {
+    // 后台校验服务端版本：有未同步改动时交给 adoptServerVersion 裁决
+    //（本地领先 → 保留本地画面等上传；真冲突 → 本地版另存副本后采用服务端版）
+    if (user) {
       const loaded = await fetchBoardFromServer(targetId);
-      if (seq !== loadSeqRef.current || !loaded) {
-        if (!cached && seq === loadSeqRef.current) showToast('画板加载失败，请稍后重试');
+      if (seq !== loadSeqRef.current) return;
+      if (!loaded) {
+        if (!cached) showToast('画板加载失败，请稍后重试');
         return;
       }
-      if (boardStore.isDirty(loaded.id)) return;
+      const { adopt, conflictCopyId } = adoptServerVersion(loaded);
+      if (!adopt) return; // 本地领先：不动画面
+      notifyConflictCopy(conflictCopyId);
       applyLoadedBoard(loaded);
       if (!cached) showToast(`已载入画板「${loaded.name}」`);
     } else if (!cached) {

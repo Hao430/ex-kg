@@ -15,6 +15,7 @@ import * as boardScope from './board-scope';
 import * as boardStore from './board-store';
 import * as quotaStore from './quota-store';
 import { trackEvent } from './analytics';
+import { uuidv7 } from './uuid';
 
 const STORAGE_BOARD_PREFIX = boardScope.BOARD_BLOB_PREFIX;
 const LEGACY_STORAGE_BOARD_PREFIX = boardScope.LEGACY_BOARD_BLOB_PREFIX;
@@ -129,13 +130,10 @@ function persistBoard(cleanedBoard: StoredBoard, opts?: { dirty?: boolean }): vo
 /**
  * Sync board to backend API（三态：ok / conflict / fail，供重试队列判定）
  * - 携带 serverUpdatedAt 作为乐观锁版本（Spec A4）
- * - 409 冲突静默自愈：用响应的 latest_updated_at 推进版本号、原样重发本地内容
- *   （本地版胜出、覆盖服务端，用户无感知）；上限 MAX_CONFLICT_ATTEMPTS 次，
- *   耗尽或响应异常才派发 deepdive:canvas-save-conflict 事件（App 层 toast/弹窗）。
+ * - 409 冲突**不再自愈**：服务端本就正确检测到了冲突，是客户端在否决它。
+ *   旧行为（本地版胜出）的机理与代价见 `preserveLocalAsConflictCopy` 注释。
  * - 403/404 带 code：BOARD_LIMIT_REACHED/VIP_EXPIRED 保留草稿待升级；NOT_FOUND 收敛幽灵板。
  */
-/** 409 静默自愈的总尝试次数（含首次） */
-const MAX_CONFLICT_ATTEMPTS = 3;
 
 /**
  * keepalive 请求体上限：浏览器对 keepalive/sendBeacon 有 ~64KB 限制，超限会直接抛错。
@@ -143,15 +141,115 @@ const MAX_CONFLICT_ATTEMPTS = 3;
  */
 const KEEPALIVE_MAX_BYTES = 60_000;
 
+/** 冲突副本命名后缀 */
+const CONFLICT_COPY_SUFFIX = ' (冲突副本)';
+
+/** 冲突副本复用表键：源画板 id → 副本 id（持久化，防重试/刷新后重复堆积副本） */
+function conflictCopyKey(boardId: string): string {
+  return `deepdive_conflict_copy_${boardId}`;
+}
+
+function readConflictCopyId(boardId: string): string | null {
+  try {
+    return localStorage.getItem(conflictCopyKey(boardId));
+  } catch {
+    return null;
+  }
+}
+
+function rememberConflictCopy(boardId: string, copyId: string | null): void {
+  try {
+    if (copyId) localStorage.setItem(conflictCopyKey(boardId), copyId);
+    else localStorage.removeItem(conflictCopyKey(boardId));
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * 冲突收敛之一：把本地未同步版另存为一块新画板「(冲突副本)」，用户的改动不丢。
+ *
+ * 同一轮冲突复用同一个副本 id（重试期间的编辑刷新副本内容），不重复堆积新画板；
+ * 源画板保存成功后清空复用表，下一次冲突才另起一块。
+ *
+ * @returns 副本 id；本地无内容或落盘失败返回 null
+ */
+function preserveLocalAsConflictCopy(boardId: string): string | null {
+  const local = loadBoard(boardId);
+  if (!local) return null;
+  const copyId = readConflictCopyId(boardId) ?? uuidv7();
+  const copy: StoredBoard = {
+    id: copyId,
+    name: `${local.name}${CONFLICT_COPY_SUFFIX}`,
+    updatedAt: Date.now(),
+    nodes: local.nodes,
+    edges: local.edges,
+    viewport: local.viewport,
+    // 刻意不继承 serverUpdatedAt：副本是全新画板，首次上传走新建
+    //（带上源画板的版本号会被服务端判 409）
+  };
+  try {
+    persistBoard(copy, { dirty: true });
+  } catch (e) {
+    boardScope.reportPersistFailure('conflict-copy', e);
+    return null;
+  }
+  rememberConflictCopy(boardId, copyId);
+  enqueue(copyId); // 后台补传，失败走退避重试
+  return copyId;
+}
+
+export interface AdoptResult {
+  /** true = 调用方可以拿服务端内容覆盖画面 */
+  adopt: boolean;
+  /** 本轮把本地未同步版另存了副本时给出副本 id，供上层明确告知用户（不要静默挪走改动） */
+  conflictCopyId?: string;
+}
+
+/**
+ * 采用服务端版本前的冲突裁决（页面加载/切换路径用）。
+ *
+ * 本地 dirty 有两种成因，必须区分开：
+ * - **本地领先**：只是还没传上去（服务端 updatedAt 仍等于本地记录的基线）→ 保留本地等上传。
+ *   此时拿服务端内容覆盖，会直接抹掉用户刚做的改动。
+ * - **真冲突**：服务端已被他端推进（基线对不上）→ 本地版另存冲突副本，再采用服务端版。
+ *
+ * @param opts.force 已知服务端刚以 409 否决了本地基线，不必再比对基线（保存路径用）
+ */
+export function adoptServerVersion(
+  serverBoard: StoredBoard,
+  opts?: { force?: boolean }
+): AdoptResult {
+  const id = serverBoard.id;
+  if (!boardStore.isDirty(id) && !opts?.force) return { adopt: true }; // 无未同步改动，已由 fetchBoardFromServer 落盘
+  if (!opts?.force) {
+    const base = loadBoard(id)?.serverUpdatedAt;
+    // 从未同步过（纯本地草稿）或基线一致：本地领先，保留本地等上传
+    if (!base || base === serverBoard.serverUpdatedAt) return { adopt: false };
+  }
+  const conflictCopyId = preserveLocalAsConflictCopy(id) ?? undefined; // 必须先于覆盖——读的是本地未同步内容
+  try {
+    persistBoard(serverBoard, { dirty: false });
+    if (serverBoard.serverUpdatedAt) persistServerUpdatedAt(id, serverBoard.serverUpdatedAt);
+  } catch (e) {
+    // 落盘失败则本地副本仍是旧内容，此时采用服务端版会让下次保存把旧内容推上去覆盖云端 → 不采用
+    boardScope.reportPersistFailure('board-adopt', e);
+    return { adopt: false, conflictCopyId };
+  }
+  boardStore.markDirty(id, false);
+  return { adopt: true, conflictCopyId };
+}
+
 /** keepalive 体积按真实 UTF-8 字节数判断（中文正文下 字符数 与 字节数 差 3 倍） */
 const utf8 = new TextEncoder();
 
-/** 冲突/失败提示事件统一派发（detail 向后兼容，新增 code 字段） */
+/** 冲突/失败提示事件统一派发（detail 向后兼容，新增 code / conflictCopyId 字段） */
 function dispatchConflictEvent(
   boardId: string,
   message?: string,
   latestUpdatedAt?: string,
-  code?: string
+  code?: string,
+  conflictCopyId?: string
 ): void {
   window.dispatchEvent(
     new CustomEvent('deepdive:canvas-save-conflict', {
@@ -160,6 +258,7 @@ function dispatchConflictEvent(
         message,
         latestUpdatedAt,
         code,
+        conflictCopyId,
       },
     })
   );
@@ -170,96 +269,86 @@ export async function syncBoardToBackend(
   opts?: SyncExecOpts
 ): Promise<'ok' | 'conflict' | 'fail'> {
   const keepalive = opts?.keepalive === true;
-  // 页面卸载前的最后补传：只试一次，且不做冲突自愈（冲突决策留给下次启动的正常链路）
-  const maxAttempts = keepalive ? 1 : MAX_CONFLICT_ATTEMPTS;
-  let expected = board.serverUpdatedAt;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const payload = JSON.stringify({
-      title: board.name,
-      viewport: board.viewport,
-      nodes: board.nodes,
-      edges: board.edges,
-      expectedUpdatedAt: expected,
-    });
-    // keepalive 有体积上限：超限时跳过本次补传，留给持久化队列下次续跑（不冒险发注定失败的请求）
-    if (keepalive && utf8.encode(payload).length > KEEPALIVE_MAX_BYTES) {
-      return 'fail';
-    }
-    let res: Response;
-    try {
-      res = await fetch(`/api/canvases/${encodeURIComponent(board.id)}/save`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        keepalive,
-        body: payload,
-      });
-    } catch (e) {
-      // 网络失败（含自愈重试中途）：交回 sync-queue 退避重试
-      return 'fail';
-    }
-
-    // 401 会话失效（如改密/重置密码后被踢下线）：重试无意义——提示重新登录并停止重试
-    if (res.status === 401) {
-      dispatchConflictEvent(board.id, '登录状态已失效，请重新登录后再保存画板', undefined, 'UNAUTHORIZED');
-      return 'conflict';
-    }
-
-    // 配额/权限类 403 为永久失败，重试无意义——弹升级窗/提示并保留草稿（Spec B1/B4）
-    if (res.status === 403) {
-      const body = await res.json().catch(() => null) as any;
-      dispatchConflictEvent(board.id, body?.error || '画板保存被拒绝', undefined, body?.code || 'FORBIDDEN');
-      return 'conflict';
-    }
-
-    // 404：画板已在其他设备软删/不存在——收敛幽灵板，停止重试风暴
-    if (res.status === 404) {
-      const body = await res.json().catch(() => null) as any;
-      boardStore.reconcileRemoteDeletion(board.id);
-      quotaStore.unmarkPendingCreate(board.id);
-      dispatchConflictEvent(board.id, body?.error || '画板已在其他设备被删除', undefined, 'NOT_FOUND');
-      return 'conflict';
-    }
-
-    // 409 冲突：静默自愈（本地版胜出）
-    if (res.status === 409) {
-      // 卸载前的补传不做冲突决策：自愈会以本地版覆盖服务端，必须走下次启动的正常链路
-      if (keepalive) return 'fail';
-      const body = await res.json().catch(() => null) as any;
-      const latest = body?.latest_updated_at;
-      // 降级 1：latest 缺失/非法 → 退回提示路径，不重试
-      if (typeof latest !== 'string' || !latest) {
-        dispatchConflictEvent(board.id, body?.error || '画板已在其他窗口被修改', undefined, 'CANVAS_SAVE_CONFLICT');
-        return 'conflict';
-      }
-      // 立即落服务端事实版本：即使本轮重试失败，下轮 executor 重跑也已带新鲜版本
-      board.serverUpdatedAt = latest;
-      persistServerUpdatedAt(board.id, latest);
-      // 降级 2：重试耗尽 → 退回提示路径
-      if (attempt === MAX_CONFLICT_ATTEMPTS) {
-        dispatchConflictEvent(board.id, body?.error || '画板已在其他窗口被修改', latest, 'CANVAS_SAVE_CONFLICT');
-        return 'conflict';
-      }
-      console.warn(
-        `[canvas-sync] 409 conflict, retrying with latest server version (${attempt}/${MAX_CONFLICT_ATTEMPTS}) for ${board.id}`
-      );
-      expected = latest; // 内容不变（本地版胜出），仅推进版本号重发
-      continue;
-    }
-
-    if (res.ok) {
-      const body = await res.json().catch(() => null) as any;
-      if (body?.canvas?.updatedAt) {
-        board.serverUpdatedAt = body.canvas.updatedAt;
-        persistServerUpdatedAt(board.id, body.canvas.updatedAt);
-      }
-      // 冲突自愈成功埋点（K4 扩展事件，attempt 为冲突发生次数，纯计数无 PII）
-      if (attempt > 1) {
-        trackEvent('conflict_healed', { attempt });
-      }
-      return 'ok';
-    }
+  const payload = JSON.stringify({
+    title: board.name,
+    viewport: board.viewport,
+    nodes: board.nodes,
+    edges: board.edges,
+    expectedUpdatedAt: board.serverUpdatedAt,
+  });
+  // keepalive 有体积上限：超限时跳过本次补传，留给持久化队列下次续跑（不冒险发注定失败的请求）
+  if (keepalive && utf8.encode(payload).length > KEEPALIVE_MAX_BYTES) {
     return 'fail';
+  }
+  let res: Response;
+  try {
+    res = await fetch(`/api/canvases/${encodeURIComponent(board.id)}/save`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      keepalive,
+      body: payload,
+    });
+  } catch (e) {
+    return 'fail'; // 网络失败：交回 sync-queue 退避重试
+  }
+
+  // 401 会话失效（如改密/重置密码后被踢下线）：重试无意义——提示重新登录并停止重试
+  if (res.status === 401) {
+    dispatchConflictEvent(board.id, '登录状态已失效，请重新登录后再保存画板', undefined, 'UNAUTHORIZED');
+    return 'conflict';
+  }
+
+  // 配额/权限类 403 为永久失败，重试无意义——弹升级窗/提示并保留草稿（Spec B1/B4）
+  if (res.status === 403) {
+    const body = await res.json().catch(() => null) as any;
+    dispatchConflictEvent(board.id, body?.error || '画板保存被拒绝', undefined, body?.code || 'FORBIDDEN');
+    return 'conflict';
+  }
+
+  // 404：画板已在其他设备软删/不存在——收敛幽灵板，停止重试风暴
+  if (res.status === 404) {
+    const body = await res.json().catch(() => null) as any;
+    boardStore.reconcileRemoteDeletion(board.id);
+    quotaStore.unmarkPendingCreate(board.id);
+    dispatchConflictEvent(board.id, body?.error || '画板已在其他设备被删除', undefined, 'NOT_FOUND');
+    return 'conflict';
+  }
+
+  // 409 冲突：服务端为准。本地未同步版另存「(冲突副本)」，原画板采用服务端当前内容。
+  if (res.status === 409) {
+    // 卸载前的补传不做决策：这里要再发一次 GET 取服务端内容，而页面正在消失——
+    // keepalive 请求有体积上限，此刻也不该改本地状态。留给下次启动的正常链路。
+    if (keepalive) return 'fail';
+    const body = await res.json().catch(() => null) as any;
+    const latest = typeof body?.latest_updated_at === 'string' && body.latest_updated_at
+      ? body.latest_updated_at
+      : undefined;
+    const serverBoard = await fetchBoardFromServer(board.id);
+    // force：服务端刚以 409 否决了本地基线，这一定是真冲突，不必再比对基线
+    const adopted = serverBoard ? adoptServerVersion(serverBoard, { force: true }) : null;
+    // 副本 id 由 adoptServerVersion 直接给出（force 路径必定尝试另存），失败时为 undefined
+    const copyId = adopted?.adopt ? adopted.conflictCopyId ?? readConflictCopyId(board.id) : null;
+    trackEvent('canvas_save_conflict', { adopted: adopted?.adopt ? 1 : 0 });
+    dispatchConflictEvent(
+      board.id,
+      body?.error || '画板已在其他窗口被修改',
+      latest,
+      'CANVAS_SAVE_CONFLICT',
+      copyId ?? undefined
+    );
+    // 采用失败（多为取不到服务端内容）→ 保留本地脏状态交退避重试，副本按源画板复用不会堆积
+    return adopted?.adopt ? 'conflict' : 'fail';
+  }
+
+  if (res.ok) {
+    const body = await res.json().catch(() => null) as any;
+    if (body?.canvas?.updatedAt) {
+      board.serverUpdatedAt = body.canvas.updatedAt;
+      persistServerUpdatedAt(board.id, body.canvas.updatedAt);
+    }
+    rememberConflictCopy(board.id, null); // 保存成功：本次冲突了结，下次冲突另起一块副本
+    return 'ok';
   }
   return 'fail';
 }
