@@ -5,6 +5,8 @@ import {
   deleteCanvas,
   updateCanvasMeta,
   searchNodes,
+  getCanvasOwnerInfo,
+  isSharedDefaultCanvas,
 } from '../repositories/canvas.repository.js';
 import type { CanvasMetaPatch } from '../repositories/canvas.repository.js';
 import { NotFoundError } from '../lib/errors.js';
@@ -14,12 +16,12 @@ import { recordAuditLog } from '../repositories/audit.repository.js';
 import { recordEventLog } from '../repositories/event-log.repository.js';
 import type { CanvasRecord } from '../core/records.js';
 
-export async function listUserCanvases(userId: string | undefined, isAdmin: boolean): Promise<CanvasRecord[]> {
-  return listCanvases(userId, isAdmin);
+export async function listUserCanvases(userId: string): Promise<CanvasRecord[]> {
+  return listCanvases(userId);
 }
 
-export async function getCanvasOrFail(canvasId: string, userId: string | undefined, isAdmin: boolean): Promise<CanvasRecord> {
-  const canvas = await getCanvas(canvasId, userId, isAdmin);
+export async function getCanvasOrFail(canvasId: string, userId: string): Promise<CanvasRecord> {
+  const canvas = await getCanvas(canvasId, userId);
   if (!canvas) {
     throw new NotFoundError('画板不存在或无权访问 (IDOR Protected)');
   }
@@ -29,6 +31,7 @@ export async function getCanvasOrFail(canvasId: string, userId: string | undefin
 export async function saveUserCanvas(
   data: Parameters<typeof saveCanvas>[0],
   userId: string,
+  /** 仅服务配额闸门（admin 不受板数限制）；不再透传仓储做属主放行（ADR-0016） */
   isAdmin: boolean
 ): Promise<CanvasRecord> {
   // Spec B1（H1 修订）：严格属主制下「认领」语义消亡（唯一可写的他人画板是共享默认板，归属不再转移），
@@ -49,7 +52,7 @@ export async function saveUserCanvas(
           if (user) await assertCanCreateBoard(user);
         }
       };
-  const record = await saveCanvas(data, userId, isAdmin, quotaGate);
+  const record = await saveCanvas(data, userId, quotaGate);
 
   // 服务端画板创建事实源（前端 Umami board_create 有拦截丢失率，此处为准）。
   // 埋点绝不阻塞业务：fire-and-forget，仅保存成功后落一条（更新/冲突/404 均不记）。
@@ -66,8 +69,8 @@ export async function saveUserCanvas(
   return record;
 }
 
-export async function deleteUserCanvas(canvasId: string, userId: string, isAdmin: boolean): Promise<boolean> {
-  const success = await deleteCanvas(canvasId, userId, isAdmin);
+export async function deleteUserCanvas(canvasId: string, userId: string): Promise<boolean> {
+  const success = await deleteCanvas(canvasId, userId);
   if (success) {
     await recordAuditLog({
       userId,
@@ -83,10 +86,20 @@ export async function deleteUserCanvas(canvasId: string, userId: string, isAdmin
 export async function updateUserCanvasMeta(
   canvasId: string,
   patch: CanvasMetaPatch,
-  userId: string,
-  isAdmin: boolean
+  userId: string
 ): Promise<CanvasRecord> {
-  return updateCanvasMeta(canvasId, patch, userId, isAdmin);
+  return updateCanvasMeta(canvasId, patch, userId);
+}
+
+/**
+ * auto-title 归因校验（ADR-0016）：已存在的画布必须属主本人（共享默认板除外）才能写入 AI 审计归因；
+ * 画布尚未落库（首节点对话先于首次自动保存）→ 放行。
+ */
+export async function assertCanvasAttributableByUser(canvasId: string, userId: string): Promise<void> {
+  const info = await getCanvasOwnerInfo(canvasId);
+  if (info.exists && info.ownerId !== userId && !isSharedDefaultCanvas(canvasId)) {
+    throw new NotFoundError('画板不存在或无权访问 (IDOR Protected)');
+  }
 }
 
 export async function searchUserNodes(queryText: string, canvasId?: string, userId?: string): Promise<any[]> {

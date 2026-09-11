@@ -173,10 +173,16 @@ describe('L2 单层分组（后端）', () => {
     assert.equal((await getBoard(aliceCookie, BOARD)).folderId, FOLDER);
   });
 
-  test('跨租户挂载防护：admin 把 alice 画板挂到 bob 分组 → 400 FOLDER_INVALID', async () => {
-    const res = await patchBoardMeta(adminCookie, BOARD, { folderId: BOB_FOLDER });
+  test('跨租户挂载防护：把画板挂到他人分组 → 400 FOLDER_INVALID', async () => {
+    const res = await patchBoardMeta(aliceCookie, BOARD, { folderId: BOB_FOLDER });
     assert.equal(res.status, 400);
     assert.equal(((await res.json()) as any).code, 'FOLDER_INVALID');
+  });
+
+  test('admin 改他人画板 meta → 403 CANVAS_FORBIDDEN（严格属主制）', async () => {
+    const res = await patchBoardMeta(adminCookie, BOARD, { folderId: BOB_FOLDER });
+    assert.equal(res.status, 403);
+    assert.equal(((await res.json()) as any).code, 'CANVAS_FORBIDDEN');
   });
 
   test('删除分组：画板解除归属（folderId=null）且画板仍在，配额不受影响', async () => {

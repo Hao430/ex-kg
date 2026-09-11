@@ -4,7 +4,7 @@
  * 后端：
  * - 越权矩阵：非属主读（404）/ 写 / 删（403 CANVAS_FORBIDDEN）
  * - default-board 共享回归：所有登录用户可读写，但禁止删除
- * - admin 放行
+ * - admin 不例外：读写删他人画板一律受限（严格属主制，ADR-0016）
  * - 软删：删除后列表/单读 404、幂等再删 {success:false}、同 id 再 save 404 防复活、
  *   搜索不命中、canvas_delete 审计、配额释放
  * 前端（stub window/localStorage/fetch，同 a2/a5 模式）：
@@ -141,12 +141,19 @@ describe('H1 画布删除链路安全加固（后端）', () => {
     assert.equal((await getBoard(aliceCookie, 'h1-alice-board')).status, 200);
   });
 
-  test('admin 可读写删任意画板', async () => {
-    assert.equal((await getBoard(adminCookie, 'h1-alice-board')).status, 200);
+  test('admin 读写删他人画板：一律受限（严格属主制，ADR-0016）', async () => {
+    // 读：不泄露存在性 → 404
+    assert.equal((await getBoard(adminCookie, 'h1-alice-board')).status, 404);
+    // 删：403 CANVAS_FORBIDDEN，画板仍完好
     const del = await delBoard(adminCookie, 'h1-alice-board');
-    assert.equal(del.status, 200);
-    assert.equal(((await del.json()) as any).success, true);
-    assert.equal((await getBoard(aliceCookie, 'h1-alice-board')).status, 404);
+    assert.equal(del.status, 403);
+    assert.equal(((await del.json()) as any).code, 'CANVAS_FORBIDDEN');
+    assert.equal((await getBoard(aliceCookie, 'h1-alice-board')).status, 200);
+  });
+
+  test('admin 画板列表只含自己的画板（不含他人画板）', async () => {
+    const ids = await listBoardIds(adminCookie);
+    assert.ok(!ids.includes('h1-alice-board'), 'admin 不应看到 alice 的画板');
   });
 
   test('default-board 共享回归：bob 可写、alice 可读', async () => {

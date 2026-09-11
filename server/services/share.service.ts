@@ -14,7 +14,7 @@ import type { UserRecord } from '../core/records.js';
 /**
  * Spec K2（跟踪清单 B1）：快照式只读分享服务。
  *
- * 权限：创建/撤销严格属主制（admin 放行，对齐 H1 画布口径）；
+ * 权限：创建/撤销严格属主制（仅属主本人；admin 不例外 — ADR-0016）；
  * 读取公开无鉴权，但仅在分享有效（未撤销 + 所属画布未软删）时返回，无效统一 404 不泄露原因。
  * 审计：share_create / share_revoke 写 user_audit_logs（J4 checklist §6：增量动作补类目）。
  */
@@ -37,12 +37,12 @@ export async function createShareForCanvas(
   if (!info.exists) {
     throw new NotFoundError('画布不存在');
   }
-  if (user.role !== 'admin' && info.ownerId !== user.id) {
+  if (info.ownerId !== user.id) {
     throw new ForbiddenError('只能分享自己的画板', 'CANVAS_FORBIDDEN');
   }
 
-  // getCanvas 内部已含属主校验，属主/管理员路径必定放行
-  const canvas = await getCanvas(canvasId, user.id, user.role === 'admin');
+  // getCanvas 内部已含属主校验，属主路径必定放行
+  const canvas = await getCanvas(canvasId, user.id);
   if (!canvas) {
     throw new NotFoundError('画布不存在');
   }
@@ -76,7 +76,7 @@ export async function revokeShareForCanvas(user: UserRecord, canvasId: string): 
   if (!info.exists) {
     throw new NotFoundError('画布不存在');
   }
-  if (user.role !== 'admin' && info.ownerId !== user.id) {
+  if (info.ownerId !== user.id) {
     throw new ForbiddenError('只能管理自己的画板分享', 'CANVAS_FORBIDDEN');
   }
 

@@ -2,7 +2,7 @@
  * S1 — 数据隔离审计修复（2026-09-09）：
  *
  * 1. chat canvasId 归属校验（middleware/quota.ts）：
- *    - 已存在的他人画板作为 chat 归因目标 → 404 NOT_FOUND（admin / 共享默认板除外）
+ *    - 已存在的他人画板作为 chat 归因目标 → 404 NOT_FOUND（仅共享默认板除外；admin 不例外，ADR-0016）
  *    - 不存在的画布放行（首节点对话先于首次自动保存，画布可能尚未落库）
  *    - 本人画板 / 无画布上下文行为不变
  * 2. /api/db/status 生产模式脱敏（server/app.ts）：
@@ -152,10 +152,26 @@ describe('S1 数据隔离修复', () => {
     assert.equal(body.code, 'MODEL_NOT_CONFIGURED');
   });
 
-  test('admin 以他人画板作 chat 归因 → 豁免放行', async () => {
+  test('admin 以他人画板作 chat 归因 → 404 NOT_FOUND（admin 不例外）', async () => {
     const { status, body } = await chat(adminCookie, 's1-alice-board');
-    assert.equal(status, 400);
-    assert.equal(body.code, 'MODEL_NOT_CONFIGURED');
+    assert.equal(status, 404);
+    assert.equal(body.code, 'NOT_FOUND');
+  });
+
+  test('auto-title：他人已保存画板 → 404；本人/未保存画布 → 放行', async () => {
+    const post = (cookie: string, id: string) =>
+      fetch(`${base}/api/canvases/${id}/auto-title`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', cookie },
+        body: JSON.stringify({ question: '越权探针：给这次探索起个名' }),
+      });
+
+    const other = await post(bobCookie, 's1-alice-board');
+    assert.equal(other.status, 404, '他人已保存画板不得写入 AI 归因');
+    assert.equal(((await other.json()) as any).code, 'NOT_FOUND');
+
+    assert.equal((await post(bobCookie, 's1-bob-board')).status, 200, '本人画板放行');
+    assert.equal((await post(bobCookie, 's1-unsaved-board')).status, 200, '未保存画布放行（首节点先于首次保存）');
   });
   });
 

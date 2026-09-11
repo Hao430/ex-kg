@@ -184,10 +184,10 @@ describe('L1 画板库元数据端点（后端）', () => {
     assert.equal((await getListed(aliceCookie, ALICE_BOARD)).title, 'L1 改名');
   });
 
-  test('admin 可改任意画板 meta', async () => {
+  test('admin 改他人画板 meta → 403 CANVAS_FORBIDDEN', async () => {
     const res = await patchMeta(adminCookie, ALICE_BOARD, { isFavorite: true });
-    assert.equal(res.status, 200);
-    assert.equal(((await res.json()) as any).canvas.isFavorite, true);
+    assert.equal(res.status, 403);
+    assert.equal(((await res.json()) as any).code, 'CANVAS_FORBIDDEN');
   });
 
   test('共享默认板禁改 → 403 CANVAS_FORBIDDEN', async () => {

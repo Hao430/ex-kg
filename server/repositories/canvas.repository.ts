@@ -25,13 +25,14 @@ function chunkRows<T>(rows: T[], size: number): T[][] {
   return out;
 }
 
-export async function listCanvases(userId?: string, isAdmin = false): Promise<CanvasRecord[]> {
+export async function listCanvases(userId: string): Promise<CanvasRecord[]> {
   const p = getPool();
   if (p) {
     try {
       await initDbSchema();
-      const whereClause = isAdmin || !userId ? 'WHERE c.deleted_at IS NULL' : 'WHERE c.deleted_at IS NULL AND c.user_id = $1';
-      const values = isAdmin || !userId ? [] : [userId];
+      // 严格属主制（ADR-0016）：画布列表恒按属主过滤，admin 不再放行。
+      const whereClause = 'WHERE c.deleted_at IS NULL AND c.user_id = $1';
+      const values = [userId];
 
       const res = await p.query(
         `SELECT
@@ -72,7 +73,7 @@ export async function listCanvases(userId?: string, isAdmin = false): Promise<Ca
 
   // In-memory
   return Array.from(inMemoryStore.canvases.values())
-    .filter((c) => !c.deleted_at && (isAdmin || !userId || c.user_id === userId))
+    .filter((c) => !c.deleted_at && c.user_id === userId)
     .map((c) => ({
       ...c,
       isFavorite: c.isFavorite ?? false,
@@ -124,7 +125,7 @@ export function normalizeMemoryNode(node: any, defaultModel: string): any {
   };
 }
 
-export async function getCanvas(canvasId: string, userId?: string, isAdmin = false): Promise<CanvasRecord | null> {
+export async function getCanvas(canvasId: string, userId: string): Promise<CanvasRecord | null> {
   const p = getPool();
   if (p) {
     try {
@@ -133,8 +134,8 @@ export async function getCanvas(canvasId: string, userId?: string, isAdmin = fal
       if (cRes.rows.length === 0) return null;
 
       const c = cRes.rows[0];
-      // Multi-tenant check: strict ownership — only owner or admin (shared default canvas is the sole exception)
-      if (userId && !isAdmin && c.user_id !== userId && !isSharedDefaultCanvas(canvasId)) {
+      // Multi-tenant check: strict ownership — only the owner (shared default canvas is the sole exception)
+      if (c.user_id !== userId && !isSharedDefaultCanvas(canvasId)) {
         return null;
       }
 
@@ -205,7 +206,7 @@ export async function getCanvas(canvasId: string, userId?: string, isAdmin = fal
 
   const canvas = inMemoryStore.canvases.get(canvasId);
   if (!canvas || canvas.deleted_at) return null;
-  if (userId && !isAdmin && canvas.user_id !== userId && !isSharedDefaultCanvas(canvasId)) {
+  if (canvas.user_id !== userId && !isSharedDefaultCanvas(canvasId)) {
     return null;
   }
   return {
@@ -297,7 +298,6 @@ export async function saveCanvas(
     expectedUpdatedAt?: string;
   },
   userId: string,
-  isAdmin = false,
   /** 新建画布（exists=false）前的配额闸门；复用事务内已查的 exists，省一次独立预查 */
   quotaGate?: (exists: boolean) => Promise<void>
 ): Promise<CanvasRecord> {
@@ -338,8 +338,8 @@ export async function saveCanvas(
         throw new NotFoundError('画板不存在或已删除');
       }
 
-      // 严格属主：仅属主本人或 admin 可写（共享默认画板除外）
-      if (existing.rows.length > 0 && !isAdmin && existingUserId !== userId && !isSharedDefaultCanvas(data.id)) {
+      // 严格属主：仅属主本人可写（共享默认画板除外）
+      if (existing.rows.length > 0 && existingUserId !== userId && !isSharedDefaultCanvas(data.id)) {
         throw new ForbiddenError('无权修改其他用户的画板', 'CANVAS_FORBIDDEN');
       }
 
@@ -525,7 +525,7 @@ export async function saveCanvas(
   if (existing?.deleted_at) {
     throw new NotFoundError('画板不存在或已删除');
   }
-  if (existing && !isAdmin && existingUserId !== userId && !isSharedDefaultCanvas(data.id)) {
+  if (existing && existingUserId !== userId && !isSharedDefaultCanvas(data.id)) {
     throw new ForbiddenError('无权修改其他用户的画板', 'CANVAS_FORBIDDEN');
   }
   if (existing) {
@@ -554,7 +554,7 @@ export async function saveCanvas(
   return record;
 }
 
-export async function deleteCanvas(canvasId: string, userId: string, isAdmin = false): Promise<boolean> {
+export async function deleteCanvas(canvasId: string, userId: string): Promise<boolean> {
   // 共享默认画板禁删：软删会让所有用户对该 id 永久 404，全局默认板锁死
   if (isSharedDefaultCanvas(canvasId)) {
     throw new ForbiddenError('默认画板不可删除', 'CANVAS_FORBIDDEN');
@@ -571,7 +571,7 @@ export async function deleteCanvas(canvasId: string, userId: string, isAdmin = f
         await client.query('COMMIT');
         return false; // 不存在或已软删，幂等返回
       }
-      if (!isAdmin && check.rows[0].user_id !== userId) {
+      if (check.rows[0].user_id !== userId) {
         throw new ForbiddenError('无权删除此画板', 'CANVAS_FORBIDDEN');
       }
       // 软删主行 + 子表即时物理清理（对齐原物理 DELETE 的 CASCADE 语义）
@@ -593,7 +593,7 @@ export async function deleteCanvas(canvasId: string, userId: string, isAdmin = f
 
   const canvas = inMemoryStore.canvases.get(canvasId);
   if (!canvas || canvas.deleted_at) return false;
-  if (!isAdmin && canvas.user_id !== userId) {
+  if (canvas.user_id !== userId) {
     throw new ForbiddenError('无权删除此画板', 'CANVAS_FORBIDDEN');
   }
   canvas.deleted_at = new Date().toISOString();
@@ -622,8 +622,7 @@ export interface CanvasMetaPatch {
 export async function updateCanvasMeta(
   canvasId: string,
   patch: CanvasMetaPatch,
-  userId: string,
-  isAdmin = false
+  userId: string
 ): Promise<CanvasRecord> {
   if (isSharedDefaultCanvas(canvasId)) {
     throw new ForbiddenError('共享默认画板不支持收藏/归档等个性化设置', 'CANVAS_FORBIDDEN');
@@ -640,7 +639,7 @@ export async function updateCanvasMeta(
         throw new NotFoundError('画板不存在或已删除');
       }
       const canvasOwner = check.rows[0].user_id;
-      if (!isAdmin && canvasOwner !== userId) {
+      if (canvasOwner !== userId) {
         throw new ForbiddenError('无权修改其他用户的画板', 'CANVAS_FORBIDDEN');
       }
       // 分组归属校验：folderId 必须属于「画板属主」（而非请求者），防跨租户串联
@@ -707,7 +706,7 @@ export async function updateCanvasMeta(
   if (!canvas || canvas.deleted_at) {
     throw new NotFoundError('画板不存在或已删除');
   }
-  if (!isAdmin && canvas.user_id !== userId) {
+  if (canvas.user_id !== userId) {
     throw new ForbiddenError('无权修改其他用户的画板', 'CANVAS_FORBIDDEN');
   }
   if (patch.folderId != null) {

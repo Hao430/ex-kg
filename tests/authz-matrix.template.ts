@@ -11,10 +11,11 @@
  *   3. 删除与本端点无关的动作块（如资源不可删）
  *   4. 运行 npx tsx --test tests/xx-authz-matrix.test.ts 确认全绿
  *
- * 矩阵语义约定（详见 docs/安全发布checklist.md §1）：
- *   - 读：非属主 404（不泄露存在性）；admin 200；匿名 401
- *   - 写：非属主 403（独立错误码）；admin 200；匿名 401
- *   - 删：非属主 403；admin 200；匿名 401；已删资源幂等语义测试锁定
+ * 矩阵语义约定（详见 docs/安全发布checklist.md §1 / ADR-0016）：
+ *   - 读：非属主 404（不泄露存在性）；admin 不例外（同 404）；匿名 401
+ *   - 写：非属主 403（独立错误码）；admin 不例外（同 403）；匿名 401
+ *   - 删：非属主 403；admin 不例外（同 403）；匿名 401；已删资源幂等语义测试锁定
+ *   （admin 仅保留运营台聚合统计与日志，对资源数据无属主放行；若某资源确需 admin 特权，需在 ADR 单独说明并调整本矩阵。）
  */
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -155,22 +156,17 @@ describe('AuthZ 矩阵：TODO 端点（J4 模板）', () => {
     assert.ok([200, 201].includes(res.status));
   });
 
-  test('admin 读 → 200（管理放行）', async () => {
-    assert.equal((await readResource(adminCookie)).status, 200);
+  test('admin 读 → 404（不例外，同非属主）', async () => {
+    assert.equal((await readResource(adminCookie)).status, 404);
   });
 
-  test('admin 写 → 2xx（管理放行）', async () => {
-    const res = await writeResource(adminCookie);
-    assert.ok([200, 201].includes(res.status));
+  test('admin 写 → 403（不例外，同非属主）', async () => {
+    assert.equal((await writeResource(adminCookie)).status, 403);
   });
 
-  test('admin 删 → 2xx；属主再读 404；删除幂等语义锁定', async () => {
-    const del = await deleteResource(adminCookie);
-    assert.ok([200, 204].includes(del.status));
-    assert.equal((await readResource(ownerCookie)).status, 404);
-    // 幂等语义（按端点实际口径二选一保留）：
-    const again = await deleteResource(adminCookie);
-    assert.ok([200, 404].includes(again.status), '重复删除语义需与设计口径一致并锁定');
+  test('admin 删 → 403（不例外）；属主资源仍完好', async () => {
+    assert.equal((await deleteResource(adminCookie)).status, 403);
+    assert.equal((await readResource(ownerCookie)).status, 200);
   });
 
   // TODO: 若资源支持软删/复活防护，追加：

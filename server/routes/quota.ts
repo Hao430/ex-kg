@@ -43,7 +43,7 @@ quotaRouter.get(
     const boardLimit = unlimited ? null : ent.boardLimit ?? BOARD_LIMIT;
     const nodeLimit = unlimited ? null : ent.nodeLimit ?? NODE_LIMIT;
 
-    const canvases = await listCanvases(user.id, user.role === 'admin');
+    const canvases = await listCanvases(user.id);
     const board = { used: canvases.length, limit: boardLimit };
 
     // Spec K7（D3）：VIP 专享模型数量（与 chatQuotaMiddleware 同源的配置读取），
@@ -56,7 +56,7 @@ quotaRouter.get(
     let node: { used: number; limit: number | null; remaining: number | null } | null = null;
     if (canvasId) {
       const info = await getCanvasOwnerInfo(canvasId);
-      if (info.exists && info.ownerId !== user.id && user.role !== 'admin') {
+      if (info.exists && info.ownerId !== user.id) {
         return res.status(404).json({ error: '画布不存在', code: 'NOT_FOUND' });
       }
       const used = info.exists ? await countCanvasNodes(canvasId) : 0;

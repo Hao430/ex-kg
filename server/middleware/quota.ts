@@ -11,8 +11,8 @@ import { ForbiddenError, NotFoundError } from '../lib/errors.js';
  * - E4 模型白名单：体验版/过期 VIP 请求 vip_only_models 命中模型 → 403 MODEL_VIP_ONLY
  *   （校验独立于 canvasId，无画布上下文的自由提问同样受限；VIP/Admin 不限）
  * - VIP 有效 / Admin → 放行
- * - 审计修复（数据隔离排查 2026-09-09）：声明的 canvasId 若已存在且非本人画板
- *   （admin / 共享默认板除外）→ 404 NOT_FOUND，与 GET /api/quota 同口径；
+ * - 审计修复（数据隔离排查 2026-09-09 / ADR-0016）：声明的 canvasId 若已存在且非本人画板
+ *   （共享默认板除外）→ 404 NOT_FOUND，与 GET /api/quota 同口径；admin 不例外；
  *   不存在的画布放行——首节点对话先于首次自动保存，画布可能尚未落库。
  */
 export async function chatQuotaMiddleware(req: Request, _res: Response, next: NextFunction): Promise<void> {
@@ -31,7 +31,6 @@ export async function chatQuotaMiddleware(req: Request, _res: Response, next: Ne
       const info = await getCanvasOwnerInfo(canvasId);
       if (
         info.exists &&
-        user.role !== 'admin' &&
         info.ownerId !== user.id &&
         !isSharedDefaultCanvas(canvasId)
       ) {

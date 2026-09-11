@@ -7,6 +7,7 @@ import {
   deleteUserCanvas,
   updateUserCanvasMeta,
   searchUserNodes,
+  assertCanvasAttributableByUser,
 } from '../services/canvas.service.js';
 import { asyncHandler } from '../lib/async-handler.js';
 import { authMiddleware, shareActionRateLimiter, autoTitleRateLimiter } from '../middleware/auth.js';
@@ -64,12 +65,11 @@ canvasesRouter.use(authMiddleware);
 
 /**
  * GET /api/canvases
- * List only current user's canvases (admin can see all)
+ * List only current user's canvases（严格属主制，admin 不例外 — ADR-0016）
  */
 canvasesRouter.get('/', asyncHandler(async (req: Request, res: Response) => {
   const user = req.user!;
-  const isAdmin = user.role === 'admin';
-  const canvases = await listUserCanvases(user.id, isAdmin);
+  const canvases = await listUserCanvases(user.id);
   res.json(canvases);
 }));
 
@@ -79,8 +79,7 @@ canvasesRouter.get('/', asyncHandler(async (req: Request, res: Response) => {
  */
 canvasesRouter.get('/:id', asyncHandler(async (req: Request, res: Response) => {
   const user = req.user!;
-  const isAdmin = user.role === 'admin';
-  const canvas = await getCanvasOrFail(req.params.id, user.id, isAdmin);
+  const canvas = await getCanvasOrFail(req.params.id, user.id);
   res.json(canvas);
 }));
 
@@ -90,7 +89,6 @@ canvasesRouter.get('/:id', asyncHandler(async (req: Request, res: Response) => {
  */
 canvasesRouter.post('/:id/save', asyncHandler(async (req: Request, res: Response) => {
   const user = req.user!;
-  const isAdmin = user.role === 'admin';
   const body = validate(SaveCanvasSchema, req.body);
 
   const saved = await saveUserCanvas(
@@ -106,7 +104,7 @@ canvasesRouter.post('/:id/save', asyncHandler(async (req: Request, res: Response
       expectedUpdatedAt: body.expectedUpdatedAt,
     },
     user.id,
-    isAdmin
+    user.role === 'admin'
   );
 
   // 响应瘦身：前端与测试仅消费 canvas.updatedAt（乐观锁版本），不再回显全量 nodes/edges
@@ -118,7 +116,8 @@ canvasesRouter.post('/:id/save', asyncHandler(async (req: Request, res: Response
  * POST /api/canvases/:id/auto-title（自动命名）
  * 根据「用户提问 + 回答摘录」生成节点标题与画板名（一次 LLM 调用产出两者）。
  * 非关键路径：LLM 失败静默返回 null，前端保留现有截断标题；调用落 ai_request_logs 归因。
- * 画布可能尚未同步（首节点完成先于首次自动保存），故不做画布存在性/属主校验，仅要求登录。
+ * 画布可能尚未同步（首节点完成先于首次自动保存），故「不存在即放行」；但已存在的画布
+ * 必须属主本人（共享默认板除外），防对他人画板伪造 AI 审计归因（ADR-0016）。
  */
 const AutoTitleSchema = z.object({
   nodeId: z.string().max(64).optional(),
@@ -130,6 +129,7 @@ const AutoTitleSchema = z.object({
 canvasesRouter.post('/:id/auto-title', autoTitleRateLimiter, asyncHandler(async (req: Request, res: Response) => {
   const user = req.user!;
   const body = validate(AutoTitleSchema, req.body);
+  await assertCanvasAttributableByUser(req.params.id, user.id);
   const startTime = Date.now();
 
   const { result, meta } = await generateAutoTitles({
@@ -164,8 +164,7 @@ canvasesRouter.post('/:id/auto-title', autoTitleRateLimiter, asyncHandler(async 
  */
 canvasesRouter.delete('/:id', asyncHandler(async (req: Request, res: Response) => {
   const user = req.user!;
-  const isAdmin = user.role === 'admin';
-  const success = await deleteUserCanvas(req.params.id, user.id, isAdmin);
+  const success = await deleteUserCanvas(req.params.id, user.id);
   res.json({ success });
 }));
 
@@ -176,10 +175,9 @@ canvasesRouter.delete('/:id', asyncHandler(async (req: Request, res: Response) =
  */
 canvasesRouter.patch('/:id/meta', asyncHandler(async (req: Request, res: Response) => {
   const user = req.user!;
-  const isAdmin = user.role === 'admin';
   const body = validate(UpdateCanvasMetaSchema, req.body);
 
-  const canvas = await updateUserCanvasMeta(req.params.id, body, user.id, isAdmin);
+  const canvas = await updateUserCanvasMeta(req.params.id, body, user.id);
 
   // 响应瘦身：仅回画板库需要的元数据（updatedAt 供前端推进乐观锁版本）
   const { nodes: _nodes, edges: _edges, ...canvasMeta } = canvas;

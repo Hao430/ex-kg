@@ -72,7 +72,7 @@ export async function assertCanCreateBoard(user: UserRecord): Promise<void> {
     throw new ForbiddenError('VIP 会员已过期，续费后即可继续创建画板', 'VIP_EXPIRED');
   }
 
-  const canvases = await listCanvases(user.id, false);
+  const canvases = await listCanvases(user.id);
   if (canvases.length >= BOARD_LIMIT) {
     throw new ForbiddenError(
       `体验版最多创建 ${BOARD_LIMIT} 个画板，升级 VIP 会员解锁无限画板`,
