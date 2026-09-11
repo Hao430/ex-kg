@@ -773,7 +773,12 @@ export async function countCanvasNodes(canvasId: string): Promise<number> {
   return (canvas?.nodes || []).filter((n: any) => (n.type || 'chat') === 'chat').length;
 }
 
-export async function searchNodes(queryText: string, canvasId?: string, userId?: string): Promise<any[]> {
+/**
+ * 节点检索（严格属主制）：userId 必填，只返回本人画布的节点。
+ * 2026-09-11 安全修复：此前 userId 可选，省略即走 `$n::uuid IS NULL` 放行分支退化为全站检索，
+ * 属跨租户读取的潜在旁路；现收敛为必填，SQL 不再保留 NULL 放行分支（ADR-0016 口径）。
+ */
+export async function searchNodes(queryText: string, userId: string, canvasId?: string): Promise<any[]> {
   const p = getPool();
   if (p && queryText.trim()) {
     try {
@@ -782,18 +787,18 @@ export async function searchNodes(queryText: string, canvasId?: string, userId?:
         ? `SELECT n.id, n.canvas_id, n.question as title, n.question, n.answer, n.note as note_content, n.depth, n.model_used as model, n.created_at
            FROM nodes n
            JOIN canvases c ON c.id = n.canvas_id
-           WHERE n.canvas_id = $1 AND c.deleted_at IS NULL AND ($2::uuid IS NULL OR c.user_id = $2)
+           WHERE n.canvas_id = $1 AND c.deleted_at IS NULL AND c.user_id = $2
              AND (n.question ILIKE $3 OR n.answer ILIKE $3 OR n.note ILIKE $3)
            LIMIT 30`
         : `SELECT n.id, n.canvas_id, n.question as title, n.question, n.answer, n.note as note_content, n.depth, n.model_used as model, n.created_at
            FROM nodes n
            JOIN canvases c ON c.id = n.canvas_id
-           WHERE c.deleted_at IS NULL AND ($1::uuid IS NULL OR c.user_id = $1)
+           WHERE c.deleted_at IS NULL AND c.user_id = $1
              AND (n.question ILIKE $2 OR n.answer ILIKE $2 OR n.note ILIKE $2)
            LIMIT 30`;
       const params = canvasId
-        ? [canvasId, userId || null, `%${queryText.trim()}%`]
-        : [userId || null, `%${queryText.trim()}%`];
+        ? [canvasId, userId, `%${queryText.trim()}%`]
+        : [userId, `%${queryText.trim()}%`];
       const res = await p.query(sql, params);
       return res.rows;
     } catch (e) {
@@ -807,7 +812,7 @@ export async function searchNodes(queryText: string, canvasId?: string, userId?:
   for (const canvas of inMemoryStore.canvases.values()) {
     if (canvas.deleted_at) continue;
     if (canvasId && canvas.id !== canvasId) continue;
-    if (userId && canvas.user_id !== userId) continue;
+    if (canvas.user_id !== userId) continue; // 严格属主制：userId 必填，跨租户一律不返回
     for (const node of canvas.nodes || []) {
       const d = node.data || {};
       // 与 PG 分支的 note 字段对齐：兼容 note 与 noteContent 两种来源

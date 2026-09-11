@@ -9,6 +9,9 @@
  *    - NODE_ENV=production 剥离 userCount/canvasCount/nodeCount 聚合计数，防探测平台规模
  *    - connected/type/databaseUrlConfigured/degraded 保留（部署探活依赖，j1 兼容）
  * 3. 画布 CRUD 属主回归抽查（h1 已全覆盖，此处仅锚定 404/403 口径不回退）
+ * 4. 节点检索属主过滤（repositories/canvas.repository.ts searchNodes）：
+ *    - userId 由可选收紧为必填，SQL/内存分支均无「省略即全站」的放行分支
+ *    - 非属主 / admin 检索他人画板 → 结果恒为空
  */
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -24,6 +27,11 @@ let base = '';
 let aliceCookie = ''; // 种子体验版 user@deepdive.ai
 let bobCookie = ''; // 新注册体验版
 let adminCookie = '';
+
+/** 越权检索探针关键字：只出现在 alice 的私人画板节点里 */
+const SEARCH_PROBE = 's1越权检索探针';
+/** 对照关键字：只出现在 bob 的私人画板节点里（验证属主自身检索不被误伤） */
+const BOB_SEARCH_PROBE = 's1bob本人探针';
 
 async function waitSeeds(tries = 50): Promise<void> {
   for (let i = 0; i < tries; i++) {
@@ -78,6 +86,12 @@ function getBoard(cookie: string, id: string): Promise<Response> {
   return fetch(`${base}/api/canvases/${id}`, { headers: { cookie } });
 }
 
+function searchInBoard(cookie: string, id: string, q: string): Promise<Response> {
+  return fetch(`${base}/api/canvases/${id}/search?q=${encodeURIComponent(q)}`, {
+    headers: { cookie },
+  });
+}
+
 async function chat(
   cookie: string,
   canvasId: string | null
@@ -107,11 +121,31 @@ describe('S1 数据隔离修复', () => {
     await registerViaCode('s1-bob@test.local', 'Bob123456!', 'Bob');
     bobCookie = await signIn('s1-bob@test.local', 'Bob123456!');
 
-    // alice 建私人画板 + 共享默认板（供归属矩阵使用）
-    assert.equal((await saveBoard(aliceCookie, 's1-alice-board')).status, 200);
+    // alice 建私人画板（含可检索节点，供越权检索断言用）+ 共享默认板
+    assert.equal(
+      (await saveBoard(aliceCookie, 's1-alice-board', [
+        {
+          id: 's1-n1',
+          type: 'chat',
+          position: { x: 0, y: 0 },
+          data: { question: SEARCH_PROBE, answer: '', status: 'idle' },
+        },
+      ])).status,
+      200
+    );
     assert.equal((await saveBoard(aliceCookie, 'default-board')).status, 200);
-    // bob 建本人画板
-    assert.equal((await saveBoard(bobCookie, 's1-bob-board')).status, 200);
+    // bob 建本人画板（含对照关键字节点）
+    assert.equal(
+      (await saveBoard(bobCookie, 's1-bob-board', [
+        {
+          id: 's1-bn1',
+          type: 'chat',
+          position: { x: 0, y: 0 },
+          data: { question: BOB_SEARCH_PROBE, answer: '', status: 'idle' },
+        },
+      ])).status,
+      200
+    );
   });
   after(() => new Promise<void>((resolve) => server.close(() => resolve())));
 
@@ -172,6 +206,43 @@ describe('S1 数据隔离修复', () => {
 
     assert.equal((await post(bobCookie, 's1-bob-board')).status, 200, '本人画板放行');
     assert.equal((await post(bobCookie, 's1-unsaved-board')).status, 200, '未保存画布放行（首节点先于首次保存）');
+  });
+  });
+
+  describe('节点检索属主过滤（searchNodes userId 必填）', () => {
+  test('属主检索本人画板 → 命中探针节点', async () => {
+    const res = await searchInBoard(aliceCookie, 's1-alice-board', SEARCH_PROBE);
+    assert.equal(res.status, 200);
+    const { results } = (await res.json()) as any;
+    assert.equal(results.length, 1, '属主应能检索到自己的节点');
+  });
+
+  test('非属主检索他人画板 → 空结果（跨租户不返回任何节点）', async () => {
+    const res = await searchInBoard(bobCookie, 's1-alice-board', SEARCH_PROBE);
+    assert.equal(res.status, 200);
+    const { results } = (await res.json()) as any;
+    assert.equal(results.length, 0, '跨租户检索必须返回空');
+  });
+
+  test('admin 检索他人画板 → 空结果（admin 不例外）', async () => {
+    const res = await searchInBoard(adminCookie, 's1-alice-board', SEARCH_PROBE);
+    assert.equal(res.status, 200);
+    const { results } = (await res.json()) as any;
+    assert.equal(results.length, 0, 'admin 检索他人画板必须返回空');
+  });
+
+  test('属主检索本人画板命中对照关键字（不误伤正常检索路径）', async () => {
+    const res = await searchInBoard(bobCookie, 's1-bob-board', BOB_SEARCH_PROBE);
+    assert.equal(res.status, 200);
+    const { results } = (await res.json()) as any;
+    assert.equal(results.length, 1, 'bob 应能检索到自己画板的节点');
+  });
+
+  test('他人关键字在本人画板检索 → 空（隔离是双向的）', async () => {
+    const res = await searchInBoard(bobCookie, 's1-bob-board', SEARCH_PROBE);
+    assert.equal(res.status, 200);
+    const { results } = (await res.json()) as any;
+    assert.equal(results.length, 0, 'alice 的探针关键字不应在 bob 画板命中');
   });
   });
 

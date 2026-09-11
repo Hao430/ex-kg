@@ -66,6 +66,17 @@ ADR-0004 确立多租户严格属主制，但保留了一句「读/写/删只允
 - 越权矩阵模板 `tests/authz-matrix.template.ts` 与 `docs/安全发布checklist.md` §1 已同步为「admin 不例外」；
 - 本 ADR 部分修订 ADR-0004：仅移除其中的 admin 例外，其余（默认画板共享、默认板禁删、软删语义）继续有效。
 
+### 同日跟进：两处残留读取通道（2026-09-11）
+
+本 ADR 落地后的复查又发现两条**非属主放行、但同样绕过属主制读取内容**的通道，已一并封堵：
+
+| 通道 | 机制 | 处置 |
+| :--- | :--- | :--- |
+| 审计日志回显分享码 | `share_create` 把 `shareCode` 写入 `user_audit_logs.details`，admin 经 `/api/admin/audit-logs` 收集任意用户的活跃分享码，再走公开读取得该画布快照 | 写入侧不再落 `shareCode`（归属由 `target_id` 锚定）；读取侧对历史存量行脱敏（`audit.repository.ts` 的 `redactAuditDetails`） |
+| 节点检索可省略属主 | `searchNodes(queryText, canvasId?, userId?)` 的 `userId` 可选，省略时 SQL 走 `$n::uuid IS NULL` 放行分支，退化为**全站检索**；当时唯一调用方均传值，属潜在旁路 | `userId` 收紧为必填，SQL 与内存分支均无 NULL 放行（`searchUserNodes` 同步） |
+
+两条均已补回归测试（`tests/k2-share.test.ts` 断言审计不回显分享码；`tests/s1-data-isolation.test.ts` 断言非属主/admin 检索他人画板恒为空），并把模式固化进 `docs/安全发布checklist.md` §1。
+
 ## Pros and Cons of the Options
 
 ### Option A: 维持 admin 全域放行

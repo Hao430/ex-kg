@@ -54,12 +54,15 @@ export async function createShareForCanvas(
   };
   const { record, recreatedRevoked } = await upsertShare(canvasId, snapshot);
 
+  // 审计只记「发生过创建/重建」这一事实与重建标记，绝不落 shareCode：
+  // 分享码是公开只读的访问凭据，写进日志后 admin 可经 /api/admin/audit-logs 收集
+  // 他人分享码绕过严格属主制读取画布快照（ADR-0016 follow-up）。画布归属由 targetId 锚定。
   await recordAuditLog({
     userId: user.id,
     action: 'share_create',
     targetType: 'canvas',
     targetId: canvasId,
-    details: { shareCode: record.share_code, recreatedRevoked },
+    details: { recreatedRevoked },
   });
 
   const base = appUrl.replace(/\/+$/, '');

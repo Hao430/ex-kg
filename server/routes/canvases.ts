@@ -212,6 +212,6 @@ canvasesRouter.delete('/:id/share', shareActionRateLimiter, asyncHandler(async (
 canvasesRouter.get('/:id/search', asyncHandler(async (req: Request, res: Response) => {
   const user = req.user!;
   const query = typeof req.query.q === 'string' ? req.query.q : '';
-  const results = await searchUserNodes(query, req.params.id, user.id);
+  const results = await searchUserNodes(query, user.id, req.params.id);
   res.json({ results });
 }));

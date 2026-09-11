@@ -15,9 +15,11 @@
 
 - [ ] **批量/列表接口**：过滤条件带属主（`user_id`/`deleted_at IS NULL`），无跨租户泄漏
 - [ ] **计数/统计类只读端点**（如 quota、overview）：归属校验与资源端点同级——不因「只是读个数字」而放行
+- [ ] **检索/查询类端点**：属主参数（`userId`）**必填**，禁止 `$n::uuid IS NULL OR c.user_id = $n` 这类「省略即全站」的放行分支（`searchNodes` 曾如此，2026-09-11 收紧）
+- [ ] **凭据类字段不出日志出口**：分享码 / 邀请码 / 重置 token 等**只读访问凭据**不得写入审计或运营日志详情，`/api/admin/*` 日志端点也不得回显（否则 admin 可据此绕过属主制读取资源，2026-09-11 修复）
 - [ ] 新端点使用 `tests/authz-matrix.template.ts` 填空生成矩阵测试（tests/ 豁免需用户显式授权，豁免记录写提交信息）
 
-> 来源：H1 越权（`isClaimableCanvas` 前缀放行）、J2 设计期审查（quota 端点归属校验）。
+> 来源：H1 越权（`isClaimableCanvas` 前缀放行）、J2 设计期审查（quota 端点归属校验）、2026-09-11 审计日志 `shareCode` 间接读取通道 + `searchNodes` 可选 `userId` 旁路。
 
 ## 2. 降级与假成功（双模持久化）
 

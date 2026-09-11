@@ -69,6 +69,17 @@ export async function recordAuditLog(data: RecordAuditLogData): Promise<void> {
 }
 
 /**
+ * 审计详情出口脱敏：分享码是公开只读的访问凭据，回显给 admin 即等于绕过严格属主制
+ * 读取该画布快照（ADR-0016 follow-up）。写入侧已不再落 shareCode，此处兜住历史存量行，
+ * 保证任何读取路径都不会把分享码带出去。非对象/数组详情原样返回。
+ */
+function redactAuditDetails(details: any): any {
+  if (!details || typeof details !== 'object' || Array.isArray(details)) return details;
+  const { shareCode: _shareCode, share_code: _share_code, ...rest } = details;
+  return rest;
+}
+
+/**
  * 分页查询审计日志（双模），返回最新在前。
  */
 export async function listAuditLogs(params: {
@@ -114,6 +125,7 @@ export async function listAuditLogs(params: {
       return {
         logs: listRes.rows.map((r) => ({
           ...r,
+          details: redactAuditDetails(r.details),
           created_at: r.created_at instanceof Date ? r.created_at.toISOString() : r.created_at,
         })),
         total,
@@ -137,7 +149,7 @@ export async function listAuditLogs(params: {
   );
 
   return {
-    logs: list.slice(offset, offset + limit),
+    logs: list.slice(offset, offset + limit).map((l) => ({ ...l, details: redactAuditDetails(l.details) })),
     total: list.length,
   };
 }

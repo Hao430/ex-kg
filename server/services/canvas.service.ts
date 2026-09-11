@@ -102,6 +102,7 @@ export async function assertCanvasAttributableByUser(canvasId: string, userId: s
   }
 }
 
-export async function searchUserNodes(queryText: string, canvasId?: string, userId?: string): Promise<any[]> {
-  return searchNodes(queryText, canvasId, userId);
+/** 节点检索：userId 必填（严格属主制，ADR-0016 口径），canvasId 可选（省略 = 检索本人全部画板） */
+export async function searchUserNodes(queryText: string, userId: string, canvasId?: string): Promise<any[]> {
+  return searchNodes(queryText, userId, canvasId);
 }

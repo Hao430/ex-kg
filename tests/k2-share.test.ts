@@ -13,12 +13,17 @@ import type { AddressInfo } from 'node:net';
 import { ipKeyGenerator } from 'express-rate-limit';
 import { createApp } from '../server/app.js';
 import { getOutboxForTest } from '../server/lib/mailer.js';
-import { signupRateLimiter, sendRegisterCodeRateLimiter } from '../server/middleware/auth.js';
+import {
+  signupRateLimiter,
+  sendRegisterCodeRateLimiter,
+  shareActionRateLimiter,
+} from '../server/middleware/auth.js';
 
 let server: http.Server;
 let base = '';
 let aliceCookie = '';
 let bobCookie = '';
+let adminCookie = '';
 
 async function waitSeeds(tries = 50): Promise<void> {
   for (let i = 0; i < tries; i++) {
@@ -98,6 +103,7 @@ describe('K2 快照式只读分享（B1）', () => {
     await waitSeeds();
 
     aliceCookie = await signIn('user@deepdive.ai', 'User123456!');
+    adminCookie = await signIn('admin@deepdive.ai', 'Admin123456!');
     await registerViaCode('k1-bob@test.local', 'Bob123456!', 'Bob');
     bobCookie = await signIn('k1-bob@test.local', 'Bob123456!');
 
@@ -194,5 +200,35 @@ describe('K2 快照式只读分享（B1）', () => {
   test('不存在的 shareCode → 404', async () => {
     const res = await getShare('no-such-code-abc');
     assert.equal(res.status, 404);
+  });
+
+  test('审计日志不落 shareCode：admin 无法据此绕过属主读取快照', async () => {
+    (shareActionRateLimiter as any).resetKey(ipKeyGenerator('127.0.0.1'));
+    const createRes = await createShare(aliceCookie, 'k1-alice-board');
+    assert.equal(createRes.status, 200);
+    const { shareCode } = (await createRes.json()) as any;
+    assert.ok(shareCode, '创建分享应返回 shareCode');
+
+    const res = await fetch(`${base}/api/admin/audit-logs?action=share_create&page=1&limit=100`, {
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(res.status, 200, 'admin 应能读取审计日志');
+    const logs = ((await res.json()) as any).logs as any[];
+    assert.ok(logs.length > 0, '应有 share_create 审计记录');
+
+    assert.ok(
+      !JSON.stringify(logs).includes(shareCode),
+      '审计日志任何位置都不得出现 shareCode'
+    );
+    for (const l of logs) {
+      const details = l.details || {};
+      assert.ok(!('shareCode' in details), 'details 不得含 shareCode 字段');
+      assert.ok(!('share_code' in details), 'details 不得含 share_code 字段');
+    }
+    // 审计语义未被削弱：仍记录创建事实与重建标记，归属由 targetId 锚定
+    assert.ok(
+      logs.some((l) => l.target_id === 'k1-alice-board' && 'recreatedRevoked' in (l.details || {})),
+      'share_create 记录应保留 targetId 与 recreatedRevoked'
+    );
   });
 });
