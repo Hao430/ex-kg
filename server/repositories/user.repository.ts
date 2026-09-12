@@ -1,6 +1,5 @@
 import crypto from 'node:crypto';
-import { getPool } from '../core/pool.js';
-import { initDbSchema } from '../core/schema.js';
+import { getDb } from '../core/db.js';
 import { inMemoryStore } from '../core/memory-store.js';
 import type { UserRecord } from '../core/records.js';
 import { deleteUserSessions } from './session.repository.js';
@@ -33,11 +32,10 @@ export function mapRowToUser(row: any): UserRecord {
 
 export async function findUserByEmail(email: string): Promise<UserRecord | null> {
   const normalizedEmail = email.toLowerCase().trim();
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
-      const res = await p.query('SELECT * FROM users WHERE email = $1 AND deleted_at IS NULL', [normalizedEmail]);
+      const res = await db.query('SELECT * FROM users WHERE email = $1 AND deleted_at IS NULL', [normalizedEmail]);
       if (res.rows.length > 0) return res.rows[0];
     } catch (e) {
       handlePgError(e);
@@ -53,11 +51,10 @@ export async function findUserByEmail(email: string): Promise<UserRecord | null>
 }
 
 export async function findUserById(id: string): Promise<UserRecord | null> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
-      const res = await p.query('SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL', [id]);
+      const res = await db.query('SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL', [id]);
       if (res.rows.length > 0) return res.rows[0];
     } catch (e) {
       handlePgError(e);
@@ -86,14 +83,13 @@ export async function createUser(data: {
   const role = data.role || 'user';
   const emailVerified = data.emailVerified ?? false;
 
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
       // Spec F4：email 查重（sign-up 链路 findUserByEmail）已排除 deleted，
       // partial 唯一索引（WHERE deleted_at IS NULL）允许同邮箱注销后以新 id 重新注册，
       // 因此这里恢复纯新建——新注册者不继承已注销账号的旧数据
-      const res = await p.query(
+      const res = await db.query(
         `INSERT INTO users (id, email, password_hash, name, role, is_active, failed_attempts, email_verified, verify_token, verify_expires_at, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, TRUE, 0, $6, $7, $8, NOW(), NOW())
          RETURNING *`,
@@ -131,11 +127,10 @@ export async function createUser(data: {
  * 仅命中未过期（verify_expires_at > NOW()）的令牌；成功置 email_verified=true 并清空令牌，返回用户，否则 null。双模。
  */
 export async function markEmailVerifiedByToken(token: string): Promise<UserRecord | null> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
-      const res = await p.query(
+      const res = await db.query(
         `UPDATE users
          SET email_verified = TRUE, verify_token = NULL, verify_expires_at = NULL, updated_at = NOW()
          WHERE verify_token = $1 AND verify_expires_at > NOW()
@@ -170,10 +165,10 @@ export async function markEmailVerifiedByToken(token: string): Promise<UserRecor
  * Spec D3：写入/覆盖验证令牌（注册与重发共用）。双模。
  */
 export async function setVerificationToken(userId: string, token: string, expiresAt: string): Promise<void> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await p.query(
+      await db.query(
         `UPDATE users SET verify_token = $1, verify_expires_at = $2, updated_at = NOW() WHERE id = $3`,
         [token, expiresAt, userId]
       );
@@ -196,10 +191,10 @@ export async function setVerificationToken(userId: string, token: string, expire
  * Spec F1：写入/覆盖找回密码令牌（1h 有效）。双模。
  */
 export async function setPasswordResetToken(userId: string, token: string, expiresAt: string): Promise<void> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await p.query(
+      await db.query(
         `UPDATE users SET reset_token = $1, reset_expires_at = $2, updated_at = NOW() WHERE id = $3`,
         [token, expiresAt, userId]
       );
@@ -223,11 +218,10 @@ export async function setPasswordResetToken(userId: string, token: string, expir
  * 仅命中未过期（reset_expires_at > NOW()）的令牌；不清令牌（由 updateUserPassword 清空）。双模。
  */
 export async function markPasswordResetByToken(token: string): Promise<UserRecord | null> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
-      const res = await p.query(
+      const res = await db.query(
         `SELECT * FROM users WHERE reset_token = $1 AND reset_expires_at > NOW() AND deleted_at IS NULL`,
         [token]
       );
@@ -256,10 +250,10 @@ export async function markPasswordResetByToken(token: string): Promise<UserRecor
  * Spec F1：更新密码并清空找回密码令牌。双模。
  */
 export async function updateUserPassword(userId: string, passwordHash: string): Promise<void> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await p.query(
+      await db.query(
         `UPDATE users
          SET password_hash = $1, reset_token = NULL, reset_expires_at = NULL, updated_at = NOW()
          WHERE id = $2`,
@@ -288,10 +282,10 @@ export async function recordFailedLogin(userId: string): Promise<{ failedAttempt
   const attempts = (user.failed_attempts || 0) + 1;
   const lockedUntil = attempts >= 5 ? new Date(Date.now() + 15 * 60 * 1000).toISOString() : null;
 
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await p.query(
+      await db.query(
         `UPDATE users SET failed_attempts = $1, locked_until = $2, updated_at = NOW() WHERE id = $3`,
         [attempts, lockedUntil, userId]
       );
@@ -309,10 +303,10 @@ export async function recordFailedLogin(userId: string): Promise<{ failedAttempt
 }
 
 export async function resetFailedLogin(userId: string): Promise<void> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await p.query(
+      await db.query(
         `UPDATE users SET failed_attempts = 0, locked_until = NULL, last_login_at = NOW(), updated_at = NOW() WHERE id = $1`,
         [userId]
       );
@@ -344,10 +338,10 @@ export async function updateUserProfile(data: {
   const newName = data.name !== undefined ? data.name.trim() : user.name;
   const newAvatar = data.avatar !== undefined ? data.avatar : user.avatar;
 
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      const res = await p.query(
+      const res = await db.query(
         `UPDATE users SET name = $1, avatar = $2, updated_at = NOW() WHERE id = $3 RETURNING *`,
         [newName, newAvatar, data.userId]
       );
@@ -373,16 +367,16 @@ export async function updateUserProfile(data: {
 }
 
 export async function updateUserStatus(userId: string, isActive: boolean): Promise<UserRecord | null> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      const res = await p.query(
+      const res = await db.query(
         `UPDATE users SET is_active = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
         [isActive, userId]
       );
       if (!isActive) {
         // 冻结强制踢下线（保留原语义）
-        await p.query('DELETE FROM sessions WHERE user_id = $1', [userId]);
+        await db.query('DELETE FROM sessions WHERE user_id = $1', [userId]);
       }
       if (res.rows.length > 0) return res.rows[0];
     } catch (e) {
@@ -413,11 +407,10 @@ export async function updateVipMembership(data: {
   role: string;
   vipExpiresAt: string | null;
 }): Promise<UserRecord | null> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
-      const res = await p.query(
+      const res = await db.query(
         `UPDATE users
          SET role = $1,
              vip_expires_at = $2,
@@ -448,10 +441,10 @@ export async function updateVipMembership(data: {
  * 双模：PG UPDATE / 内存置 deleted_at。用户不存在返回 false。
  */
 export async function deleteAccount(userId: string): Promise<boolean> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      const res = await p.query(
+      const res = await db.query(
         `UPDATE users SET deleted_at = NOW(), is_active = FALSE, updated_at = NOW() WHERE id = $1`,
         [userId]
       );
@@ -498,12 +491,12 @@ function purgeUserDataMemory(userId: string): void {
 }
 
 export async function cleanupDeletedUsers(retentionDays: number): Promise<number> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
       const res = retentionDays <= 0
-        ? await p.query(`DELETE FROM users WHERE role <> 'admin' RETURNING id`)
-        : await p.query(
+        ? await db.query(`DELETE FROM users WHERE role <> 'admin' RETURNING id`)
+        : await db.query(
             `DELETE FROM users WHERE deleted_at IS NOT NULL AND deleted_at <= NOW() - make_interval(days => $1) RETURNING id`,
             [retentionDays]
           );
@@ -550,10 +543,10 @@ export async function cleanupDeletedUsers(retentionDays: number): Promise<number
  * 未注销或不存在返回 null。双模。
  */
 export async function restoreAccount(userId: string): Promise<UserRecord | null> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      const res = await p.query(
+      const res = await db.query(
         `UPDATE users SET deleted_at = NULL, is_active = TRUE, updated_at = NOW()
          WHERE id = $1 AND deleted_at IS NOT NULL
          RETURNING *`,
@@ -588,10 +581,10 @@ export async function updateUserEmail(
   verifyToken: string,
   verifyExpiresAt: string
 ): Promise<UserRecord | null> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      const res = await p.query(
+      const res = await db.query(
         `UPDATE users
          SET email = $1,
              email_verified = FALSE,

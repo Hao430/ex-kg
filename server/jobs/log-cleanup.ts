@@ -13,7 +13,8 @@ import { cleanupOldEventLogs } from '../repositories/event-log.repository.js';
 import { cleanupDeletedUsers } from '../repositories/user.repository.js';
 import { cleanupExpiredSessions } from '../repositories/session.repository.js';
 import { cleanupCanvasTombstones } from '../repositories/canvas.repository.js';
-import { initDbSchema } from '../core/schema.js';
+import { getDb } from '../core/db.js';
+import { runWithSystem } from '../core/db-context.js';
 
 const DAY_MS = 24 * 3600 * 1000;
 
@@ -26,15 +27,25 @@ export function startLogCleanupJob(): void {
 
   const run = async () => {
     try {
-      // 技术债 #0011：首跑前显式等 schema/PG 就绪（pg Pool 无连接超时，PG 冷启动慢时
-      // 会阻塞在此直到可连），避免启动竞态下首跑失败要等 24h 下一周期才真正清理
-      await initDbSchema();
-      const ai = await cleanupOldAiLogs(aiRetention);
-      const audit = await cleanupOldAuditLogs(auditRetention);
-      const events = await cleanupOldEventLogs(eventRetention);
-      const deletedUsers = await cleanupDeletedUsers(deletedUserRetention);
-      const expiredSessions = await cleanupExpiredSessions();
-      const tombstones = await cleanupCanvasTombstones(tombstoneRetention);
+      // 技术债 #0011：首跑前先探活 PG，避免启动竞态下首跑静默落内存分支造成「清理假成功」。
+      // 迁移已移出应用进程（ADR-0019，改为部署期 migrate 步骤），此处**只验连通性**，
+      // 不再借 initDbSchema 当就绪信号；池自带 3s 连接超时，不会无限阻塞。
+      await runWithSystem('log-cleanup: PG 连通性探活', async () => {
+        await getDb()?.query('SELECT 1');
+      });
+
+      // 六个清理任务全是跨租户批量删除，显式 system 作用域（ADR-0019）
+      const { ai, audit, events, deletedUsers, expiredSessions, tombstones } = await runWithSystem(
+        'log-cleanup: 每日留存清理（跨租户批量删除）',
+        async () => ({
+          ai: await cleanupOldAiLogs(aiRetention),
+          audit: await cleanupOldAuditLogs(auditRetention),
+          events: await cleanupOldEventLogs(eventRetention),
+          deletedUsers: await cleanupDeletedUsers(deletedUserRetention),
+          expiredSessions: await cleanupExpiredSessions(),
+          tombstones: await cleanupCanvasTombstones(tombstoneRetention),
+        })
+      );
       if (
         ai > 0 ||
         audit > 0 ||

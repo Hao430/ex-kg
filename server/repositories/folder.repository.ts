@@ -1,5 +1,4 @@
-import { getPool } from '../core/pool.js';
-import { initDbSchema } from '../core/schema.js';
+import { getDb } from '../core/db.js';
 import { inMemoryStore } from '../core/memory-store.js';
 import { AppError, ForbiddenError, NotFoundError, ValidationError } from '../lib/errors.js';
 import { handlePgError } from '../core/db-guard.js';
@@ -23,11 +22,10 @@ function toFolderRecord(row: any): FolderRecord {
 }
 
 export async function listFolders(userId: string): Promise<FolderRecord[]> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
-      const res = await p.query(
+      const res = await db.query(
         `SELECT id, user_id, name, sort_order, created_at, updated_at
          FROM folders WHERE user_id = $1
          ORDER BY sort_order ASC, created_at ASC`,
@@ -47,31 +45,29 @@ export async function listFolders(userId: string): Promise<FolderRecord[]> {
 }
 
 export async function createFolder(id: string, name: string, userId: string): Promise<FolderRecord> {
-  const p = getPool();
-  if (p) {
-    const client = await p.connect();
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
-      await client.query('BEGIN');
-      const res = await client.query(
-        `INSERT INTO folders (id, user_id, name)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (id) DO NOTHING
-         RETURNING id, user_id, name, sort_order, created_at, updated_at`,
-        [id, userId, name]
-      );
-      if (res.rowCount === 0) {
-        throw new ValidationError('分组已存在', 'FOLDER_EXISTS');
-      }
-      await client.query('COMMIT');
-      return toFolderRecord(res.rows[0]);
+      // 事务由 withTransaction 统一管理（BEGIN/COMMIT/ROLLBACK/release + 作用域注入），
+      // 仓储不再手写事务控制语句
+      const row = await db.withTransaction(async (client) => {
+        const res = await client.query(
+          `INSERT INTO folders (id, user_id, name)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (id) DO NOTHING
+           RETURNING id, user_id, name, sort_order, created_at, updated_at`,
+          [id, userId, name]
+        );
+        if (res.rowCount === 0) {
+          throw new ValidationError('分组已存在', 'FOLDER_EXISTS');
+        }
+        return res.rows[0];
+      });
+      return toFolderRecord(row);
     } catch (e) {
-      await client.query('ROLLBACK');
       if (e instanceof AppError) throw e;
       handlePgError(e);
       console.warn(`PG createFolder(${id}) fallback to in-memory:`, e);
-    } finally {
-      client.release();
     }
   }
 
@@ -92,15 +88,14 @@ export async function createFolder(id: string, name: string, userId: string): Pr
 }
 
 export async function renameFolder(id: string, name: string, userId: string): Promise<FolderRecord> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
-      const owner = await p.query('SELECT user_id FROM folders WHERE id = $1', [id]);
+      const owner = await db.query('SELECT user_id FROM folders WHERE id = $1', [id]);
       if (owner.rows.length === 0) throw new NotFoundError('分组不存在');
       if (owner.rows[0].user_id !== userId) throw new ForbiddenError('无权修改其他用户的分组', 'FOLDER_FORBIDDEN');
 
-      const res = await p.query(
+      const res = await db.query(
         `UPDATE folders SET name = $2, updated_at = NOW() WHERE id = $1
          RETURNING id, user_id, name, sort_order, created_at, updated_at`,
         [id, name]
@@ -123,27 +118,22 @@ export async function renameFolder(id: string, name: string, userId: string): Pr
 
 /** 删除分组：解除组内画板归属后删除；不级联删画板。 */
 export async function deleteFolder(id: string, userId: string): Promise<boolean> {
-  const p = getPool();
-  if (p) {
-    const client = await p.connect();
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
-      await client.query('BEGIN');
-      const owner = await client.query('SELECT user_id FROM folders WHERE id = $1', [id]);
-      if (owner.rows.length === 0) throw new NotFoundError('分组不存在');
-      if (owner.rows[0].user_id !== userId) throw new ForbiddenError('无权删除其他用户的分组', 'FOLDER_FORBIDDEN');
+      return await db.withTransaction(async (client) => {
+        const owner = await client.query('SELECT user_id FROM folders WHERE id = $1', [id]);
+        if (owner.rows.length === 0) throw new NotFoundError('分组不存在');
+        if (owner.rows[0].user_id !== userId) throw new ForbiddenError('无权删除其他用户的分组', 'FOLDER_FORBIDDEN');
 
-      await client.query('UPDATE canvases SET folder_id = NULL WHERE folder_id = $1', [id]);
-      await client.query('DELETE FROM folders WHERE id = $1', [id]);
-      await client.query('COMMIT');
-      return true;
+        await client.query('UPDATE canvases SET folder_id = NULL WHERE folder_id = $1', [id]);
+        await client.query('DELETE FROM folders WHERE id = $1', [id]);
+        return true;
+      });
     } catch (e) {
-      await client.query('ROLLBACK');
       if (e instanceof AppError) throw e;
       handlePgError(e);
       console.warn(`PG deleteFolder(${id}) fallback to in-memory:`, e);
-    } finally {
-      client.release();
     }
   }
 
@@ -159,11 +149,10 @@ export async function deleteFolder(id: string, userId: string): Promise<boolean>
 
 /** 校验分组归属：供画板 meta 更新时防跨租户挂载 */
 export async function getFolderOwnerInfo(id: string): Promise<{ exists: boolean; ownerId: string | null }> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
-      const res = await p.query('SELECT user_id FROM folders WHERE id = $1', [id]);
+      const res = await db.query('SELECT user_id FROM folders WHERE id = $1', [id]);
       return { exists: res.rows.length > 0, ownerId: res.rows[0]?.user_id ?? null };
     } catch (e) {
       handlePgError(e);

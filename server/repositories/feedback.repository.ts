@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { getPool } from '../core/pool.js';
+import { getDb } from '../core/db.js';
 import { inMemoryStore } from '../core/memory-store.js';
 import type { FeedbackRecord } from '../core/records.js';
 import { handlePgError } from '../core/db-guard.js';
@@ -19,10 +19,10 @@ export async function createFeedback(data: {
   const content = data.content.trim();
   const contactInfo = data.contactInfo?.trim() || '';
 
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      const res = await p.query(
+      const res = await db.query(
         `INSERT INTO feedbacks (id, user_id, user_email, type, rating, content, contact_info, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
          RETURNING *`,

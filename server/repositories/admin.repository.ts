@@ -1,5 +1,4 @@
-import { getPool } from '../core/pool.js';
-import { initDbSchema } from '../core/schema.js';
+import { getDb } from '../core/db.js';
 import { inMemoryStore } from '../core/memory-store.js';
 import type { UserRecord } from '../core/records.js';
 import { handlePgError } from '../core/db-guard.js';
@@ -15,10 +14,9 @@ export async function listAdminUsers(params: {
   const limit = Math.min(100, Math.max(1, params.limit || 10));
   const offset = (page - 1) * limit;
 
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
       let whereClause = 'u.deleted_at IS NULL'; // Spec F4：Admin 列表默认排除已注销
       const values: any[] = [];
 
@@ -36,13 +34,13 @@ export async function listAdminUsers(params: {
         whereClause += ` AND u.is_active = FALSE`;
       }
 
-      const countRes = await p.query(
+      const countRes = await db.query(
         `SELECT COUNT(*) as total FROM users u WHERE ${whereClause}`,
         values
       );
       const total = parseInt(countRes.rows[0].total, 10);
 
-      const listRes = await p.query(
+      const listRes = await db.query(
         `SELECT u.*,
                 COALESCE((SELECT COUNT(*) FROM canvases c WHERE c.user_id = u.id AND c.deleted_at IS NULL), 0)::int as canvas_count,
                 COALESCE((SELECT SUM(total_tokens) FROM ai_request_logs al WHERE al.user_id = u.id AND al.status = 'success'), 0)::int as total_tokens_used
@@ -105,30 +103,29 @@ export async function getAdminOverview(): Promise<{
   monthlyTokens: number;
   modelDistribution: Record<string, number>;
 }> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
       // 与 listAdminUsers 同口径（2026-09-10）：排除已注销用户及其画板，保证两处数字可对齐
-      const uRes = await p.query('SELECT COUNT(*) as count FROM users WHERE deleted_at IS NULL');
-      const wauRes = await p.query(
+      const uRes = await db.query('SELECT COUNT(*) as count FROM users WHERE deleted_at IS NULL');
+      const wauRes = await db.query(
         `SELECT COUNT(DISTINCT s.user_id) as count FROM sessions s
          JOIN users u ON u.id = s.user_id
          WHERE s.created_at >= NOW() - INTERVAL '7 days' AND u.deleted_at IS NULL`
       );
-      const vipRes = await p.query(`SELECT COUNT(*) as count FROM users WHERE role = 'vip' AND deleted_at IS NULL`);
-      const cRes = await p.query(
+      const vipRes = await db.query(`SELECT COUNT(*) as count FROM users WHERE role = 'vip' AND deleted_at IS NULL`);
+      const cRes = await db.query(
         `SELECT COUNT(*) as count FROM canvases c
          JOIN users u ON u.id = c.user_id
          WHERE c.deleted_at IS NULL AND u.deleted_at IS NULL`
       );
-      const todayTokensRes = await p.query(
+      const todayTokensRes = await db.query(
         `SELECT COALESCE(SUM(total_tokens), 0) as total FROM ai_request_logs WHERE created_at >= CURRENT_DATE AND status = 'success'`
       );
-      const monthTokensRes = await p.query(
+      const monthTokensRes = await db.query(
         `SELECT COALESCE(SUM(total_tokens), 0) as total FROM ai_request_logs WHERE created_at >= DATE_TRUNC('month', CURRENT_DATE) AND status = 'success'`
       );
-      const modelDistRes = await p.query(
+      const modelDistRes = await db.query(
         `SELECT model_name, COUNT(*) as count FROM ai_request_logs WHERE status = 'success' GROUP BY model_name`
       );
 

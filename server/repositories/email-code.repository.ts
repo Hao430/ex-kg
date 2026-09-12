@@ -1,5 +1,4 @@
-import { getPool } from '../core/pool.js';
-import { initDbSchema } from '../core/schema.js';
+import { getDb } from '../core/db.js';
 import { inMemoryStore } from '../core/memory-store.js';
 import type { EmailCodeRecord } from '../core/records.js';
 import { handlePgError } from '../core/db-guard.js';
@@ -15,13 +14,12 @@ function isExpired(rec: EmailCodeRecord): boolean {
  * 注册邮箱验证码：写入/覆盖验证码（attempts 归零），并机会式清理已过期行。双模。
  */
 export async function upsertCode(email: string, code: string, expiresAt: string): Promise<void> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
       // 机会式清理：写入新码时顺带删除全表过期行（表基数 ≤ distinct 尝试邮箱数，无增长风险）
-      await p.query(`DELETE FROM email_verification_codes WHERE expires_at < NOW()`);
-      await p.query(
+      await db.query(`DELETE FROM email_verification_codes WHERE expires_at < NOW()`);
+      await db.query(
         `INSERT INTO email_verification_codes (email, code, attempts, expires_at, updated_at)
          VALUES ($1, $2, 0, $3, NOW())
          ON CONFLICT (email) DO UPDATE SET code = $2, attempts = 0, expires_at = $3, updated_at = NOW()`,
@@ -50,10 +48,10 @@ export async function upsertCode(email: string, code: string, expiresAt: string)
  * 注册邮箱验证码：读取（供发送冷却判断）。过期视为不存在。双模。
  */
 export async function getCode(email: string): Promise<EmailCodeRecord | null> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      const res = await p.query(
+      const res = await db.query(
         `SELECT * FROM email_verification_codes WHERE email = $1 AND expires_at > NOW()`,
         [email]
       );
@@ -86,25 +84,25 @@ export async function consumeCode(
   email: string,
   code: string
 ): Promise<{ result: 'ok' } | { result: 'invalid' } | { result: 'mismatch'; attempts: number }> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      const del = await p.query(
+      const del = await db.query(
         `DELETE FROM email_verification_codes WHERE email = $1 AND code = $2 AND expires_at > NOW()`,
         [email, code]
       );
       if (del.rowCount && del.rowCount > 0) return { result: 'ok' };
 
-      const sel = await p.query(
+      const sel = await db.query(
         `SELECT attempts FROM email_verification_codes WHERE email = $1 AND expires_at > NOW()`,
         [email]
       );
       if (sel.rows.length === 0) return { result: 'invalid' };
       const attempts = Number(sel.rows[0].attempts) + 1;
       if (attempts >= EMAIL_CODE_MAX_ATTEMPTS) {
-        await p.query(`DELETE FROM email_verification_codes WHERE email = $1`, [email]);
+        await db.query(`DELETE FROM email_verification_codes WHERE email = $1`, [email]);
       } else {
-        await p.query(
+        await db.query(
           `UPDATE email_verification_codes SET attempts = $2, updated_at = NOW() WHERE email = $1`,
           [email, attempts]
         );

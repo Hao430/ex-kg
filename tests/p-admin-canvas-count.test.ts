@@ -165,8 +165,8 @@ describe('P0 admin 每用户画布数排除软删', () => {
   });
 
   test('内存模式硬清理级联删除画板数据（对齐 PG CASCADE）', async () => {
-    const { getPool } = await import('../server/core/pool.js');
-    if (getPool()) return; // 连了真库时交由 tests/pg 覆盖，避免误删
+    const { getSystemPool } = await import('../server/core/pool.js');
+    if (getSystemPool()) return; // 连了真库时交由 tests/pg 覆盖，避免误删
 
     const { inMemoryStore } = await import('../server/core/memory-store.js');
     const { cleanupDeletedUsers } = await import('../server/repositories/user.repository.js');

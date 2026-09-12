@@ -21,6 +21,7 @@ import { asyncHandler } from '../lib/async-handler.js';
 import { checkDbStatus } from '../core/db-status.js';
 import { validate } from '../lib/validate.js';
 import { authMiddleware, requireAdmin, adminLogReadRateLimiter } from '../middleware/auth.js';
+import { runWithSystem } from '../core/db-context.js';
 import { GoogleGenAI } from '@google/genai';
 
 export const adminRouter = Router();
@@ -28,6 +29,11 @@ export const adminRouter = Router();
 // Apply auth and admin check to all admin routes
 adminRouter.use(authMiddleware);
 adminRouter.use(requireAdmin);
+
+// 运营台的聚合统计/日志/用户管理**必然跨租户**（ADR-0016 保留的 admin 能力就只有这些），
+// 因此在鉴权通过后整台路由切到 system 作用域（ADR-0019）。位置必须在 requireAdmin 之后：
+// 作用域是「已确认是管理员」才授予的跨租户通行证，不是路由自带属性。
+adminRouter.use((_req, _res, next) => runWithSystem('admin: 跨租户运营台聚合与用户管理（ADR-0016）', next));
 
 /**
  * GET /api/admin/overview

@@ -1,6 +1,5 @@
 import crypto from 'node:crypto';
-import { getPool } from '../core/pool.js';
-import { initDbSchema } from '../core/schema.js';
+import { getDb } from '../core/db.js';
 import { inMemoryStore, trimEventLogs } from '../core/memory-store.js';
 import type { EventLogRecord } from '../core/records.js';
 import { handlePgError } from '../core/db-guard.js';
@@ -26,11 +25,10 @@ export async function recordEventLog(data: RecordEventLogData): Promise<void> {
     const id = crypto.randomUUID();
     const details = data.details ?? {};
 
-    const p = getPool();
-    if (p) {
+    const db = getDb();
+    if (db) {
       try {
-        await initDbSchema();
-        await p.query(
+        await db.query(
           `INSERT INTO event_logs (id, category, event, entity_type, entity_id, user_id, num1, num2, details)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)`,
           [
@@ -85,10 +83,9 @@ export async function listEventLogs(params: {
   const limit = Math.min(200, Math.max(1, params.limit || 10));
   const offset = (page - 1) * limit;
 
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
       let whereClause = '1=1';
       const values: any[] = [];
 
@@ -105,13 +102,13 @@ export async function listEventLogs(params: {
         whereClause += ` AND user_id = $${values.length}::uuid`;
       }
 
-      const countRes = await p.query(
+      const countRes = await db.query(
         `SELECT COUNT(*) as total FROM event_logs WHERE ${whereClause}`,
         values
       );
       const total = parseInt(countRes.rows[0].total, 10);
 
-      const listRes = await p.query(
+      const listRes = await db.query(
         `SELECT * FROM event_logs
          WHERE ${whereClause}
          ORDER BY created_at DESC
@@ -157,12 +154,12 @@ export async function listEventLogs(params: {
  * Spec I：清理超过留存期的业务事件。retentionDays=0 表示全清（测试用）。
  */
 export async function cleanupOldEventLogs(retentionDays: number): Promise<number> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
       const res = retentionDays <= 0
-        ? await p.query(`DELETE FROM event_logs RETURNING id`)
-        : await p.query(
+        ? await db.query(`DELETE FROM event_logs RETURNING id`)
+        : await db.query(
             `DELETE FROM event_logs WHERE created_at < NOW() - make_interval(days => $1) RETURNING id`,
             [retentionDays]
           );

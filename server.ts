@@ -4,10 +4,19 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 
 import { initDbSchema } from './server/core/schema.js';
+import { checkRuntimeDbRoleInvariants } from './server/core/pool.js';
 import { startLogCleanupJob } from './server/jobs/log-cleanup.js';
 import { createApp } from './server/app.js';
 
 dotenv.config();
+
+// 数据库角色不变量（ADR-0019）：owner 凭据不得出现在运行期进程；生产必须显式配
+// DATABASE_SYSTEM_URL。响亮拒绝启动，好过带着静默错误（跨租户路径被 RLS 拦成零行）对外服务。
+const roleProblems = checkRuntimeDbRoleInvariants();
+if (roleProblems.length > 0) {
+  for (const problem of roleProblems) console.error(`❌ ${problem}`);
+  process.exit(1);
+}
 
 // CJS 兼容：esbuild bundle 下 import.meta.url 为空，用 process.cwd() 代替
 const __dirname = process.cwd();

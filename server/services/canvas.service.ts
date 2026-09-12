@@ -14,14 +14,29 @@ import { assertCanCreateBoard } from './quota.service.js';
 import { findUserById } from '../repositories/user.repository.js';
 import { recordAuditLog } from '../repositories/audit.repository.js';
 import { recordEventLog } from '../repositories/event-log.repository.js';
+import { runWithSystem } from '../core/db-context.js';
 import type { CanvasRecord } from '../core/records.js';
+
+/**
+ * ADR-0018 的 legacy 共享默认板：`default-board` / `default-canvas` 在 SAVE_DEFAULT_BOARD_MODE
+ * 未翻 private 期间对**全体登录用户**放行读写。这是唯一一条绕过严格属主制（ADR-0016）的路径，
+ * 而 RLS 策略 `user_id = current_setting('app.user_id')` 无法表达「任何登录用户可读写这一行」。
+ *
+ * 因此放行**显式**留在组合层：判据命中时把这次仓储调用升级为 system 作用域（BYPASSRLS），
+ * 并留下可审计的 reason。仓储自身永不升级（ADR-0019）——升级点必须能在 grep 里一眼数清。
+ * 随技术债 #0084 翻 private 后本函数退化为直通，删除它即彻底关闭该旁路。
+ */
+function withLegacySharedBoard<T>(canvasId: string, fn: () => T): T {
+  if (!isSharedDefaultCanvas(canvasId)) return fn();
+  return runWithSystem('legacy shared default board（ADR-0018，随 #0084 下线）', fn);
+}
 
 export async function listUserCanvases(userId: string): Promise<CanvasRecord[]> {
   return listCanvases(userId);
 }
 
 export async function getCanvasOrFail(canvasId: string, userId: string): Promise<CanvasRecord> {
-  const canvas = await getCanvas(canvasId, userId);
+  const canvas = await withLegacySharedBoard(canvasId, () => getCanvas(canvasId, userId));
   if (!canvas) {
     throw new NotFoundError('画板不存在或无权访问 (IDOR Protected)');
   }
@@ -52,7 +67,7 @@ export async function saveUserCanvas(
           if (user) await assertCanCreateBoard(user);
         }
       };
-  const record = await saveCanvas(data, userId, quotaGate);
+  const record = await withLegacySharedBoard(data.id, () => saveCanvas(data, userId, quotaGate));
 
   // 服务端画板创建事实源（前端 Umami board_create 有拦截丢失率，此处为准）。
   // 埋点绝不阻塞业务：fire-and-forget，仅保存成功后落一条（更新/冲突/404 均不记）。
@@ -96,7 +111,7 @@ export async function updateUserCanvasMeta(
  * 画布尚未落库（首节点对话先于首次自动保存）→ 放行。
  */
 export async function assertCanvasAttributableByUser(canvasId: string, userId: string): Promise<void> {
-  const info = await getCanvasOwnerInfo(canvasId);
+  const info = await withLegacySharedBoard(canvasId, () => getCanvasOwnerInfo(canvasId));
   if (info.exists && info.ownerId !== userId && !isSharedDefaultCanvas(canvasId)) {
     throw new NotFoundError('画板不存在或无权访问 (IDOR Protected)');
   }

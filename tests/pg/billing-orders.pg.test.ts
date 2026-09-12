@@ -25,7 +25,7 @@ process.env.DATABASE_URL =
   process.env.PG_TEST_URL || 'postgres://postgres:postgres@127.0.0.1:5433/arborize_test';
 
 const { initDbSchema } = await import('../../server/core/schema.js');
-const { getPool } = await import('../../server/core/pool.js');
+const { getSystemPool } = await import('../../server/core/pool.js');
 const { createOrder, updateOrderStatus, findOrderByNo } = await import(
   '../../server/repositories/billing.repository.js'
 );
@@ -35,7 +35,7 @@ let userId = '';
 /** 建一个临时属主用户（orders.user_id 有外键约束） */
 before(async () => {
   await initDbSchema();
-  const p = getPool();
+  const p = getSystemPool();
   if (!p) throw new Error('PG 未就绪：请检查 DATABASE_URL / PG_TEST_URL（或先起 pg-smoke 容器）');
   const res = await p.query(
     `INSERT INTO users (email, password_hash, name) VALUES ($1, 'pg-smoke-hash', 'pg-smoke') RETURNING id`,
@@ -45,7 +45,7 @@ before(async () => {
 });
 
 after(async () => {
-  const p = getPool();
+  const p = getSystemPool();
   if (!p) return;
   if (userId) {
     await p.query('DELETE FROM orders WHERE user_id = $1', [userId]);

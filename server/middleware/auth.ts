@@ -4,6 +4,7 @@ import { findSession } from '../repositories/session.repository.js';
 import type { UserRecord, SessionRecord } from '../core/records.js';
 import { UnauthorizedError } from '../lib/errors.js';
 import { extractSessionToken, clearSessionCookie } from '../lib/session-cookie.js';
+import { runWithSystem, runWithUser } from '../core/db-context.js';
 
 // Extend Express Request type
 declare global {
@@ -222,29 +223,41 @@ export function extractToken(req: Request): string | null {
 export async function authMiddleware(req: Request, _res: Response, next: NextFunction): Promise<void> {
   const token = extractToken(req);
 
+  // 会话查询是**先有鸡还是先有蛋**的那一步：此刻还不知道请求属于哪个用户，
+  // 只能按 token 跨租户查 sessions ⋈ users（ADR-0019 的 system 作用域）。
+  // 查询与「进入下游」严格分开：next() 会同步进入整条下游链，把它留在 try 里
+  // 会让任何下游同步抛错都被当成「会话查询失败」吞掉、再 next() 第二次。
+  let authResult: { user: UserRecord; session: SessionRecord } | null = null;
   if (token) {
     try {
-      const result = await findSession(token);
-      if (result) {
-        const { session, user } = result;
-
-        if (!user.is_active) {
-          clearSessionCookie(_res);
-          _res.status(403).json({
-            error: '账号已被系统冻结，请联系运营管理员',
-            code: 'ACCOUNT_FROZEN',
-          });
-          return;
-        }
-
-        req.user = user;
-        req.session = session;
-        next();
-        return;
-      }
+      authResult = await runWithSystem('auth: 按 token 跨租户查 sessions ⋈ users', () =>
+        findSession(token)
+      );
     } catch (error) {
       console.error('Session lookup error:', error);
     }
+  }
+
+  if (authResult) {
+    const { session, user } = authResult;
+
+    if (!user.is_active) {
+      clearSessionCookie(_res);
+      _res.status(403).json({
+        error: '账号已被系统冻结，请联系运营管理员',
+        code: 'ACCOUNT_FROZEN',
+      });
+      return;
+    }
+
+    req.user = user;
+    req.session = session;
+    // 从这一刻起整条下游调用链都在该用户作用域内：路由 → service → repository
+    // 的每条查询都会带上 app.user_id，RLS 生效。
+    // ⚠️ 依赖 Express 4 的 next() 是**同步**进入下游（下游 async 函数在同一 ALS
+    // 上下文里开始执行），由 tests/pg/db-scope.pg.test.ts 独立锁定。
+    runWithUser(user.id, () => next());
+    return;
   }
 
   next(new UnauthorizedError());

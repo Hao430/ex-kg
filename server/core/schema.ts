@@ -1,4 +1,4 @@
-import { getPool } from './pool.js';
+import { getMigrationPool } from './pool.js';
 import { hashPassword } from '../lib/crypto.js';
 
 let schemaInitialized = false;
@@ -7,7 +7,7 @@ let schemaInitialized = false;
  * Initialize PostgreSQL tables and seed default users if not present
  */
 export async function initDbSchema(): Promise<boolean> {
-  const p = getPool();
+  const p = getMigrationPool();
   if (!p) return false;
   if (schemaInitialized) return true;
 

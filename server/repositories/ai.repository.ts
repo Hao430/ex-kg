@@ -1,5 +1,4 @@
-import { getPool } from '../core/pool.js';
-import { initDbSchema } from '../core/schema.js';
+import { getDb } from '../core/db.js';
 import { inMemoryStore } from '../core/memory-store.js';
 import { DEFAULT_AI_MODEL_CONFIG } from '../core/records.js';
 import type { AiModelConfig, AiRequestLogRecord } from '../core/records.js';
@@ -31,7 +30,7 @@ export async function recordAiRequestLog(data: {
   resetCount?: number;
   candidateFailures?: number;
 }): Promise<AiRequestLogRecord> {
-  const p = getPool();
+  const db = getDb();
   const now = new Date().toISOString();
   const log: AiRequestLogRecord = {
     id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -58,9 +57,9 @@ export async function recordAiRequestLog(data: {
     created_at: now,
   };
 
-  if (p) {
+  if (db) {
     try {
-      await p.query(
+      await db.query(
         `INSERT INTO ai_request_logs (
            user_id, canvas_id, node_id, model_name, prompt_tokens,
            completion_tokens, total_tokens, latency_ms, status, error_message,
@@ -120,10 +119,9 @@ export async function listAiRequestLogs(params: {
   const limit = Math.min(200, Math.max(1, params.limit || 10));
   const offset = (page - 1) * limit;
 
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
       let whereClause = '1=1';
       const values: any[] = [];
 
@@ -136,13 +134,13 @@ export async function listAiRequestLogs(params: {
         whereClause += ` AND user_id = $${values.length}::uuid`;
       }
 
-      const countRes = await p.query(
+      const countRes = await db.query(
         `SELECT COUNT(*) as total FROM ai_request_logs WHERE ${whereClause}`,
         values
       );
       const total = parseInt(countRes.rows[0].total, 10);
 
-      const listRes = await p.query(
+      const listRes = await db.query(
         `SELECT * FROM ai_request_logs
          WHERE ${whereClause}
          ORDER BY created_at DESC
@@ -185,15 +183,14 @@ export async function listAiRequestLogs(params: {
  * Get current system AI Model & API Provider configuration
  */
 export async function getAiModelConfig(): Promise<AiModelConfig> {
-  const pool = getPool();
-  if (!pool) {
+  const db = getDb();
+  if (!db) {
     const cached = inMemoryStore.systemSettings.get('ai_model_config');
     return cached ? { ...DEFAULT_AI_MODEL_CONFIG, ...cached } : { ...DEFAULT_AI_MODEL_CONFIG };
   }
 
   try {
-    await initDbSchema();
-    const res = await pool.query('SELECT value FROM system_settings WHERE key = $1', ['ai_model_config']);
+    const res = await db.query('SELECT value FROM system_settings WHERE key = $1', ['ai_model_config']);
     if (res.rows.length > 0) {
       return { ...DEFAULT_AI_MODEL_CONFIG, ...res.rows[0].value };
     }
@@ -212,11 +209,10 @@ export async function getAiModelConfig(): Promise<AiModelConfig> {
  * 保证默认模型的唯一来源是管理后台，而非代码内硬编码兜底。
  */
 export async function getSavedAiModelConfig(): Promise<Partial<AiModelConfig> | null> {
-  const pool = getPool();
-  if (pool) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
-      const res = await pool.query('SELECT value FROM system_settings WHERE key = $1', ['ai_model_config']);
+      const res = await db.query('SELECT value FROM system_settings WHERE key = $1', ['ai_model_config']);
       if (res.rows.length > 0) {
         return res.rows[0].value as Partial<AiModelConfig>;
       }
@@ -235,11 +231,10 @@ export async function getSavedAiModelConfig(): Promise<Partial<AiModelConfig> | 
  * 读取口径一致：user_id 维度、created_at ISO 字符串）。
  */
 export async function sumUserTokensSince(userId: string, sinceMs: number): Promise<number> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
-      const res = await p.query(
+      const res = await db.query(
         `SELECT COALESCE(SUM(total_tokens), 0)::bigint AS total
          FROM ai_request_logs
          WHERE user_id = $1 AND created_at >= $2`,
@@ -268,11 +263,10 @@ export async function sumUserTokensSince(userId: string, sinceMs: number): Promi
     updated_by: operatorEmail || current.updated_by || 'admin',
   };
 
-  const pool = getPool();
-  if (pool) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
-      await pool.query(
+      await db.query(
         `INSERT INTO system_settings (key, value, updated_at)
          VALUES ($1, $2, NOW())
          ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
@@ -294,13 +288,12 @@ export async function sumUserTokensSince(userId: string, sinceMs: number): Promi
  * Spec F6：清理超过留存期的 AI 推演日志。retentionDays=0 表示全清（测试用）。
  */
 export async function cleanupOldAiLogs(retentionDays: number): Promise<number> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
       const res = retentionDays <= 0
-        ? await p.query(`DELETE FROM ai_request_logs RETURNING id`)
-        : await p.query(
+        ? await db.query(`DELETE FROM ai_request_logs RETURNING id`)
+        : await db.query(
             `DELETE FROM ai_request_logs WHERE created_at < NOW() - make_interval(days => $1) RETURNING id`,
             [retentionDays]
           );

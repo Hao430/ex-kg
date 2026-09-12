@@ -5,7 +5,9 @@
  * 都遵循"PG 优先 + 内存兜底"双模写法（ADR-0002）。
  *
  * 判据（粗略文本扫描）：
- *   - 函数体内同时出现 `getPool` 与 `inMemoryStore` 关键字
+ *   - 函数体内同时出现 `getDb` 与 `inMemoryStore` 关键字
+ *     （2026-09-12 起判据由 `getPool` 换为 `getDb`：仓储不再直连连接池，
+ *      一律走带作用域校验的句柄 `server/core/db.ts`，见 ADR-0019）
  *   - 出现 `try {` ... `catch` 模式（兜底分支）
  *
  * 豁免清单（ALLOWLIST）：某些辅助函数（如纯映射、纯记录类型导出）不强制双模。
@@ -125,8 +127,9 @@ test('repositories 目录下所有 export async function 都遵循双模写法�
 
       const body = extractFunctionBody(content, fn.start);
 
-      // 双模判据：函数体同时引用 getPool 与 inMemoryStore
-      const usesPool = /getPool\s*\(/.test(body);
+      // 双模判据：函数体同时引用 getDb 与 inMemoryStore（判据随 ADR-0019 由 getPool 收紧为 getDb：
+      // getDb() 是唯一句柄，直连连接池的写法已被移除，不得回退）
+      const usesPool = /getDb\s*\(/.test(body);
       const usesMemory = /inMemoryStore\./.test(body);
 
       if (!usesPool || !usesMemory) {

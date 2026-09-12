@@ -1,6 +1,5 @@
 import crypto from 'node:crypto';
-import { getPool } from '../core/pool.js';
-import { initDbSchema } from '../core/schema.js';
+import { getDb } from '../core/db.js';
 import { inMemoryStore } from '../core/memory-store.js';
 import type { SessionRecord, UserRecord } from '../core/records.js';
 import { handlePgError } from '../core/db-guard.js';
@@ -26,10 +25,10 @@ export async function createSession(data: {
     created_at: now.toISOString(),
   };
 
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await p.query(
+      await db.query(
         `INSERT INTO sessions (id, user_id, token, expires_at, ip_address, user_agent, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
         [id, data.userId, data.token, expiresAt, data.ipAddress || null, data.userAgent || null]
@@ -47,11 +46,10 @@ export async function createSession(data: {
 }
 
 export async function findSession(token: string): Promise<{ session: SessionRecord; user: UserRecord } | null> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
-      const res = await p.query(
+      const res = await db.query(
         `SELECT s.id as session_id, s.user_id, s.token, s.expires_at, s.ip_address, s.user_agent, s.created_at as session_created_at,
                 u.id as u_id, u.email, u.password_hash, u.name, u.avatar, u.role, u.vip_expires_at, u.email_verified, u.is_active, u.failed_attempts, u.locked_until, u.last_login_at, u.created_at as user_created_at, u.updated_at as user_updated_at
          FROM sessions s
@@ -108,10 +106,10 @@ export async function findSession(token: string): Promise<{ session: SessionReco
 export const findSessionByToken = findSession;
 
 export async function deleteSession(token: string): Promise<boolean> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await p.query('DELETE FROM sessions WHERE token = $1', [token]);
+      await db.query('DELETE FROM sessions WHERE token = $1', [token]);
     } catch (e) {
       handlePgError(e);
       console.warn('PG deleteSession failed:', e);
@@ -123,10 +121,10 @@ export async function deleteSession(token: string): Promise<boolean> {
 
 export async function deleteUserSessions(userId: string): Promise<number> {
   let count = 0;
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      const res = await p.query('DELETE FROM sessions WHERE user_id = $1', [userId]);
+      const res = await db.query('DELETE FROM sessions WHERE user_id = $1', [userId]);
       count = res.rowCount || 0;
     } catch (e) {
       handlePgError(e);
@@ -149,11 +147,10 @@ export async function deleteUserSessions(userId: string): Promise<number> {
  */
 export async function cleanupExpiredSessions(): Promise<number> {
   let count = 0;
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
-      const res = await p.query('DELETE FROM sessions WHERE expires_at < NOW()');
+      const res = await db.query('DELETE FROM sessions WHERE expires_at < NOW()');
       count = res.rowCount || 0;
     } catch (e) {
       handlePgError(e);

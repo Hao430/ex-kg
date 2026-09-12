@@ -25,7 +25,7 @@ process.env.DATABASE_URL =
 process.env.APP_URL = process.env.APP_URL || 'http://127.0.0.1:3000';
 
 const { createApp } = await import('../../server/app.js');
-const { getPool } = await import('../../server/core/pool.js');
+const { getSystemPool } = await import('../../server/core/pool.js');
 
 let server: http.Server;
 let base = '';
@@ -92,7 +92,7 @@ async function getCanvas(id: string): Promise<any> {
 
 /** 直查行：rev / deleted_at 不经 API 暴露，只能从库里看 */
 async function row(sql: string, params: any[]): Promise<any[]> {
-  const p = getPool()!;
+  const p = getSystemPool()!;
   const res = await p.query(sql, params);
   return res.rows;
 }

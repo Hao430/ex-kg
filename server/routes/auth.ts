@@ -11,6 +11,7 @@ import { asyncHandler } from '../lib/async-handler.js';
 import { validate } from '../lib/validate.js';
 import { effectiveEntitlements } from '../services/quota.service.js';
 import { setSessionCookie, clearSessionCookie, extractSessionToken } from '../lib/session-cookie.js';
+import { runWithSystem } from '../core/db-context.js';
 import { authMiddleware, loginRateLimiter, signupRateLimiter, resendVerificationRateLimiter, forgotPasswordRateLimiter, sendRegisterCodeRateLimiter } from '../middleware/auth.js';
 
 export const authRouter = Router();
@@ -92,7 +93,10 @@ function publicUser(user: {
  */
 authRouter.post('/send-register-code', sendRegisterCodeRateLimiter, asyncHandler(async (req: Request, res: Response) => {
   const { email } = validate(SendRegisterCodeSchema, req.body);
-  await sendRegisterCode(email);
+  // 账号建立前按 email 寻址 → 跨租户（ADR-0019 显式豁免，见 ADR-0019「作用域清单」）
+  await runWithSystem('auth: send-register-code 按 email 查重（账号建立前无租户）', () =>
+    sendRegisterCode(email)
+  );
   res.json({ success: true, message: '验证码已发送至您的邮箱，10 分钟内有效' });
 }));
 
@@ -102,14 +106,17 @@ authRouter.post('/send-register-code', sendRegisterCodeRateLimiter, asyncHandler
  */
 authRouter.post('/sign-up', signupRateLimiter, asyncHandler(async (req: Request, res: Response) => {
   const { email, password, code, name } = validate(SignUpSchema, req.body);
-  const { user, token } = await signUp({
-    email,
-    password,
-    code,
-    name,
-    ip: req.ip,
-    userAgent: req.headers['user-agent'],
-  });
+  // 建号前按 email 查重、消费验证码，全是跨租户寻址
+  const { user, token } = await runWithSystem('auth: sign-up 按 email 查重并建号（账号建立前无租户）', () =>
+    signUp({
+      email,
+      password,
+      code,
+      name,
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+    })
+  );
 
   setSessionCookie(res, token);
 
@@ -127,12 +134,15 @@ authRouter.post('/sign-up', signupRateLimiter, asyncHandler(async (req: Request,
  */
 authRouter.post('/sign-in', loginRateLimiter, asyncHandler(async (req: Request, res: Response) => {
   const { email, password } = validate(SignInSchema, req.body);
-  const { user, token } = await signIn({
-    email,
-    password,
-    ip: req.ip,
-    userAgent: req.headers['user-agent'],
-  });
+  // 登录前还不知道是谁 → 只能按 email 跨租户查
+  const { user, token } = await runWithSystem('auth: sign-in 按 email 查用户（登录前无租户）', () =>
+    signIn({
+      email,
+      password,
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+    })
+  );
 
   setSessionCookie(res, token);
 
@@ -154,13 +164,17 @@ authRouter.post('/sign-in', loginRateLimiter, asyncHandler(async (req: Request, 
 authRouter.post('/sign-out', asyncHandler(async (req: Request, res: Response) => {
   const token = extractSessionToken(req);
   if (token) {
-    const result = await findSession(token).catch(() => null);
-    await deleteSession(token);
-    await recordAuditLog({
-      userId: result?.user.id || null,
-      action: 'sign_out',
-      ip: req.ip,
-      userAgent: req.headers['user-agent'],
+    // 登出端点刻意不挂 authMiddleware（令牌可能已过期，也要能清 cookie），
+    // 因此这里同样是「按 token 定位会话」的跨租户路径
+    await runWithSystem('auth: sign-out 按 token 定位并删除会话', async () => {
+      const result = await findSession(token).catch(() => null);
+      await deleteSession(token);
+      await recordAuditLog({
+        userId: result?.user.id || null,
+        action: 'sign_out',
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
     });
   }
   clearSessionCookie(res);
@@ -242,7 +256,9 @@ authRouter.get('/verify-email', asyncHandler(async (req: Request, res: Response)
     throw new ValidationError('缺少验证令牌', 'INVALID_TOKEN');
   }
 
-  const verified = await markEmailVerifiedByToken(token);
+  const verified = await runWithSystem('auth: verify-email 按令牌标记邮箱（无登录态）', () =>
+    markEmailVerifiedByToken(token)
+  );
   if (!verified) {
     throw new ValidationError('验证链接无效或已过期', 'INVALID_TOKEN');
   }
@@ -266,7 +282,9 @@ authRouter.post('/resend-verification', authMiddleware, resendVerificationRateLi
 authRouter.post('/forgot-password', forgotPasswordRateLimiter, asyncHandler(async (req: Request, res: Response) => {
   const { email } = validate(ForgotPasswordSchema, req.body);
   const origin = `${req.protocol}://${req.get('host')}`;
-  await requestPasswordReset(email, origin);
+  await runWithSystem('auth: forgot-password 按 email 发重置链接（账号建立前无租户）', () =>
+    requestPasswordReset(email, origin)
+  );
   res.json({ success: true, message: '若该邮箱已注册，重置链接已发送' });
 }));
 
@@ -276,12 +294,14 @@ authRouter.post('/forgot-password', forgotPasswordRateLimiter, asyncHandler(asyn
  */
 authRouter.post('/reset-password', asyncHandler(async (req: Request, res: Response) => {
   const { token, password } = validate(ResetPasswordSchema, req.body);
-  await resetPassword({
-    token,
-    newPassword: password,
-    ip: req.ip,
-    userAgent: req.headers['user-agent'],
-  });
+  await runWithSystem('auth: reset-password 按令牌重置并踢下线（无登录态）', () =>
+    resetPassword({
+      token,
+      newPassword: password,
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+    })
+  );
   res.json({ success: true, message: '密码已重置，请使用新密码登录' });
 }));
 
@@ -313,7 +333,10 @@ authRouter.post('/feedback', asyncHandler(async (req: Request, res: Response) =>
   // Optional user attachment via session token
   const token = extractSessionToken(req);
 
-  const fb = await submitFeedback({ token, type, rating, content, contactInfo });
+  // 反馈可匿名提交（token 可选）→ 按令牌归属，属跨租户寻址
+  const fb = await runWithSystem('auth: feedback 按可选令牌归属提交（可匿名）', () =>
+    submitFeedback({ token, type, rating, content, contactInfo })
+  );
 
   res.status(201).json({
     success: true,

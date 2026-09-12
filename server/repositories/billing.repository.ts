@@ -1,5 +1,4 @@
-import { getPool } from '../core/pool.js';
-import { initDbSchema } from '../core/schema.js';
+import { getDb } from '../core/db.js';
 import { inMemoryStore } from '../core/memory-store.js';
 import type { OrderRecord } from '../core/records.js';
 import { handlePgError } from '../core/db-guard.js';
@@ -16,7 +15,7 @@ export async function createOrder(data: {
   paymentMethod?: string;
   status?: 'pending' | 'paid' | 'failed' | 'refunded';
 }): Promise<OrderRecord> {
-  const p = getPool();
+  const db = getDb();
   const orderNo = `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
   const now = new Date().toISOString();
   const status = data.status || 'paid';
@@ -37,12 +36,11 @@ export async function createOrder(data: {
     paid_at: status === 'paid' ? now : null,
   };
 
-  if (p) {
+  if (db) {
     try {
-      await initDbSchema();
       // paid_at 仅在 paid 状态落库（此前 hardcode NOW() 会让 pending 单被盖上支付时间，
       // 破坏支付宝 notify 幂等核对与对账口径）
-      const res = await p.query(
+      const res = await db.query(
         `INSERT INTO orders (order_no, user_id, plan_id, plan_name, amount_cents, currency, status, duration_days, payment_method, created_at, paid_at)
          VALUES ($1, $2, $3, $4, $5, 'CNY', $6, $7, $8, NOW(), CASE WHEN $9 = 'paid' THEN NOW() ELSE NULL END)
          RETURNING *`,
@@ -97,11 +95,10 @@ function mapRowToOrder(r: any): OrderRecord {
  * List orders for a user
  */
 export async function listUserOrders(userId: string): Promise<OrderRecord[]> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
-      const res = await p.query('SELECT * FROM orders WHERE user_id = $1 ORDER BY created_at DESC', [userId]);
+      const res = await db.query('SELECT * FROM orders WHERE user_id = $1 ORDER BY created_at DESC', [userId]);
       return res.rows.map(mapRowToOrder);
     } catch (e) {
       handlePgError(e);
@@ -123,17 +120,16 @@ export async function listAllOrders(params: {
   const page = Math.max(1, Math.floor(params.page ?? 1));
   const limit = Math.min(100, Math.max(1, Math.floor(params.limit ?? 10)));
   const offset = (page - 1) * limit;
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
       const where = params.status ? 'WHERE o.status = $1' : '';
       const values = params.status ? [params.status] : [];
-      const countRes = await p.query(
+      const countRes = await db.query(
         `SELECT COUNT(*)::int AS count FROM orders o ${where}`,
         values
       );
-      const dataRes = await p.query(
+      const dataRes = await db.query(
         `SELECT o.*, u.email AS user_email
          FROM orders o
          LEFT JOIN users u ON u.id = o.user_id
@@ -169,11 +165,10 @@ export async function listAllOrders(params: {
  * Find an order by its order number
  */
 export async function findOrderByNo(orderNo: string): Promise<OrderRecord | null> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
-      const res = await p.query('SELECT * FROM orders WHERE order_no = $1', [orderNo]);
+      const res = await db.query('SELECT * FROM orders WHERE order_no = $1', [orderNo]);
       if (res.rows.length > 0) return mapRowToOrder(res.rows[0]);
     } catch (e) {
       handlePgError(e);
@@ -192,11 +187,10 @@ export async function updateOrderStatus(
   status: OrderRecord['status'],
   expectedStatus?: OrderRecord['status']
 ): Promise<OrderRecord | null> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
-      const res = await p.query(
+      const res = await db.query(
         `UPDATE orders
          SET status = $1,
              paid_at = CASE WHEN $3 = 'paid' THEN NOW() ELSE paid_at END

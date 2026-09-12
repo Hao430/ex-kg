@@ -1,5 +1,5 @@
-import { getPool } from './pool.js';
-import { initDbSchema } from './schema.js';
+import { getDb } from './db.js';
+import { runWithSystem } from './db-context.js';
 import { inMemoryStore } from './memory-store.js';
 import { isProductionDbRequired, notePgError, pgDegraded } from './db-guard.js';
 import type { DbStatus } from './records.js';
@@ -28,8 +28,8 @@ function memoryCounts(): { userCount: number; canvasCount: number; nodeCount: nu
  * 供部署层（探活/编排）持续 degraded >60s 告警或重启；本端点自身保持 200 不参与 fail-fast。
  */
 export async function checkDbStatus(): Promise<DbStatus> {
-  const p = getPool();
-  if (!p) {
+  const db = getDb();
+  if (!db) {
     return {
       connected: false,
       type: 'in-memory-fallback',
@@ -41,35 +41,35 @@ export async function checkDbStatus(): Promise<DbStatus> {
   }
 
   try {
-    await initDbSchema();
-    const client = await p.connect();
-    try {
+    // 平台级计数天然跨租户（公开探活端点，生产剥离具体数值），显式走 system 作用域
+    const counts = await runWithSystem('db-status: 平台级探活计数（跨租户聚合）', async () => {
       // 与 admin 用户列表 / overview 同口径：排除已注销用户及其画板/节点
-      const uRes = await client.query('SELECT COUNT(*) as count FROM users WHERE deleted_at IS NULL');
-      const cRes = await client.query(
+      const uRes = await db.query('SELECT COUNT(*) as count FROM users WHERE deleted_at IS NULL');
+      const cRes = await db.query(
         `SELECT COUNT(*) as count FROM canvases c
          JOIN users u ON u.id = c.user_id
          WHERE c.deleted_at IS NULL AND u.deleted_at IS NULL`
       );
-      const nRes = await client.query(
+      const nRes = await db.query(
         `SELECT COUNT(*) as count FROM nodes n
          JOIN canvases c ON c.id = n.canvas_id
          JOIN users u ON u.id = c.user_id
          WHERE c.deleted_at IS NULL AND u.deleted_at IS NULL AND n.deleted_at IS NULL`
       );
       return {
-        connected: true,
-        type: 'postgresql',
-        message: 'PostgreSQL 数据库连接正常，数据存储就绪。',
         userCount: parseInt(uRes.rows[0].count, 10),
         canvasCount: parseInt(cRes.rows[0].count, 10),
         nodeCount: parseInt(nRes.rows[0].count, 10),
-        databaseUrlConfigured: true,
-        degraded: pgDegraded(),
       };
-    } finally {
-      client.release();
-    }
+    });
+    return {
+      connected: true,
+      type: 'postgresql',
+      message: 'PostgreSQL 数据库连接正常，数据存储就绪。',
+      ...counts,
+      databaseUrlConfigured: true,
+      degraded: pgDegraded(),
+    };
   } catch (err: any) {
     notePgError();
     const degraded = isProductionDbRequired() || pgDegraded();

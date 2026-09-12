@@ -1,6 +1,5 @@
 import crypto from 'node:crypto';
-import { getPool } from '../core/pool.js';
-import { initDbSchema } from '../core/schema.js';
+import { getDb } from '../core/db.js';
 import { inMemoryStore } from '../core/memory-store.js';
 import { handlePgError } from '../core/db-guard.js';
 import type { ShareRecord } from '../core/records.js';
@@ -52,20 +51,19 @@ export async function upsertShare(
   canvasId: string,
   snapshot: { title: string; nodes: any[]; edges: any[] }
 ): Promise<ShareUpsertResult> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
       // 幂等语义：活跃分享（未撤销）复用原 share_code，仅更新快照；
       // 已撤销的分享重建时换新 code（旧链接保持失效语义），并清除撤销标记
-      const existed = await p.query(
+      const existed = await db.query(
         'SELECT share_code, revoked_at FROM canvas_shares WHERE canvas_id = $1',
         [canvasId]
       );
       const recreatedRevoked = existed.rows.length > 0 && existed.rows[0].revoked_at != null;
       const reuseCode = existed.rows.length > 0 && existed.rows[0].revoked_at == null;
       const code = reuseCode ? String(existed.rows[0].share_code) : newShareCode();
-      const res = await p.query(
+      const res = await db.query(
         `INSERT INTO canvas_shares (id, canvas_id, share_code, permission, snapshot_data)
          VALUES ($1, $2, $3, 'view', $4::jsonb)
          ON CONFLICT (canvas_id) DO UPDATE
@@ -110,11 +108,10 @@ export async function upsertShare(
  * 无效（撤销/画布删除/不存在/过期）统一返回 null，由 service 转 404（不泄露原因）。
  */
 export async function findActiveShareByCode(code: string, countViews = true): Promise<ShareRecord | null> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
-      const res = await p.query(
+      const res = await db.query(
         `SELECT s.*
            FROM canvas_shares s
            JOIN canvases c ON c.id = s.canvas_id AND c.deleted_at IS NULL
@@ -125,7 +122,7 @@ export async function findActiveShareByCode(code: string, countViews = true): Pr
       const record = mapRowToShare(res.rows[0]);
       // 浏览计数失败不影响读取主流程
       if (countViews) {
-        p.query('UPDATE canvas_shares SET views_count = views_count + 1 WHERE id = $1', [
+        db.query('UPDATE canvas_shares SET views_count = views_count + 1 WHERE id = $1', [
           record.id,
         ]).catch(() => {});
         record.views_count += 1;
@@ -151,11 +148,10 @@ export async function findActiveShareByCode(code: string, countViews = true): Pr
  * 撤销分享（软撤，保留行）。画布不存在或已软删时返回 false（service 转语义化错误）。
  */
 export async function revokeShareByCanvasId(canvasId: string): Promise<boolean> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
-      const res = await p.query(
+      const res = await db.query(
         `UPDATE canvas_shares SET revoked_at = NOW()
           WHERE canvas_id = $1 AND revoked_at IS NULL
             AND EXISTS (SELECT 1 FROM canvases c WHERE c.id = canvas_shares.canvas_id AND c.deleted_at IS NULL)`,
@@ -191,11 +187,10 @@ export interface ShareListItem {
  * 列表自身不做浏览计数（与 findActiveShareByCode 的 countViews 口径区分）。
  */
 export async function listActiveSharesByUser(userId: string): Promise<ShareListItem[]> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
-      const res = await p.query(
+      const res = await db.query(
         `SELECT s.canvas_id, s.share_code, s.views_count, s.created_at, c.title AS canvas_title
            FROM canvas_shares s
            JOIN canvases c ON c.id = s.canvas_id AND c.deleted_at IS NULL

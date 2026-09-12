@@ -30,7 +30,7 @@ process.env.DATABASE_URL =
 process.env.APP_URL = process.env.APP_URL || 'http://127.0.0.1:3000';
 
 const { createApp } = await import('../../server/app.js');
-const { getPool } = await import('../../server/core/pool.js');
+const { getSystemPool } = await import('../../server/core/pool.js');
 const { getOutboxForTest } = await import('../../server/lib/mailer.js');
 const { signupRateLimiter, sendRegisterCodeRateLimiter } = await import(
   '../../server/middleware/auth.js'
@@ -168,7 +168,7 @@ describe('J3 PG 真库冒烟（E1）', () => {
     assert.equal(delRes.status, 200);
 
     // 行仍在（软删），子表行已物理清
-    const pool = getPool();
+    const pool = getSystemPool();
     assert.ok(pool, 'PG pool 必须可用');
     const row = await pool.query(
       'SELECT deleted_at FROM canvases WHERE id = $1',

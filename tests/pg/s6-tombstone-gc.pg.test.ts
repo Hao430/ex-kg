@@ -22,7 +22,7 @@ process.env.DATABASE_URL =
 process.env.APP_URL = process.env.APP_URL || 'http://127.0.0.1:3000';
 
 const { createApp } = await import('../../server/app.js');
-const { getPool } = await import('../../server/core/pool.js');
+const { getSystemPool } = await import('../../server/core/pool.js');
 const { cleanupCanvasTombstones } = await import('../../server/repositories/canvas.repository.js');
 
 let server: http.Server;
@@ -74,14 +74,14 @@ async function save(id: string, body: Record<string, any>) {
 }
 
 async function row(sql: string, params: any[]): Promise<any[]> {
-  const p = getPool()!;
+  const p = getSystemPool()!;
   const res = await p.query(sql, params);
   return res.rows;
 }
 
 /** 把某画布的墓碑行「变老」n 天：GC 的判据是 deleted_at，只能直接改库 */
 async function backdate(canvasId: string, days: number): Promise<void> {
-  const p = getPool()!;
+  const p = getSystemPool()!;
   await p.query(
     `UPDATE nodes SET deleted_at = NOW() - make_interval(days => $2) WHERE canvas_id = $1 AND deleted_at IS NOT NULL`,
     [canvasId, days]

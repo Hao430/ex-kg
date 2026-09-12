@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from 'express';
 import { AppError } from '../lib/errors.js';
 import { recordEventLog } from '../repositories/event-log.repository.js';
+import { runWithSystem } from '../core/db-context.js';
 
 /**
  * Spec I：业务错误埋点白名单（code → event_logs category）。
@@ -36,15 +37,20 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
         (typeof req.body?.canvasId === 'string' && req.body.canvasId) ||
         (typeof req.query?.canvasId === 'string' && req.query.canvasId) ||
         (canvasPathMatch ? decodeURIComponent(canvasPathMatch[1]) : null);
-      void recordEventLog({
-        category,
-        event: err.code.toLowerCase(),
-        entityType: entityId ? 'canvas' : null,
-        entityId,
-        userId: req.user?.id || null,
-        ip: req.ip || null,
-        details: { method: req.method, path: req.originalUrl },
-      });
+      // 可观测写入自成 system 作用域（ADR-0019）：它记的是**任意**请求的失败事件
+      // （含未登录的 401 路径），不属于任何一个租户；且它绝不能因为作用域缺失而失败，
+      // 进而把已经确定的错误响应改写成 500。
+      void runWithSystem('error-handler: 错误事件埋点写入（跨租户观测）', () =>
+        recordEventLog({
+          category,
+          event: err.code.toLowerCase(),
+          entityType: entityId ? 'canvas' : null,
+          entityId,
+          userId: req.user?.id || null,
+          ip: req.ip || null,
+          details: { method: req.method, path: req.originalUrl },
+        })
+      );
     }
     res.status(err.status).json({ error: err.message, code: err.code, ...(err.details || {}) });
     return;

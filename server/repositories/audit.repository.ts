@@ -1,6 +1,5 @@
 import crypto from 'node:crypto';
-import { getPool } from '../core/pool.js';
-import { initDbSchema } from '../core/schema.js';
+import { getDb } from '../core/db.js';
 import { inMemoryStore, trimAuditLogs } from '../core/memory-store.js';
 import type { AuditLogRecord } from '../core/records.js';
 import { handlePgError } from '../core/db-guard.js';
@@ -24,11 +23,10 @@ export async function recordAuditLog(data: RecordAuditLogData): Promise<void> {
     const id = crypto.randomUUID();
     const details = data.details ?? {};
 
-    const p = getPool();
-    if (p) {
+    const db = getDb();
+    if (db) {
       try {
-        await initDbSchema();
-        await p.query(
+        await db.query(
           `INSERT INTO user_audit_logs (id, user_id, action, target_type, target_id, ip_address, user_agent, details)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)`,
           [
@@ -92,10 +90,9 @@ export async function listAuditLogs(params: {
   const limit = Math.min(200, Math.max(1, params.limit || 10));
   const offset = (page - 1) * limit;
 
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
       let whereClause = '1=1';
       const values: any[] = [];
 
@@ -108,13 +105,13 @@ export async function listAuditLogs(params: {
         whereClause += ` AND user_id = $${values.length}::uuid`;
       }
 
-      const countRes = await p.query(
+      const countRes = await db.query(
         `SELECT COUNT(*) as total FROM user_audit_logs WHERE ${whereClause}`,
         values
       );
       const total = parseInt(countRes.rows[0].total, 10);
 
-      const listRes = await p.query(
+      const listRes = await db.query(
         `SELECT * FROM user_audit_logs
          WHERE ${whereClause}
          ORDER BY created_at DESC
@@ -158,12 +155,12 @@ export async function listAuditLogs(params: {
  * Spec F6：清理超过留存期的审计日志。retentionDays=0 表示全清（测试用）。
  */
 export async function cleanupOldAuditLogs(retentionDays: number): Promise<number> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
       const res = retentionDays <= 0
-        ? await p.query(`DELETE FROM user_audit_logs RETURNING id`)
-        : await p.query(
+        ? await db.query(`DELETE FROM user_audit_logs RETURNING id`)
+        : await db.query(
             `DELETE FROM user_audit_logs WHERE created_at < NOW() - make_interval(days => $1) RETURNING id`,
             [retentionDays]
           );

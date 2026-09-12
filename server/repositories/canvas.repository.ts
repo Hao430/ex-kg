@@ -1,6 +1,5 @@
 import pg from 'pg';
-import { getPool } from '../core/pool.js';
-import { initDbSchema } from '../core/schema.js';
+import { getDb } from '../core/db.js';
 import { inMemoryStore } from '../core/memory-store.js';
 import { AppError, ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../lib/errors.js';
 import type { CanvasRecord } from '../core/records.js';
@@ -44,15 +43,14 @@ function chunkRows<T>(rows: T[], size: number): T[][] {
 }
 
 export async function listCanvases(userId: string): Promise<CanvasRecord[]> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
       // 严格属主制（ADR-0016）：画布列表恒按属主过滤，admin 不再放行。
       const whereClause = 'WHERE c.deleted_at IS NULL AND c.user_id = $1';
       const values = [userId];
 
-      const res = await p.query(
+      const res = await db.query(
         `SELECT
           c.id, c.user_id, c.title, c.description, c.viewport_x, c.viewport_y, c.viewport_zoom,
           c.default_model, c.is_favorite, c.is_archived, c.folder_id, c.created_at, c.updated_at,
@@ -150,11 +148,10 @@ export function normalizeMemoryNode(node: any, defaultModel: string): any {
 }
 
 export async function getCanvas(canvasId: string, userId: string): Promise<CanvasRecord | null> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
-      const cRes = await p.query('SELECT * FROM canvases WHERE id = $1 AND deleted_at IS NULL', [canvasId]);
+      const cRes = await db.query('SELECT * FROM canvases WHERE id = $1 AND deleted_at IS NULL', [canvasId]);
       if (cRes.rows.length === 0) return null;
 
       const c = cRes.rows[0];
@@ -164,11 +161,11 @@ export async function getCanvas(canvasId: string, userId: string): Promise<Canva
       }
 
       // 墓碑行不得回吐给前端（ADR-0017）：节点/边一律带 deleted_at IS NULL 过滤
-      const nRes = await p.query(
+      const nRes = await db.query(
         'SELECT * FROM nodes WHERE canvas_id = $1 AND deleted_at IS NULL ORDER BY created_at ASC',
         [canvasId]
       );
-      const eRes = await p.query('SELECT * FROM edges WHERE canvas_id = $1 AND deleted_at IS NULL', [canvasId]);
+      const eRes = await db.query('SELECT * FROM edges WHERE canvas_id = $1 AND deleted_at IS NULL', [canvasId]);
 
       const nodes = nRes.rows.map((nr) => ({
         id: nr.id,
@@ -654,7 +651,7 @@ export async function saveCanvas(
   /** 新建画布（exists=false）前的配额闸门；复用事务内已查的 exists，省一次独立预查 */
   quotaGate?: (exists: boolean) => Promise<void>
 ): Promise<CanvasRecord> {
-  const p = getPool();
+  const db = getDb();
   const now = new Date().toISOString();
   const vp = data.viewport || { x: 0, y: 0, zoom: 1 };
 
@@ -699,153 +696,147 @@ export async function saveCanvas(
     }
   };
 
-  if (p) {
-    const client = await p.connect();
-    let upsertRes: pg.QueryResult;
+  if (db) {
     try {
-      await initDbSchema();
-      await client.query('BEGIN');
+      // 事务边界由 withTransaction 统一管理：它同时负责注入 app.user_id 作用域
+      // （RLS 判据）与 BEGIN/COMMIT/ROLLBACK/release，仓储不得再手写这些语句。
+      return await db.withTransaction(async (client) => {
+        // Check ownership if canvas exists（含软删行：占主键，禁止 upsert 复活）
+        const existing = await client.query('SELECT user_id, updated_at, deleted_at FROM canvases WHERE id = $1', [data.id]);
+        const existingUserId = existing.rows.length > 0 ? existing.rows[0].user_id : null;
 
-      // Check ownership if canvas exists（含软删行：占主键，禁止 upsert 复活）
-      const existing = await client.query('SELECT user_id, updated_at, deleted_at FROM canvases WHERE id = $1', [data.id]);
-      const existingUserId = existing.rows.length > 0 ? existing.rows[0].user_id : null;
+        if (existing.rows.length > 0 && existing.rows[0].deleted_at) {
+          throw new NotFoundError('画板不存在或已删除');
+        }
 
-      if (existing.rows.length > 0 && existing.rows[0].deleted_at) {
-        throw new NotFoundError('画板不存在或已删除');
-      }
+        // 严格属主：仅属主本人可写（共享默认画板除外）
+        if (existing.rows.length > 0 && existingUserId !== userId && !isSharedDefaultCanvas(data.id)) {
+          throw new ForbiddenError('无权修改其他用户的画板', 'CANVAS_FORBIDDEN');
+        }
 
-      // 严格属主：仅属主本人可写（共享默认画板除外）
-      if (existing.rows.length > 0 && existingUserId !== userId && !isSharedDefaultCanvas(data.id)) {
-        throw new ForbiddenError('无权修改其他用户的画板', 'CANVAS_FORBIDDEN');
-      }
+        if (existing.rows.length > 0 && !merge) {
+          // 合并模式下**刻意不校验画板级乐观锁**：挂机两小时的设备改一个节点照样会被
+          // 409 挡下，用户报的「改完被云端的覆盖掉」就没修好。节点级 op 之间靠 rev 定序，
+          // 冲突面从整块板缩到同一个节点。title/viewport 仍是整字段 LWW（只在真的改了时上行）。
+          assertNoConflict(existing.rows[0].updated_at);
+        }
 
-      if (existing.rows.length > 0 && !merge) {
-        // 合并模式下**刻意不校验画板级乐观锁**：挂机两小时的设备改一个节点照样会被
-        // 409 挡下，用户报的「改完被云端的覆盖掉」就没修好。节点级 op 之间靠 rev 定序，
-        // 冲突面从整块板缩到同一个节点。title/viewport 仍是整字段 LWW（只在真的改了时上行）。
-        assertNoConflict(existing.rows[0].updated_at);
-      }
+        // 新建画布前配额校验（事务内复用 exists，避免服务层独立预查同一行）
+        if (existing.rows.length === 0 && quotaGate) {
+          await quotaGate(false);
+        }
 
-      // 新建画布前配额校验（事务内复用 exists，避免服务层独立预查同一行）
-      if (existing.rows.length === 0 && quotaGate) {
-        await quotaGate(false);
-      }
+        const assignedUserId = existingUserId || userId;
 
-      const assignedUserId = existingUserId || userId;
+        // 合并模式下 title/viewport/defaultModel 允许缺省 = 「本次没改」，用 COALESCE 保住原值；
+        // 旧路径按原样传非空值，两条路径共用同一条 SQL，legacy 行为逐字不变。
+        const titleParam = merge ? data.title ?? null : data.title || '未命名思维探索';
+        const viewportParam =
+          merge && !data.viewport ? [null, null, null] : [vp.x, vp.y, vp.zoom];
+        const modelParam = merge ? data.defaultModel ?? null : data.defaultModel || '';
 
-      // 合并模式下 title/viewport/defaultModel 允许缺省 = 「本次没改」，用 COALESCE 保住原值；
-      // 旧路径按原样传非空值，两条路径共用同一条 SQL，legacy 行为逐字不变。
-      const titleParam = merge ? data.title ?? null : data.title || '未命名思维探索';
-      const viewportParam =
-        merge && !data.viewport ? [null, null, null] : [vp.x, vp.y, vp.zoom];
-      const modelParam = merge ? data.defaultModel ?? null : data.defaultModel || '';
-
-      upsertRes = await client.query(
-        `INSERT INTO canvases (id, user_id, title, description, viewport_x, viewport_y, viewport_zoom, default_model, updated_at)
-         VALUES ($1, $2, COALESCE($3, '未命名思维探索'), $4, COALESCE($5, 0), COALESCE($6, 0), COALESCE($7, 1), COALESCE($8, ''), NOW())
-         ON CONFLICT (id) DO UPDATE SET
-           title = COALESCE($3, canvases.title),
-           description = COALESCE($4, canvases.description),
-           viewport_x = COALESCE($5, canvases.viewport_x),
-           viewport_y = COALESCE($6, canvases.viewport_y),
-           viewport_zoom = COALESCE($7, canvases.viewport_zoom),
-           default_model = COALESCE($8, canvases.default_model),
-           updated_at = NOW()
-         WHERE canvases.deleted_at IS NULL
-         RETURNING created_at, updated_at, title, viewport_x, viewport_y, viewport_zoom, default_model`,
-        [
-          data.id,
-          assignedUserId,
-          titleParam,
-          data.description || null,
-          viewportParam[0],
-          viewportParam[1],
-          viewportParam[2],
-          modelParam,
-        ]
-      );
-
-      if (upsertRes.rowCount === 0) {
-        // 并发窄窗口：SELECT 之后该行被其他连接软删，ON CONFLICT 的 WHERE 未命中
-        throw new NotFoundError('画板不存在或已删除');
-      }
-
-      let mergeResult: MergeWriteResult | null = null;
-
-      if (!merge) {
-        // ---- 旧路径：整板替换（protocolVersion 缺失，行为逐字不变）----
-        await client.query('DELETE FROM nodes WHERE canvas_id = $1', [data.id]);
-        const nodeRows = normalized.nodes.map((node: any) =>
-          buildNodeRow(node, data.id, data.defaultModel || '')
+        const upsertRes = await client.query(
+          `INSERT INTO canvases (id, user_id, title, description, viewport_x, viewport_y, viewport_zoom, default_model, updated_at)
+           VALUES ($1, $2, COALESCE($3, '未命名思维探索'), $4, COALESCE($5, 0), COALESCE($6, 0), COALESCE($7, 1), COALESCE($8, ''), NOW())
+           ON CONFLICT (id) DO UPDATE SET
+             title = COALESCE($3, canvases.title),
+             description = COALESCE($4, canvases.description),
+             viewport_x = COALESCE($5, canvases.viewport_x),
+             viewport_y = COALESCE($6, canvases.viewport_y),
+             viewport_zoom = COALESCE($7, canvases.viewport_zoom),
+             default_model = COALESCE($8, canvases.default_model),
+             updated_at = NOW()
+           WHERE canvases.deleted_at IS NULL
+           RETURNING created_at, updated_at, title, viewport_x, viewport_y, viewport_zoom, default_model`,
+          [
+            data.id,
+            assignedUserId,
+            titleParam,
+            data.description || null,
+            viewportParam[0],
+            viewportParam[1],
+            viewportParam[2],
+            modelParam,
+          ]
         );
-        const NODE_BATCH_SIZE = 200;
-        for (const batch of chunkRows(nodeRows, NODE_BATCH_SIZE)) {
-          const values: any[] = [];
-          await client.query(
-            `INSERT INTO nodes (${NODE_INSERT_COLUMNS}) VALUES ${buildTuples(batch, values)}`,
-            values
+
+        if (upsertRes.rowCount === 0) {
+          // 并发窄窗口：SELECT 之后该行被其他连接软删，ON CONFLICT 的 WHERE 未命中
+          throw new NotFoundError('画板不存在或已删除');
+        }
+
+        let mergeResult: MergeWriteResult | null = null;
+
+        if (!merge) {
+          // ---- 旧路径：整板替换（protocolVersion 缺失，行为逐字不变）----
+          await client.query('DELETE FROM nodes WHERE canvas_id = $1', [data.id]);
+          const nodeRows = normalized.nodes.map((node: any) =>
+            buildNodeRow(node, data.id, data.defaultModel || '')
+          );
+          const NODE_BATCH_SIZE = 200;
+          for (const batch of chunkRows(nodeRows, NODE_BATCH_SIZE)) {
+            const values: any[] = [];
+            await client.query(
+              `INSERT INTO nodes (${NODE_INSERT_COLUMNS}) VALUES ${buildTuples(batch, values)}`,
+              values
+            );
+          }
+
+          await client.query('DELETE FROM edges WHERE canvas_id = $1', [data.id]);
+          const edgeRows = normalized.edges.map((edge: any) => buildEdgeRow(edge, data.id));
+          const EDGE_BATCH_SIZE = 500;
+          for (const batch of chunkRows(edgeRows, EDGE_BATCH_SIZE)) {
+            const values: any[] = [];
+            await client.query(
+              `INSERT INTO edges (${EDGE_INSERT_COLUMNS})
+               VALUES ${buildTuples(batch, values)}
+               ON CONFLICT (id) DO NOTHING`,
+              values
+            );
+          }
+        } else {
+          // ---- 合并路径：只 upsert 本次改动，未带的一律不动 ----
+          mergeResult = await mergeWriteCanvas(
+            client,
+            data.id,
+            normalized.nodes,
+            normalized.edges,
+            Array.from(new Set(data.deletedNodeIds || [])),
+            Array.from(new Set(data.deletedEdgeIds || [])),
+            data.defaultModel || ''
           );
         }
 
-        await client.query('DELETE FROM edges WHERE canvas_id = $1', [data.id]);
-        const edgeRows = normalized.edges.map((edge: any) => buildEdgeRow(edge, data.id));
-        const EDGE_BATCH_SIZE = 500;
-        for (const batch of chunkRows(edgeRows, EDGE_BATCH_SIZE)) {
-          const values: any[] = [];
-          await client.query(
-            `INSERT INTO edges (${EDGE_INSERT_COLUMNS})
-             VALUES ${buildTuples(batch, values)}
-             ON CONFLICT (id) DO NOTHING`,
-            values
-          );
-        }
-      } else {
-        // ---- 合并路径：只 upsert 本次改动，未带的一律不动 ----
-        mergeResult = await mergeWriteCanvas(
-          client,
-          data.id,
-          normalized.nodes,
-          normalized.edges,
-          Array.from(new Set(data.deletedNodeIds || [])),
-          Array.from(new Set(data.deletedEdgeIds || [])),
-          data.defaultModel || ''
-        );
-      }
-
-      await client.query('COMMIT');
-
-      // 以 DB 时间戳为准返回（乐观锁版本必须与下次 GET 一致），不再落穿到内存分支
-      const row = upsertRes.rows[0];
-      return {
-        id: data.id,
-        user_id: assignedUserId,
-        title: row.title,
-        description: data.description,
-        viewport: { x: row.viewport_x, y: row.viewport_y, zoom: row.viewport_zoom },
-        defaultModel: row.default_model,
-        enableWebSearch: data.enableWebSearch ?? true,
-        createdAt: new Date(row.created_at).toISOString(),
-        updatedAt: new Date(row.updated_at).toISOString(),
-        // 合并路径不回吐全量节点（payload 只是本次改动，回吐反而误导）；计数由事务内重算
-        nodes: mergeResult ? undefined : normalized.nodes,
-        edges: mergeResult ? undefined : normalized.edges,
-        nodeCount: mergeResult ? mergeResult.nodeCount : normalized.nodes.length,
-        edgeCount: mergeResult ? mergeResult.edgeCount : normalized.edges.length,
-        saveMode: merge ? 'merge' : 'replace',
-        protocolVersion,
-        ...(mergeResult
-          ? {
-              ignoredNodeIds: mergeResult.ignoredNodeIds,
-              repairedNodeIds: mergeResult.repairedNodeIds,
-            }
-          : {}),
-      };
+        // 以 DB 时间戳为准返回（乐观锁版本必须与下次 GET 一致），不再落穿到内存分支
+        const row = upsertRes.rows[0];
+        return {
+          id: data.id,
+          user_id: assignedUserId,
+          title: row.title,
+          description: data.description,
+          viewport: { x: row.viewport_x, y: row.viewport_y, zoom: row.viewport_zoom },
+          defaultModel: row.default_model,
+          enableWebSearch: data.enableWebSearch ?? true,
+          createdAt: new Date(row.created_at).toISOString(),
+          updatedAt: new Date(row.updated_at).toISOString(),
+          // 合并路径不回吐全量节点（payload 只是本次改动，回吐反而误导）；计数由事务内重算
+          nodes: mergeResult ? undefined : normalized.nodes,
+          edges: mergeResult ? undefined : normalized.edges,
+          nodeCount: mergeResult ? mergeResult.nodeCount : normalized.nodes.length,
+          edgeCount: mergeResult ? mergeResult.edgeCount : normalized.edges.length,
+          saveMode: merge ? 'merge' : 'replace',
+          protocolVersion,
+          ...(mergeResult
+            ? {
+                ignoredNodeIds: mergeResult.ignoredNodeIds,
+                repairedNodeIds: mergeResult.repairedNodeIds,
+              }
+            : {}),
+        };
+      });
     } catch (e) {
-      await client.query('ROLLBACK');
       console.error('PG saveCanvas transaction failed:', e);
       throw e;
-    } finally {
-      client.release();
     }
   }
 
@@ -995,34 +986,28 @@ export async function deleteCanvas(canvasId: string, userId: string): Promise<bo
     throw new ForbiddenError('默认画板不可删除', 'CANVAS_FORBIDDEN');
   }
 
-  const p = getPool();
-  if (p) {
-    const client = await p.connect();
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
-      await client.query('BEGIN');
-      const check = await client.query('SELECT user_id FROM canvases WHERE id = $1 AND deleted_at IS NULL', [canvasId]);
-      if (check.rows.length === 0) {
-        await client.query('COMMIT');
-        return false; // 不存在或已软删，幂等返回
-      }
-      if (check.rows[0].user_id !== userId) {
-        throw new ForbiddenError('无权删除此画板', 'CANVAS_FORBIDDEN');
-      }
-      // 软删主行 + 子表即时物理清理（对齐原物理 DELETE 的 CASCADE 语义）
-      await client.query('UPDATE canvases SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL', [canvasId]);
-      await client.query('DELETE FROM nodes WHERE canvas_id = $1', [canvasId]);
-      await client.query('DELETE FROM edges WHERE canvas_id = $1', [canvasId]);
-      await client.query('COMMIT');
-      return true;
+      return await db.withTransaction(async (client) => {
+        const check = await client.query('SELECT user_id FROM canvases WHERE id = $1 AND deleted_at IS NULL', [canvasId]);
+        if (check.rows.length === 0) {
+          return false; // 不存在或已软删，幂等返回
+        }
+        if (check.rows[0].user_id !== userId) {
+          throw new ForbiddenError('无权删除此画板', 'CANVAS_FORBIDDEN');
+        }
+        // 软删主行 + 子表即时物理清理（对齐原物理 DELETE 的 CASCADE 语义）
+        await client.query('UPDATE canvases SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL', [canvasId]);
+        await client.query('DELETE FROM nodes WHERE canvas_id = $1', [canvasId]);
+        await client.query('DELETE FROM edges WHERE canvas_id = $1', [canvasId]);
+        return true;
+      });
     } catch (e) {
-      await client.query('ROLLBACK');
       // 业务错误（如 403）必须穿透，不得降级落内存分支造成 200 假成功
       if (e instanceof AppError) throw e;
       handlePgError(e);
       console.warn(`PG deleteCanvas(${canvasId}) fallback to in-memory:`, e);
-    } finally {
-      client.release();
     }
   }
 
@@ -1077,8 +1062,8 @@ export interface CanvasMetaPatch {
 export async function cleanupCanvasTombstones(
   retentionDays = 30
 ): Promise<{ edges: number; nodes: number }> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
       // 保留期 <= 0 视为「全部回收」（与 cleanupDeletedUsers 口径一致，便于运维一键清空）
       const expired =
@@ -1086,8 +1071,8 @@ export async function cleanupCanvasTombstones(
           ? `deleted_at IS NOT NULL AND deleted_at <= NOW() - make_interval(days => $1)`
           : `deleted_at IS NOT NULL`;
       const args = retentionDays > 0 ? [retentionDays] : [];
-      const edges = await p.query(`DELETE FROM edges WHERE ${expired}`, args);
-      const nodes = await p.query(`DELETE FROM nodes WHERE ${expired}`, args);
+      const edges = await db.query(`DELETE FROM edges WHERE ${expired}`, args);
+      const nodes = await db.query(`DELETE FROM nodes WHERE ${expired}`, args);
       return { edges: edges.rowCount || 0, nodes: nodes.rowCount || 0 };
     } catch (e) {
       handlePgError(e);
@@ -1109,77 +1094,71 @@ export async function updateCanvasMeta(
     throw new ForbiddenError('共享默认画板不支持收藏/归档等个性化设置', 'CANVAS_FORBIDDEN');
   }
 
-  const p = getPool();
-  if (p) {
-    const client = await p.connect();
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
-      await client.query('BEGIN');
-      const check = await client.query('SELECT user_id FROM canvases WHERE id = $1 AND deleted_at IS NULL', [canvasId]);
-      if (check.rows.length === 0) {
-        throw new NotFoundError('画板不存在或已删除');
-      }
-      const canvasOwner = check.rows[0].user_id;
-      if (canvasOwner !== userId) {
-        throw new ForbiddenError('无权修改其他用户的画板', 'CANVAS_FORBIDDEN');
-      }
-      // 分组归属校验：folderId 必须属于「画板属主」（而非请求者），防跨租户串联
-      if (patch.folderId != null) {
-        const f = await client.query('SELECT user_id FROM folders WHERE id = $1', [patch.folderId]);
-        if (f.rows.length === 0 || f.rows[0].user_id !== canvasOwner) {
-          throw new ValidationError('分组不存在或不属于该画板属主', 'FOLDER_INVALID');
+      return await db.withTransaction(async (client) => {
+        const check = await client.query('SELECT user_id FROM canvases WHERE id = $1 AND deleted_at IS NULL', [canvasId]);
+        if (check.rows.length === 0) {
+          throw new NotFoundError('画板不存在或已删除');
         }
-      }
+        const canvasOwner = check.rows[0].user_id;
+        if (canvasOwner !== userId) {
+          throw new ForbiddenError('无权修改其他用户的画板', 'CANVAS_FORBIDDEN');
+        }
+        // 分组归属校验：folderId 必须属于「画板属主」（而非请求者），防跨租户串联
+        if (patch.folderId != null) {
+          const f = await client.query('SELECT user_id FROM folders WHERE id = $1', [patch.folderId]);
+          if (f.rows.length === 0 || f.rows[0].user_id !== canvasOwner) {
+            throw new ValidationError('分组不存在或不属于该画板属主', 'FOLDER_INVALID');
+          }
+        }
 
-      const hasFolderPatch = patch.folderId !== undefined;
-      const res = await client.query(
-        `UPDATE canvases SET
-           title = COALESCE($2, title),
-           is_favorite = COALESCE($3, is_favorite),
-           is_archived = COALESCE($4, is_archived),
-           folder_id = CASE WHEN $5::boolean THEN $6::varchar ELSE folder_id END,
-           updated_at = NOW()
-         WHERE id = $1 AND deleted_at IS NULL
-         RETURNING id, user_id, title, description, viewport_x, viewport_y, viewport_zoom,
-                   default_model, is_favorite, is_archived, folder_id, created_at, updated_at`,
-        [
-          canvasId,
-          patch.title ?? null,
-          patch.isFavorite ?? null,
-          patch.isArchived ?? null,
-          hasFolderPatch,
-          patch.folderId ?? null,
-        ]
-      );
-      if (res.rowCount === 0) {
-        // 并发窄窗口：SELECT 之后该行被其他连接软删
-        throw new NotFoundError('画板不存在或已删除');
-      }
-      await client.query('COMMIT');
-
-      const r = res.rows[0];
-      return {
-        id: r.id,
-        user_id: r.user_id,
-        title: r.title,
-        description: r.description,
-        viewport: { x: r.viewport_x, y: r.viewport_y, zoom: r.viewport_zoom },
-        defaultModel: r.default_model,
-        enableWebSearch: true,
-        isFavorite: r.is_favorite ?? false,
-        isArchived: r.is_archived ?? false,
-        folderId: r.folder_id ?? null,
-        createdAt: new Date(r.created_at).toISOString(),
-        updatedAt: new Date(r.updated_at).toISOString(),
-      };
+        const hasFolderPatch = patch.folderId !== undefined;
+        const res = await client.query(
+          `UPDATE canvases SET
+             title = COALESCE($2, title),
+             is_favorite = COALESCE($3, is_favorite),
+             is_archived = COALESCE($4, is_archived),
+             folder_id = CASE WHEN $5::boolean THEN $6::varchar ELSE folder_id END,
+             updated_at = NOW()
+           WHERE id = $1 AND deleted_at IS NULL
+           RETURNING id, user_id, title, description, viewport_x, viewport_y, viewport_zoom,
+                     default_model, is_favorite, is_archived, folder_id, created_at, updated_at`,
+          [
+            canvasId,
+            patch.title ?? null,
+            patch.isFavorite ?? null,
+            patch.isArchived ?? null,
+            hasFolderPatch,
+            patch.folderId ?? null,
+          ]
+        );
+        if (res.rowCount === 0) {
+          // 并发窄窗口：SELECT 之后该行被其他连接软删
+          throw new NotFoundError('画板不存在或已删除');
+        }
+        const r = res.rows[0];
+        return {
+          id: r.id,
+          user_id: r.user_id,
+          title: r.title,
+          description: r.description,
+          viewport: { x: r.viewport_x, y: r.viewport_y, zoom: r.viewport_zoom },
+          defaultModel: r.default_model,
+          enableWebSearch: true,
+          isFavorite: r.is_favorite ?? false,
+          isArchived: r.is_archived ?? false,
+          folderId: r.folder_id ?? null,
+          createdAt: new Date(r.created_at).toISOString(),
+          updatedAt: new Date(r.updated_at).toISOString(),
+        };
+      });
     } catch (e) {
-      await client.query('ROLLBACK');
       // 业务错误（403/404）必须穿透，不得降级落内存分支造成 200 假成功
       if (e instanceof AppError) throw e;
       handlePgError(e);
       console.warn(`PG updateCanvasMeta(${canvasId}) fallback to in-memory:`, e);
-    } finally {
-      client.release();
     }
   }
 
@@ -1219,11 +1198,10 @@ export async function canvasExists(canvasId: string): Promise<boolean> {
 export async function getCanvasOwnerInfo(
   canvasId: string
 ): Promise<{ exists: boolean; ownerId: string | null }> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
-      const res = await p.query('SELECT user_id FROM canvases WHERE id = $1 AND deleted_at IS NULL', [canvasId]);
+      const res = await db.query('SELECT user_id FROM canvases WHERE id = $1 AND deleted_at IS NULL', [canvasId]);
       return { exists: res.rows.length > 0, ownerId: res.rows[0]?.user_id ?? null };
     } catch (e) {
       handlePgError(e);
@@ -1236,11 +1214,10 @@ export async function getCanvasOwnerInfo(
 
 /** 画布内 AI 推理节点（chat 类型）数量 */
 export async function countCanvasNodes(canvasId: string): Promise<number> {
-  const p = getPool();
-  if (p) {
+  const db = getDb();
+  if (db) {
     try {
-      await initDbSchema();
-      const res = await p.query('SELECT COUNT(*)::int as count FROM nodes WHERE canvas_id = $1 AND type = $2 AND deleted_at IS NULL', [
+      const res = await db.query('SELECT COUNT(*)::int as count FROM nodes WHERE canvas_id = $1 AND type = $2 AND deleted_at IS NULL', [
         canvasId,
         'chat',
       ]);
@@ -1260,10 +1237,9 @@ export async function countCanvasNodes(canvasId: string): Promise<number> {
  * 属跨租户读取的潜在旁路；现收敛为必填，SQL 不再保留 NULL 放行分支（ADR-0016 口径）。
  */
 export async function searchNodes(queryText: string, userId: string, canvasId?: string): Promise<any[]> {
-  const p = getPool();
-  if (p && queryText.trim()) {
+  const db = getDb();
+  if (db && queryText.trim()) {
     try {
-      await initDbSchema();
       const sql = canvasId
         ? `SELECT n.id, n.canvas_id, n.question as title, n.question, n.answer, n.note as note_content, n.depth, n.model_used as model, n.created_at
            FROM nodes n
@@ -1280,7 +1256,7 @@ export async function searchNodes(queryText: string, userId: string, canvasId?: 
       const params = canvasId
         ? [canvasId, userId, `%${queryText.trim()}%`]
         : [userId, `%${queryText.trim()}%`];
-      const res = await p.query(sql, params);
+      const res = await db.query(sql, params);
       return res.rows;
     } catch (e) {
       handlePgError(e);
