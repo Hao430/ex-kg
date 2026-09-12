@@ -13,22 +13,39 @@ npm run dev        # 开发：tsx server.ts（Express + Vite HMR，http://localh
 npm run lint       # 类型检查：tsc --noEmit（验收必过项）
 npm test           # 全量测试：PAYMENT_ENABLED=true tsx --test 'tests/*.test.ts'（内存模式）
 npx tsx --test tests/d3-email-verification.test.ts   # 跑单个测试文件
-npx tsx --test 'arch-tests/*.test.mjs'   # 架构守护测试（双模纪律/限流器纪律，fail 必须修代码或按注释约定加豁免）
-npm run build      # vite build + esbuild 打包后端为 dist/server.cjs
+npx tsx --test 'arch-tests/*.test.mjs'   # 架构守护测试（双模/作用域/探针/RLS 覆盖/同源守卫，fail 必须修代码或按注释约定加豁免）
+npm run build      # vite build + esbuild 打包后端为 dist/server.cjs 与 dist/migrate.cjs
+npm run migrate:dev # 本地建表/迁移（ADR-0019；生产走部署期 migrate 步骤，见部署手册 Step 4.5）
 npm start          # 生产运行
 docker compose -f docker-compose.pg-smoke.yml up -d postgres && \
-  PG_SMOKE=1 npx tsx --test 'tests/pg/*.test.ts'   # PG 真库冒烟（不进默认套件，改 PG 路径/SQL/schema 时必跑）
+  PG_SMOKE=1 npx tsx --test --test-concurrency=1 'tests/pg/*.test.ts'   # PG 真库冒烟
+# 双角色轮（CI 的第二遍，也是唯一能证明 RLS 策略放行得通的检验）：
+#   PG_SMOKE=1 PG_TEST_URL=postgres://arborize_app:... DATABASE_SYSTEM_URL=... DATABASE_ADMIN_URL=... \
+#     npx tsx --test --test-concurrency=1 'tests/pg/*.test.ts'
 ```
 
-**测试框架是 node:test（`tsx --test`），不是 vitest**——用 vitest 跑会全部报「No test suite found」。默认套件（`tests/*.test.ts`）只跑 memory 模式且 **glob 不含 `tests/pg/`**；PG 真库覆盖在 `tests/pg/*.test.ts`（`PG_SMOKE=1` 门控，连不上即红不 skip）。
+**测试框架是 node:test（`tsx --test`），不是 vitest**——用 vitest 跑会全部报「No test suite found」。默认套件（`tests/*.test.ts`）只跑 memory 模式且 **glob 不含 `tests/pg/`**；PG 真库覆盖在 `tests/pg/*.test.ts`（`PG_SMOKE=1` 门控，连不上即红不 skip），**6 个文件共用同一个库、各自在 `before()` 里跑迁移，故用 `--test-concurrency=1` 串行**。
 
 ## 架构大图
 
+### 数据库角色、作用域与行级安全（ADR-0019 / 技术债 #0014，最高优先级的架构约束）
+
+三个角色 → 三个池（`server/core/pool.ts`）：`DATABASE_URL` → `arborize_app`（DML-only，**受 RLS**，运行期主体）/ `DATABASE_SYSTEM_URL` → `arborize_system`（DML + `BYPASSRLS`，跨租户路径，缺省回落 `DATABASE_URL`）/ `DATABASE_ADMIN_URL` → `syf_minapp`（属主，**仅部署期 migrate**）。**owner 凭据不进运行期进程**：`checkRuntimeDbRoleInvariants()` 在生产检测到它就拒绝启动；配了 `DATABASE_URL` 却没配 `DATABASE_SYSTEM_URL` 同样拒绝启动（回落会让跨租户路径被 RLS 拦成零行 = 「所有人登录失效」）。
+
+- **仓储唯一句柄是 `getDb()`**（`server/core/db.ts`），**不再有 `getPool()` 直连**。无作用域 → 抛 500 `DB_SCOPE_MISSING`（响亮失败，绝不静默降级）；内存模式不经过它，故默认套件不受影响。
+- **作用域由组合层建立**（`server/core/db-context.ts`，AsyncLocalStorage）：`runWithUser(userId, fn)` 在显式事务内 `set_config('app.user_id', $1, true)`（**必须 BEGIN**——`SET LOCAL` 在事务外只发 warning 且不生效，症状是「数据凭空消失且日志干净」）；`runWithSystem('理由', fn)` 走 system 池且**不注入用户 GUC**（跨租户靠不设判据，不是伪造一个用户）。`authMiddleware` 先 `runWithSystem`（按 token 跨租户查会话）再 `runWithUser(user.id, () => next())`；**依赖 Express 4 的 `next()` 同步进入下游**，由 `tests/pg/db-scope.pg.test.ts` 独立锁定（含 12 路并发不串作用域）。
+- **仓储不得自行升级作用域**：`server/repositories/**` 内不得出现 `runWithUser`/`runWithSystem`——「要不要跨租户读」是组合层的判断，散在数据访问代码里就无法一眼数清（`arch-tests/tenant-filter.test.mjs`）。
+- **RLS 策略在 `schema.ts` 里生成**，清单即分类：`RLS_DIRECT_USER_TABLES`（有 `user_id`）/ `RLS_SELF_ID_TABLES`（`users`）/ `RLS_CANVAS_CHILD_TABLES`（`nodes`/`edges`/`canvas_shares`，按 `canvas_id` 间接归属）/ `RLS_EXEMPT_TABLES`（豁免必须写明理由）。谓词统一 `NULLIF(current_setting('app.user_id', true), '')::uuid`（防未设置时的空串 cast 报错），`USING` + `WITH CHECK` 同谓词。**新表必须归类**，`arch-tests/rls-coverage.test.mjs` 会核对「全部 `CREATE TABLE` 都被分类」。
+- ⛔ **绝不用 `FORCE ROW LEVEL SECURITY`**：它让属主也受策略约束 → 归属探针失效 → 403 静默退化成 404。arch-test + 真库 `relforcerowsecurity` 断言两道盯着。
+- **归属探针 `canvas_probe`**（`SECURITY DEFINER` + `STABLE` + 锁死 `search_path` + 只读 + 已收回 PUBLIC EXECUTE）：RLS 下 app 角色看不见他人的行，「存在但非属主」（403）与「不存在」（404）在查询结果上是同一个零行。`saveCanvas`/`deleteCanvas`/`updateCanvasMeta`/`getCanvasOwnerInfo` 四个归属判定点必须走它，否则 403 静默变 404、`saveCanvas` 还会误走新建路径；而 `getCanvas` **刻意不探针**（他人画板 = 404 是既有契约，加探针会变成 403）——两个方向都有守护测试锁死。新增探针使用点 = 新增一处策略旁路，须在 ADR-0019 论证并更新 allowlist。
+- **`WITH CHECK` 把 NULL 视为 false**：app 作用域下写 `user_id` 为 NULL 的观测行会被拒；可空归因的写入（错误处理器、注册/找回、admin 聚合）必须在 system 作用域下。
+- **迁移是部署期的独立步骤**（`server/core/migrate-cli.ts` → `dist/migrate.cjs`），生产进程零 DDL；`server/repositories/**` 不得出现 `initDbSchema(`（懒迁移已全部摘除，非生产保留启动兜底）。失败即中止发布且**不重启**，旧进程继续服务。
+
 ### 双模持久化（贯穿全后端的核心模式）
 
-- `server/core/schema.ts` 是**建表唯一事实源**（20 张表，启动自动增量迁移 `initDbSchema()`），`docs/数据库建表脚本.sql` 为同步设计稿，两者出入以 schema.ts 为准。
+- `server/core/schema.ts` 是**建表唯一事实源**（22 张表，`initDbSchema()` 做幂等增量迁移），`docs/数据库建表脚本.sql` 为同步设计稿，两者出入以 schema.ts 为准。⚠️ **生产不在进程里跑它**：改由部署期 `npm run migrate` 以 owner 角色执行（ADR-0019，见下）；非生产保留启动兜底。
 - 未配 `DATABASE_URL` 或 PG 访问失败时自动降级 `server/core/memory-store.ts`（单例 Map/数组，启动时播种 3 个种子账号，email_verified=true）。
-- `server/repositories/*` 每个函数固定双模写法：PG try → 成功 return；catch 或无 pool → 落内存；**业务错误（AppError 子类如 ForbiddenError/NotFoundError）必须在落内存前 rethrow，禁止 catch 吞掉造成 200 假成功**（参考 `canvas.repository.ts` 的 `deleteCanvas`）。新增数据访问必须照此模板（参考 `user.repository.ts` 的 `setVerificationToken`）。过期判断用 `> NOW()`；用户与画布查询均带 `deleted_at IS NULL`（F4 注销 / H1 画布软删口径）。
+- `server/repositories/*` 每个函数固定双模写法：PG try（经 `getDb()`）→ 成功 return；catch 或无 pool → 落内存；**业务错误（AppError 子类如 ForbiddenError/NotFoundError）必须在落内存前 rethrow，禁止 catch 吞掉造成 200 假成功**（参考 `canvas.repository.ts` 的 `deleteCanvas`）。新增数据访问必须照此模板（参考 `user.repository.ts` 的 `setVerificationToken`），且**必须同时含 `getDb(` 与 `inMemoryStore.`**（`arch-tests/repository-dual-mode.test.mjs` 的判据）。过期判断用 `> NOW()`；用户与画布查询均带 `deleted_at IS NULL`（F4 注销 / H1 画布软删口径）。
 - **内存分支输出必须与 PG 分支归一化对齐**：内存 getCanvas 经 `normalizeMemoryNode()` 重建 node.data（与 PG 分支同款默认值清单），改任一分支时两路同步；grounding 直通不补默认值（a3 测试锁定）。
 - **节点 parent 链两层防环（技术债 #0006）**：PG `nodes_parent_id_no_self` CHECK（防自指）+ `saveCanvas` 入口 `assertAcyclicParentChain()`（防多节点环 a→b→a，命中 400 `NODE_PARENT_CYCLE`）。改 nodes 写路径不得绕过此校验。
 
@@ -37,6 +54,7 @@ docker compose -f docker-compose.pg-smoke.yml up -d postgres && \
 `routes`（zod schema 定义在路由文件顶部，经 `validate()` 校验）→ `services`（业务编排）→ `repositories`（双模）→ `core`（pool/schema/memory-store/records）。错误统一抛 `lib/errors.ts`（`ValidationError`/`ConflictError`/`AppError(status, code, message)` 等），由 `errorHandler` 序列化为 `{error, code}` JSON。
 
 - 鉴权：cookie 会话（`session_token`，7 天）；`middleware/auth.ts` 提供 `authMiddleware`/`requireAdmin` 与全部限流器（新端点必须独立 limiter 实例）。`trust proxy` 固定为 `'loopback, linklocal, uniquelocal'`（技术债 #0010）——禁止改回数字跳数或 true，公网前端挂 CDN 时需显式枚举出口段。
+- **变更方法同源守卫（ADR-0020 / 技术债 #0013）**：`server/middleware/same-origin.ts` 全局挂在 body parser 之后、所有路由之前——`POST/PUT/PATCH/DELETE` 上 `Sec-Fetch-Site: cross-site` → 403 `CSRF_ORIGIN_REJECTED`；带 `Origin`（或可从 `Referer` 推导）且非同源 → 403；**不带 `Origin` 一律放行**（curl / 服务端调用 / 支付宝回调 / 全部测试都不带，而浏览器跨站变更请求必带，故不放松防线）。**新路由不得挂到 guard 之上**。会话 cookie 只经 `server/lib/session-cookie.ts` 写入（`httpOnly` + `sameSite:'lax'` + 无 `domain`）；全局 `express.urlencoded()` 已收窄到支付宝通知单端点，新端点需要表单编码就自己挂。
 - 未验证邮箱拦截：`middleware/quota.ts` 对非 admin 的 chat 请求返回 403 `EMAIL_NOT_VERIFIED`；登录不拦截。
 - 注册（2026-09 重设计）：**验证码先行**——`POST /api/auth/send-register-code` 发 6 位码（10 分钟、每邮箱 60s 冷却、每 IP 5/h，存 `email_verification_codes` 表）→ `sign-up` 携码原子消费（连错 5 次作废）才建号，出生即 `email_verified=true`。链接式 `/verify-email` 与 `/resend-verification` 保留，**仅服务 admin 换绑邮箱后的二次验证**。
 - 邮件：`server/lib/mailer.ts` 双模式——SMTP 四个环境变量齐备走真发；否则 jsonTransport 干跑进内存 outbox（测试经 `getOutboxForTest()` 断言，上限 50 条）。链接依赖 `APP_URL`。
@@ -48,7 +66,9 @@ docker compose -f docker-compose.pg-smoke.yml up -d postgres && \
 
 ### 部署与 CI/CD（权威口径：`docs/部署与回退手册.md`）
 
-- GitHub Actions（`.github/workflows/ci.yml`，名称 CI/CD）三 job：**ci**（tsc→全量测试→arch-tests→build→PG 冒烟，push/PR 自动）→ **deploy**（仅手动 Run workflow 触发：备份快照→rsync dist→服务端 `npm install --omit=dev`+依赖预检→重启→验收，失败即停不自动回退）→ **rollback**（Run workflow 填快照 TS，执行手册 §5）。私有仓库 Free 套餐无 Environment 审批，**人工放行 = 手动 Run workflow**，push main 不会自动发版。
+- GitHub Actions（`.github/workflows/ci.yml`，名称 CI/CD）三 job：**ci**（tsc→全量测试→arch-tests→build→PG 冒烟**两遍**，push/PR 自动）→ **deploy**（仅手动 Run workflow 触发：备份快照→rsync dist→服务端 `npm install --omit=dev`+依赖预检→**部署期迁移**→重启→验收，失败即停不自动回退）→ **rollback**（Run workflow 填快照 TS，执行手册 §5）。私有仓库 Free 套餐无 Environment 审批，**人工放行 = 手动 Run workflow**，push main 不会自动发版。
+- **PG 冒烟两遍**（ADR-0019）：第一遍 owner 单角色（覆盖既有行为），第二遍先建 `arborize_app`/`arborize_system` 并授权、再以 `arborize_app` 为主角色跑（`PG_TEST_URL` + `DATABASE_SYSTEM_URL` + `DATABASE_ADMIN_URL`）——后者是唯一能证明「每个 PG 路径都带上了作用域、每条策略都放行得通」的检验，也是生产翻 `DATABASE_URL` 开关的唯一依据。授权必须在第一遍之后（表要先建出来）。注意 `tests/pg/pg-smoke.test.ts` 会用 `PG_TEST_URL` 覆盖 `DATABASE_URL`，双角色轮必须传它。
+- **迁移在重启之前**，owner 凭据经 ssh **stdin** 落到远端 mode-600 临时文件、`trap` 即用即删（不进 argv，远端 `ps` 看不到，也**不得**写进运行期 `.env`）；失败即中止且不重启。手工兜底流程见部署手册 Step 4.5。⚠️ 生产启动日志里**不再有** schema 行——不要在启动日志里 grep `verified and initialized`（迁移输出里才有）。
 - **发布物 = CI 测试通过的 dist 构建物**（artifact 传递，不在本地二次构建）；生产拓扑：pg-host（SSH 1542）站点 `/www/wwwroot/ex-kg/` 只有 dist/node_modules/.env/package.json，宝塔 Node 管理器管进程，**运行期 `.env` 只在服务器上、CD 永不触碰**（改完必须重启）。
 - **esbuild `--packages=external`**：新 runtime 依赖必须服务端 `npm install --omit=dev`（CD 已内置+启动前依赖预检），否则重启即 `Cannot find module`。
 - ⚠️ **dotenv 时序坑**：`dotenv.config()` 在 `server.ts` 里执行，晚于所有 import——**模块级读 `process.env` 恒为 undefined**，必须封装为函数运行时读取（已踩三次：alipay-provider 的 `APP_URL`、mailer dry-run、memory-store 的 `EVENT_LOGS_MEM_MAX`）。
@@ -72,6 +92,7 @@ docker compose -f docker-compose.pg-smoke.yml up -d postgres && \
 - 测试内拦外部 API 用 fetch 分发器：保存 `origFetch`，按 URL 分发 stub（如 chat.ts 调千问 `/responses` 返回构造的 SSE Response），其余透传，`after` 钩子恢复（先例 `tests/h2-grounding-chain.test.ts`）。
 - 断言审计日志用 `getAiRequestLogsForTest()`（`ai.repository.ts`，读内存单例，**newest-first/unshift**）；middleware 层拒绝（如 NODE_LIMIT_REACHED）不写审计，只能行为断言。
 - PG 真库测试（`tests/pg/*.test.ts`）：`PG_SMOKE=1` 门控 + `PG_TEST_URL` 可覆盖默认连接串，容器 tmpfs 库用完即抛；pg-smoke 用例注册固定邮箱复用旧库会撞 409/冷却，**必须空库跑**。⚠️ PG SQL 禁止把同一占位符用在两种类型上下文（varchar 列 + text 比较 → `42P08`，内存分支测不到，曾致生产下单全败——写 PG 参数一律独立占位符）。
+- **RLS 相关的两种跑法都要绿**（ADR-0019）：`tests/pg/rls-isolation.pg.test.ts` 与 `tests/pg/db-scope.pg.test.ts` 里，「策略装到位没有」那组断言在任何角色下都跑（查 `pg_class`/`pg_proc`，与角色无关）；「隔离真的生效吗」那组只在 `PG_TEST_URL` 指向受 RLS 约束的角色时有判别力，否则**带理由跳过**——但若 `PG_TEST_URL` 已配置却不受 RLS 约束，判定为接线错误并**报错而不是跳过**（少传一个变量不能让唯一的证据无声消失）。判据优先用 **GUC 的值**（`current_setting('app.user_id')`）而不是行数：行数只在受限角色下有判别力，GUC 在任何角色下都看得见，且同时钉死「ALS 传到了 db.ts」与「`set_config` 在事务内真的生效」。
 - 验收标准：新测试全绿 + 既有用例不回归 + `tsc --noEmit` 通过。
 
 ## 工作约定（本项目强制）
@@ -79,5 +100,6 @@ docker compose -f docker-compose.pg-smoke.yml up -d postgres && \
 - **import 一律带 `.js` 后缀**（ESM node16 解析），包括类型导入。
 - `docs/specs/` 始终只读（历史 Spec 不改，重设计决策记入里程碑文档）；`docs/` 其他文档更新需用户确认；`tests/` 目录只读，例外需用户显式授权（历次豁免已记录在提交信息中）。
 - **技术债流程**：`docs/技术债清单.md` 按状态机维护（Open / In Progress / Done / Won't Fix），修债务的 commit message 必须引用对应 `#NNNN`；Won't Fix 必须写明评估理由与复开条件（先例：#0003、#0016）。
-- `arch-tests/` 是治理工具（非只读）：dual-mode 判据要求函数体含 `getPool(` 与 `inMemoryStore.`，函数体提取按签名配对（勿回退"第一个 `{`"逻辑）；限流器判据按文件级 ALLOWLIST，豁免必须写明理由。
+- `arch-tests/` 是治理工具（非只读）：dual-mode 判据要求函数体含 `getDb(` 与 `inMemoryStore.`（2026-09-12 起由 `getPool` 收紧为 `getDb`，不得回退到直连连接池），函数体提取按签名配对（勿回退"第一个 `{`"逻辑）；限流器判据按文件级 ALLOWLIST，豁免必须写明理由。另有 rls-coverage（策略分类/探针形状/无 FORCE）、tenant-filter（探针不扩散、仓储不升级作用域、`getCanvas` 刻意不探针）、db-scope-discipline（作用域纪律）、csrf-guard（同源守卫的**接线**，而非行为——行为测试打的是 `createApp()`，守卫挂错位置它们照样绿）四套。
+- **改安全/鉴权机制的必须先写 ADR**（ADR-0019 角色分离与 RLS、ADR-0020 同源守卫即先例），ADR 状态只能 `Proposed → Accepted/Deprecated` 或 `Accepted → Deprecated/Superseded`；`docs/adr/README.md` 的索引表要同步。
 - 完成实施后按惯例报告：修改文件清单、验收结果、边界决策。
