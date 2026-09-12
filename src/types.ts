@@ -66,6 +66,13 @@ export interface DeepDiveBoardMeta {
   isArchived?: boolean;
   /** Spec L1：单层分组归属（null/undefined = 未分组） */
   folderId?: string | null;
+  /**
+   * ADR-0018：服务端判定的「共享」标记（仅列表接口回传，见 `CanvasRecord.isShared`）。
+   * legacy 模式下旧的全局共享默认板为 true → 不给收藏/归档/分组入口；private 模式下恒为
+   * false（它就是认领者自己的普通画板）。**客户端不得再按公开 id 集合自行判断**——
+   * 模式是服务端 env，客户端无从得知。与禁删无关：公开 id 两种模式下都禁删。
+   */
+  isShared?: boolean;
 }
 
 export interface TextSelectionPayload {

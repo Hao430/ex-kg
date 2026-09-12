@@ -101,7 +101,10 @@ function recompute(): void {
     if (tombstones.has(sm.id)) continue;
     seen.add(sm.id);
     const overlay = pending.get(sm.id);
-    list.push(overlay ? { ...sm, ...overlay } : { ...sm });
+    // isShared 是服务端授权口径（ADR-0018），**必须**在叠加后强制回服务端值：
+    // 本地缓冲里可能是旧版本写下的（或旧服务端缺字段时的默认值），让它盖住就是客户端替我
+    // 们决定授权——private 模式下会把认领者自己的板锁成共享板。
+    list.push(overlay ? { ...sm, ...overlay, isShared: sm.isShared } : { ...sm });
   }
 
   // 服务端还不知道的条目（纯本地草稿 / 游客板 / 认领后待上传）
@@ -274,6 +277,8 @@ export function confirmServerMeta(
     // null 是有效值（移出分组），不能用 ?? 把 null 吞成旧值
     folderId:
       server.folderId !== undefined ? server.folderId : prev?.folderId ?? local?.folderId ?? null,
+    // isShared 是服务端授权口径（ADR-0018），本地缓冲不得改写：只跟随上一个服务端快照值
+    isShared: prev?.isShared,
   };
   serverMetas = [meta, ...serverMetas.filter((m) => m.id !== id)];
   recompute();
@@ -302,6 +307,7 @@ export function confirmServerSave(id: string, server?: ServerConfirm): void {
     isFavorite: prev?.isFavorite ?? local?.isFavorite ?? false,
     isArchived: prev?.isArchived ?? local?.isArchived ?? false,
     folderId: prev?.folderId ?? local?.folderId ?? null,
+    isShared: prev?.isShared, // 服务端口径，本地投影不得改写（ADR-0018）
   };
   if (metaDirty.has(id) && local) {
     // 改名/收藏的 PATCH 还没落：内容保存的回包里没有这些改动，用本地未确认值顶住。

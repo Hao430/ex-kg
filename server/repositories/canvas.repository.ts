@@ -82,6 +82,10 @@ export async function listCanvases(userId: string): Promise<CanvasRecord[]> {
         updatedAt: r.updated_at,
         nodeCount: r.node_count,
         edgeCount: r.edge_count,
+        // 授权口径由服务端给（ADR-0018）：客户端**不得**再拿公开 id 集合自行判断「共享」——
+        // private 模式下 default-board 就是认领者自己的普通画板，收藏/归档/分组照常；
+        // legacy 模式下它才是人人可读的共享行（禁改个性化设置）。模式是服务端 env，客户端无从得知。
+        isShared: isSharedDefaultCanvas(r.id),
       }));
     } catch (e) {
       handlePgError(e);
@@ -100,6 +104,7 @@ export async function listCanvases(userId: string): Promise<CanvasRecord[]> {
       // 计数排除墓碑（与 PG 分支的 LEFT JOIN ... AND deleted_at IS NULL 同口径）
       nodeCount: (c.nodes || []).filter((n: any) => !n?.deleted_at).length,
       edgeCount: (c.edges || []).filter((e: any) => !e?.deleted_at).length,
+      isShared: isSharedDefaultCanvas(c.id),
     }))
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 }

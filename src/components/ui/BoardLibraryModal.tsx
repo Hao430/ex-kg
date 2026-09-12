@@ -6,7 +6,9 @@
  * - 画板列表真相来自父级 boards（board-store），分组来自父级 folders（folder-store），
  *   本组件只做视图筛选/排序，不发列表请求。
  * - 收藏/归档/改名/移动分组经父级回调：画板偏好走 meta 队列（可离线），分组 CRUD 在线优先。
- * - 归档默认隐藏，切「包含归档」查看/恢复；共享默认板不可收藏/归档/分组/删除。
+ * - 归档默认隐藏，切「包含归档」查看/恢复。共享默认板（服务端 `isShared`）不可收藏/归档/分组；
+ *   公开 id 画板（`SHARED_BOARD_IDS`）不可删除——前者是授权、随 ADR-0018 的模式开关切换，
+ *   后者是禁删、与模式无关，两者刻意不共用一个判据。
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
@@ -328,7 +330,12 @@ export const BoardLibraryModal: React.FC<BoardLibraryModalProps> = ({
               ) : (
                 <div className="space-y-1">
                   {list.map((b) => {
-                    const shared = SHARED_BOARD_IDS.has(b.id);
+                    // 「共享」是**服务端口径**（ADR-0018）：legacy 模式下旧的全局共享默认板为 true，
+                    // private 模式下它就是认领者自己的普通画板（收藏/归档/分组照常）。客户端不再按
+                    // 公开 id 集合自行判断——模式是服务端 env，判断不了。
+                    const shared = b.isShared === true;
+                    // 「禁删」与授权解耦（ADR-0012/0018）：公开 id 两种模式下都禁删，故不给入口
+                    const undeletable = SHARED_BOARD_IDS.has(b.id);
                     const active = b.id === currentBoardId;
                     return (
                       <div
@@ -423,7 +430,7 @@ export const BoardLibraryModal: React.FC<BoardLibraryModalProps> = ({
                               {b.isArchived ? <ArchiveRestore className="w-3.5 h-3.5" /> : <Archive className="w-3.5 h-3.5" />}
                             </button>
                           )}
-                          {!shared && (
+                          {!undeletable && (
                             <button
                               id={`board-library-delete-${b.id}`}
                               onClick={() => onDeleteBoard(b.id)}

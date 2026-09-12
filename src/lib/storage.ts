@@ -620,6 +620,9 @@ export async function fetchBoardListFromServer(): Promise<DeepDiveBoardMeta[] | 
       isFavorite: Boolean(c.isFavorite),
       isArchived: Boolean(c.isArchived),
       folderId: c.folderId ?? null,
+      // 授权口径以服务端为准（ADR-0018）：缺字段（旧服务端）即按「非共享」处理，
+      // 与 private 模式同向——比反过来把用户的私有板当成共享板、锁掉收藏入口要安全。
+      isShared: Boolean(c.isShared),
     }));
     boardStore.hydrateFromServer(list); // 写通本地索引（修列表缩水）
     return list;

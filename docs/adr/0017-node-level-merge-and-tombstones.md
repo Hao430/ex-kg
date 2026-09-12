@@ -147,4 +147,4 @@
 - 开关：`.env.example` 的 `SAVE_LEGACY_REPLACE_ENABLED`、`CANVAS_TOMBSTONE_RETENTION_DAYS`
 - 测试：`tests/h2-canvas-merge.test.ts`（内存分支合并/墓碑/GC）、`tests/pg/h2-merge-tombstone.pg.test.ts`（真库 rev 递增与墓碑守卫）、`tests/pg/s6-tombstone-gc.pg.test.ts`（真库保留期回收）
 - 相关决策：`docs/adr/0008-sync-state-machine.md`（状态机与乐观锁，本 ADR 缩小其冲突面）、`docs/adr/0005-soft-delete-with-30d-cooldown.md`（墓碑保留期对齐）、`docs/adr/0013-frontend-node-id-truncation.md`（节点 id 由客户端生成——本 ADR「GC 后重传 = 真实重建」边界的前提）、`docs/adr/0018-default-board-private.md`（本 ADR 使共享默认板从「覆盖竞争」升级为「跨租户稳定混合」，是该 ADR 的动因）
-- 需修订：`docs/adr/0008-sync-state-machine.md`（409/整板冲突的表述）
+- 已同步修订：`docs/adr/0008-sync-state-machine.md`（409/整板冲突的表述，2026-09-12）

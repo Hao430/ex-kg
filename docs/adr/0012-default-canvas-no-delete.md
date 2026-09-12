@@ -68,7 +68,7 @@ if (isDefaultCanvasPublicId(canvasId)) {
 
 ### Follow-up / Mitigation
 
-- 前端在画板列表隐藏公开 id 画板的删除按钮——按**公开 id 集合**判定（`src/lib/board-scope.ts` 的 `SHARED_BOARD_IDS`），与服务端一致，不依赖授权开关；
+- 前端在画板列表隐藏公开 id 画板的删除按钮——按**公开 id 集合**判定（`src/lib/board-scope.ts` 的 `SHARED_BOARD_IDS`），与服务端一致，不依赖授权开关。注意同处还有另一个判据「是否共享」（决定收藏/归档/分组入口），**它必须用服务端回传的 `isShared`**（随 ADR-0018 的模式切换），两者不可合并——合并的后果是 private 模式下把认领者自己的板锁成共享板；
 - admin 重置内容需写 `user_audit_logs` 完整留痕；
 - 二期可引入"画板版本管理"（保留历史版本）。
 

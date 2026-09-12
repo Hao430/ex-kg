@@ -164,6 +164,21 @@ describe('H1 画布删除链路安全加固（后端）', () => {
     assert.equal(save2.status, 200);
   });
 
+  test('列表回传 isShared：legacy 下共享板（属主列表里）标 true，普通板标 false', async () => {
+    // 客户端据此锁掉收藏/归档/分组入口（ADR-0018）。判据必须来自服务端——模式是服务端 env，
+    // 客户端拿公开 id 集合自行判断在 private 模式下会把认领者自己的板当成共享板。
+    const save = await saveBoard(bobCookie, 'h1-bob-plain', []);
+    assert.equal(save.status, 200);
+
+    const res = await fetch(`${base}/api/canvases`, { headers: { cookie: bobCookie } });
+    assert.equal(res.status, 200);
+    const list = (await res.json()) as any[];
+    const shared = list.find((c) => c.id === 'default-board');
+    assert.ok(shared, '共享板应在属主（bob，首个保存者）的列表里');
+    assert.equal(shared.isShared, true, 'legacy 模式下共享板标共享');
+    assert.equal(list.find((c) => c.id === 'h1-bob-plain')?.isShared, false, '普通板不标共享');
+  });
+
   test('共享默认板禁删：alice/bob DELETE default-board → 403', async () => {
     for (const cookie of [aliceCookie, bobCookie]) {
       const res = await delBoard(cookie, 'default-board');

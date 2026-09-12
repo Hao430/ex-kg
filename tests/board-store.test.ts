@@ -188,6 +188,24 @@ describe('board-store 合并与一致性', () => {
     assert.equal(entry?.name, 'renamed-elsewhere', '他端改名必须能透出（旧实现在这里会永久停在本地值）');
   });
 
+  test('isShared 是服务端口径：水合带过来，本地缓冲/回包不得改写（ADR-0018）', () => {
+    boardStore.hydrateFromServer([{ ...meta('default-board'), isShared: true }]);
+    assert.equal(boardStore.getBoardList()[0].isShared, true);
+
+    // 本地未确认 meta（改名/收藏）叠加显示时不得把共享标记抹掉或反向置位
+    boardStore.upsertLocal({ ...meta('default-board', '我改的名'), isShared: false });
+    assert.equal(boardStore.getBoardList()[0].isShared, true, '本地投影不得改写服务端口径');
+
+    // 内容保存回包同样不带该字段 → 继续跟随服务端快照
+    boardStore.confirmServerSave('default-board', { title: '服务端名' });
+    assert.equal(boardStore.getBoardList()[0].isShared, true);
+
+    // private 模式下服务端给 false，本地也不得把它翻成 true
+    boardStore.hydrateFromServer([{ ...meta('default-board'), isShared: false }]);
+    boardStore.upsertLocal({ ...meta('default-board'), isShared: true });
+    assert.equal(boardStore.getBoardList()[0].isShared, false);
+  });
+
   test('hydrateClaimedDrafts：游客草稿迁入账号 scope 且标 dirty，guest 索引移除该条', () => {
     boardScope.writeScopedIndex([meta('g1'), meta('default-board')], 'guest');
     boardStore.bindScope('u1');

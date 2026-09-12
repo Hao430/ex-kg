@@ -117,6 +117,12 @@ export interface CanvasRecord {
   isArchived?: boolean;
   /** Spec L1：单层分组归属（null = 未分组；分组删除时置 null） */
   folderId?: string | null;
+  /**
+   * ADR-0018：该画板是否按「全局共享」放行（`isSharedDefaultCanvas`，随 `SAVE_DEFAULT_BOARD_MODE`）。
+   * 仅由列表接口回传，供前端决定是否给出收藏/归档/分组入口——客户端不得自行按公开 id 集合判断。
+   * 注意与「禁删」无关：公开 id 两种模式下都禁删，那是 `isDefaultCanvasPublicId`。
+   */
+  isShared?: boolean;
   createdAt: string;
   updatedAt: string;
   nodeCount?: number;

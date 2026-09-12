@@ -136,6 +136,15 @@ describe('H4 默认画板私有化（private 模式）', () => {
     assert.equal(ok.status, 200, 'private 模式下默认板是属主自己的普通画板，可收藏');
   });
 
+  test('列表回传 isShared：private 下认领者的默认板不标共享（可收藏/归档/分组）', async () => {
+    const res = await fetch(`${base}/api/canvases`, { headers: { cookie: aliceCookie } });
+    assert.equal(res.status, 200);
+    const list = (await res.json()) as any[];
+    const mine = list.find((c) => c.id === 'default-board');
+    assert.ok(mine, '认领者的默认板在自己的列表里');
+    assert.equal(mine.isShared, false, 'private 模式下它就是普通画板，客户端不得再按公开 id 锁掉入口');
+  });
+
   test('禁删与授权解耦：两种模式下 default-board 都不可删', async () => {
     for (const cookie of [aliceCookie, bobCookie]) {
       const res = await delBoard(cookie, 'default-board');
