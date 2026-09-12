@@ -38,7 +38,36 @@ export function pgDegraded(): boolean {
  * 注意：业务错误（AppError 子类）必须在 catch 之前 rethrow 的既有约定不变，
  * handlePgError 只应看到真正的 PG/意外错误。
  */
+/**
+ * RLS 策略拒绝（ADR-0019）。**必须与「PG 故障」区分开**：
+ *
+ * RLS 拒绝在 app 角色下是**越权尝试的常态**（恶意或陈旧客户端），语义是「无权」而非
+ * 「数据库不可用」。若沿用默认处理，生产会把它抛成 503 DB_UNAVAILABLE（排障方向直接指反，
+ * 运维会去查数据库），并且 notePgError() 会把 degraded 点亮，可能触发无谓的告警甚至重启。
+ *
+ * SQLSTATE 42501 同时用于「缺 GRANT」这类真正的配置故障，故必须连带匹配消息文本；
+ * PG 的 RLS 报错固定含 `row-level security policy`（含变体
+ * "new row violates row-level security policy" / "query would be affected by ..."）。
+ */
+function isRlsViolation(e: unknown): boolean {
+  const err = e as { code?: string; message?: string } | undefined;
+  return err?.code === '42501' && /row-level security policy/i.test(err?.message || '');
+}
+
 export function handlePgError(e: unknown): void {
+  if (isRlsViolation(e)) {
+    const err = e as { message?: string };
+    // 不 notePgError：这不是故障，不该点亮 degraded
+    console.error(
+      `[db-guard] RLS 策略拒绝了本次查询——**应用层漏写了属主过滤**（这是代码 bug，不是数据库故障）| ${err.message}`
+    );
+    throw new AppError(
+      500,
+      'RLS_VIOLATION',
+      '服务器内部错误，请稍后重试'
+    );
+  }
+
   notePgError();
   const err = e as { code?: string; message?: string } | undefined;
   const detail = `code=${err?.code ?? '-'} message=${err?.message ?? String(e)}`;

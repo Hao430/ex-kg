@@ -4,6 +4,53 @@ import { hashPassword } from '../lib/crypto.js';
 let schemaInitialized = false;
 
 /**
+ * ADR-0019：受 RLS 约束的表 → 谓词形态。这三份清单是**策略的唯一事实源**，
+ * 由 `arch-tests/rls-coverage.test.mjs` 锁定「开策略的表 ∪ 豁免表 = 全部建表」，
+ * 新增表若忘了归类会直接变红（漏一张表 = 一条静默的跨租户读通道）。
+ */
+
+/** 直接归属：`user_id = app.user_id` */
+export const RLS_DIRECT_USER_TABLES = [
+  'sessions',
+  'canvases',
+  'orders',
+  'ai_request_logs',
+  'tags',
+  'folders',
+  'user_api_keys',
+  'feedbacks',
+  'notifications',
+  'user_audit_logs',
+  'event_logs',
+] as const;
+
+/** 账号表本身：`id = app.user_id` */
+export const RLS_SELF_ID_TABLES = ['users'] as const;
+
+/** 间接归属（无 user_id 列）：经 canvas_id 回指 canvases 的属主 */
+export const RLS_CANVAS_CHILD_TABLES = ['nodes', 'edges', 'canvas_shares'] as const;
+
+/**
+ * 显式豁免（不开 RLS）。每一项都必须写明理由——豁免就是一条**刻意**的跨租户通道：
+ * - `system_settings`：全局配置（模型/支付/开关），非租户数据；
+ * - `email_verification_codes`：账号建立**之前**按 email 寻址，此时无 app.user_id 可言；
+ * - 余下 5 张是 #0004 待评估删除的空壳表，全仓零引用（2026-09-12 grep 核实），
+ *   里面没有数据可保护；随 #0004 删除时一并从本清单移除。
+ */
+export const RLS_EXEMPT_TABLES = [
+  'system_settings',
+  'email_verification_codes',
+  'canvas_snapshots',
+  'canvas_tags',
+  'node_attachments',
+  'canvas_templates',
+  'ai_models_config',
+] as const;
+
+/** 策略中的「当前请求用户」——NULLIF 防空串 cast 报错（SQLSTATE 22P02） */
+const SELF_USER_ID = `NULLIF(current_setting('app.user_id', true), '')::uuid`;
+
+/**
  * Initialize PostgreSQL tables and seed default users if not present
  */
 export async function initDbSchema(): Promise<boolean> {
@@ -575,6 +622,63 @@ export async function initDbSchema(): Promise<boolean> {
       `UPDATE users SET email_verified = TRUE
        WHERE email IN ('admin@deepdive.ai', 'user@deepdive.ai', 'vip@deepdive.ai')`
     );
+
+    // ---------- ADR-0019：行级安全（RLS）策略 ----------
+    // 用 ENABLE 而非 FORCE：owner（syf_minapp）是迁移角色，必须能正常建表与 DML；
+    // arborize_app 非属主，ENABLE 即对其生效。
+    // ⚠️ **不得改成 FORCE**：canvas_probe 靠 SECURITY DEFINER 以属主身份执行来绕过策略，
+    // FORCE 会让属主也受约束 → 探针静默返回 NULL → 跨租户保存退化成 404（ADR-0019）。
+    const policySql: Array<[string, string]> = [
+      ...RLS_DIRECT_USER_TABLES.map((t) => [t, `user_id = ${SELF_USER_ID}`] as [string, string]),
+      ...RLS_SELF_ID_TABLES.map((t) => [t, `id = ${SELF_USER_ID}`] as [string, string]),
+      ...RLS_CANVAS_CHILD_TABLES.map(
+        (t) =>
+          [
+            t,
+            // 子查询自身也被 canvases 的策略过滤，语义自洽：只能看见自己画布的节点/边/分享
+            `canvas_id IN (SELECT id FROM canvases WHERE user_id = ${SELF_USER_ID})`,
+          ] as [string, string]
+      ),
+    ];
+    for (const [table, predicate] of policySql) {
+      await client.query(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`);
+      // CREATE POLICY 没有 IF NOT EXISTS，先 DROP 保证本函数可重复执行（迁移是幂等的）
+      await client.query(`DROP POLICY IF EXISTS tenant_isolation ON ${table}`);
+      await client.query(
+        `CREATE POLICY tenant_isolation ON ${table} USING (${predicate}) WITH CHECK (${predicate})`
+      );
+    }
+
+    // canvas_probe：跨租户归属探针（ADR-0019）。
+    // RLS 让 app 角色看不见他人的行，而 saveCanvas 必须区分「不存在（新建/404）」与
+    // 「存在但非属主（403）」，deleteCanvas / updateCanvasMeta / getCanvasOwnerInfo 同此。
+    // 仅暴露「某 id 的归属」这一个事实：参数化、需知道 id 才能问、不泄露任何租户内容。
+    // 参数声明为 VARCHAR 而非 TEXT —— canvases.id 是 VARCHAR(64)，声明成 TEXT 会让
+    // `c.id = p_id` 退化为 `text = text`（列被隐式转换），索引失效。
+    await client.query(`
+      CREATE OR REPLACE FUNCTION canvas_probe(p_id VARCHAR)
+      RETURNS TABLE (user_id UUID, updated_at TIMESTAMPTZ, deleted_at TIMESTAMPTZ)
+      LANGUAGE sql
+      SECURITY DEFINER
+      STABLE
+      SET search_path = pg_catalog, public
+      AS $$
+        SELECT c.user_id, c.updated_at, c.deleted_at FROM public.canvases c WHERE c.id = p_id
+      $$
+    `);
+    // 默认 EXECUTE 授予 PUBLIC，先收回再按需授予（角色可能尚未创建：本地/CI 首轮）
+    await client.query('REVOKE EXECUTE ON FUNCTION canvas_probe(VARCHAR) FROM PUBLIC');
+    await client.query(`
+      DO $$
+      DECLARE r TEXT;
+      BEGIN
+        FOREACH r IN ARRAY ARRAY['arborize_app', 'arborize_system'] LOOP
+          IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
+            EXECUTE format('GRANT EXECUTE ON FUNCTION canvas_probe(VARCHAR) TO %I', r);
+          END IF;
+        END LOOP;
+      END $$
+    `);
 
     await client.query('COMMIT');
     schemaInitialized = true;

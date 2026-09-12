@@ -702,7 +702,9 @@ export async function saveCanvas(
       // （RLS 判据）与 BEGIN/COMMIT/ROLLBACK/release，仓储不得再手写这些语句。
       return await db.withTransaction(async (client) => {
         // Check ownership if canvas exists（含软删行：占主键，禁止 upsert 复活）
-        const existing = await client.query('SELECT user_id, updated_at, deleted_at FROM canvases WHERE id = $1', [data.id]);
+        // 归属预读走 canvas_probe（非直查 canvases）：RLS 下 app 角色看不见他人的行，
+        // 直查会把「存在但非属主」误判成「不存在」——403 退化成 404/误建（ADR-0019）
+        const existing = await client.query('SELECT user_id, updated_at, deleted_at FROM canvas_probe($1)', [data.id]);
         const existingUserId = existing.rows.length > 0 ? existing.rows[0].user_id : null;
 
         if (existing.rows.length > 0 && existing.rows[0].deleted_at) {
@@ -990,7 +992,9 @@ export async function deleteCanvas(canvasId: string, userId: string): Promise<bo
   if (db) {
     try {
       return await db.withTransaction(async (client) => {
-        const check = await client.query('SELECT user_id FROM canvases WHERE id = $1 AND deleted_at IS NULL', [canvasId]);
+      // 归属预读走 canvas_probe（非直查 canvases）：RLS 下 app 角色看不见他人的行，
+      // 直查会把「存在但非属主」误判成「不存在」（ADR-0019）
+        const check = await client.query('SELECT user_id FROM canvas_probe($1) WHERE deleted_at IS NULL', [canvasId]);
         if (check.rows.length === 0) {
           return false; // 不存在或已软删，幂等返回
         }
@@ -1098,7 +1102,9 @@ export async function updateCanvasMeta(
   if (db) {
     try {
       return await db.withTransaction(async (client) => {
-        const check = await client.query('SELECT user_id FROM canvases WHERE id = $1 AND deleted_at IS NULL', [canvasId]);
+      // 归属预读走 canvas_probe（非直查 canvases）：RLS 下 app 角色看不见他人的行，
+      // 直查会把「存在但非属主」误判成「不存在」（ADR-0019）
+        const check = await client.query('SELECT user_id FROM canvas_probe($1) WHERE deleted_at IS NULL', [canvasId]);
         if (check.rows.length === 0) {
           throw new NotFoundError('画板不存在或已删除');
         }
@@ -1201,7 +1207,9 @@ export async function getCanvasOwnerInfo(
   const db = getDb();
   if (db) {
     try {
-      const res = await db.query('SELECT user_id FROM canvases WHERE id = $1 AND deleted_at IS NULL', [canvasId]);
+      // 归属预读走 canvas_probe（非直查 canvases）：RLS 下 app 角色看不见他人的行，
+      // 直查会把「存在但非属主」误判成「不存在」（ADR-0019）
+      const res = await db.query('SELECT user_id FROM canvas_probe($1) WHERE deleted_at IS NULL', [canvasId]);
       return { exists: res.rows.length > 0, ownerId: res.rows[0]?.user_id ?? null };
     } catch (e) {
       handlePgError(e);
