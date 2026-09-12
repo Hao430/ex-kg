@@ -3,6 +3,7 @@ import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { findSession } from '../repositories/session.repository.js';
 import type { UserRecord, SessionRecord } from '../core/records.js';
 import { UnauthorizedError } from '../lib/errors.js';
+import { extractSessionToken, clearSessionCookie } from '../lib/session-cookie.js';
 
 // Extend Express Request type
 declare global {
@@ -209,14 +210,7 @@ export const subscriptionRateLimiter = rateLimit({
  * Extract token from Cookie or Bearer header
  */
 export function extractToken(req: Request): string | null {
-  if (req.cookies?.session_token) {
-    return req.cookies.session_token;
-  }
-  const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    return authHeader.slice(7).trim();
-  }
-  return null;
+  return extractSessionToken(req);
 }
 
 /**
@@ -235,7 +229,7 @@ export async function authMiddleware(req: Request, _res: Response, next: NextFun
         const { session, user } = result;
 
         if (!user.is_active) {
-          _res.clearCookie('session_token', { path: '/' });
+          clearSessionCookie(_res);
           _res.status(403).json({
             error: '账号已被系统冻结，请联系运营管理员',
             code: 'ACCOUNT_FROZEN',

@@ -10,7 +10,7 @@ import { submitFeedback } from '../services/feedback.service.js';
 import { asyncHandler } from '../lib/async-handler.js';
 import { validate } from '../lib/validate.js';
 import { effectiveEntitlements } from '../services/quota.service.js';
-import type { Response as ExpressResponse } from 'express';
+import { setSessionCookie, clearSessionCookie, extractSessionToken } from '../lib/session-cookie.js';
 import { authMiddleware, loginRateLimiter, signupRateLimiter, resendVerificationRateLimiter, forgotPasswordRateLimiter, sendRegisterCodeRateLimiter } from '../middleware/auth.js';
 
 export const authRouter = Router();
@@ -61,19 +61,6 @@ const ChangePasswordSchema = z.object({
   oldPassword: z.string().min(1, '请输入旧密码'),
   newPassword: z.string().min(6, '新密码长度至少为 6 位'),
 });
-
-/**
- * Set session cookie (7 days)
- */
-function setSessionCookie(res: ExpressResponse, token: string): void {
-  res.cookie('session_token', token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    path: '/',
-    maxAge: 7 * 24 * 3600 * 1000, // 7 days
-  });
-}
 
 function publicUser(user: {
   id: string;
@@ -165,7 +152,7 @@ authRouter.post('/sign-in', loginRateLimiter, asyncHandler(async (req: Request, 
  * Clear session and cookie
  */
 authRouter.post('/sign-out', asyncHandler(async (req: Request, res: Response) => {
-  const token = req.cookies?.session_token || req.headers.authorization?.slice(7).trim();
+  const token = extractSessionToken(req);
   if (token) {
     const result = await findSession(token).catch(() => null);
     await deleteSession(token);
@@ -176,7 +163,7 @@ authRouter.post('/sign-out', asyncHandler(async (req: Request, res: Response) =>
       userAgent: req.headers['user-agent'],
     });
   }
-  res.clearCookie('session_token', { path: '/' });
+  clearSessionCookie(res);
   res.json({ success: true, message: '已安全登出' });
 }));
 
@@ -186,7 +173,7 @@ authRouter.post('/sign-out', asyncHandler(async (req: Request, res: Response) =>
  */
 authRouter.delete('/account', authMiddleware, asyncHandler(async (req: Request, res: Response) => {
   await deleteOwnAccount(req.user!.id);
-  res.clearCookie('session_token', { path: '/' });
+  clearSessionCookie(res);
   res.json({ success: true, message: '账号已注销，30 天内可联系管理员恢复' });
 }));
 
@@ -312,7 +299,7 @@ authRouter.post('/change-password', authMiddleware, loginRateLimiter, asyncHandl
     ip: req.ip,
     userAgent: req.headers['user-agent'],
   });
-  res.clearCookie('session_token', { path: '/' });
+  clearSessionCookie(res);
   res.json({ success: true, message: '密码已修改，请使用新密码重新登录' });
 }));
 
@@ -324,7 +311,7 @@ authRouter.post('/feedback', asyncHandler(async (req: Request, res: Response) =>
   const { type, rating, content, contactInfo } = validate(FeedbackSchema, req.body);
 
   // Optional user attachment via session token
-  const token = req.cookies?.session_token || req.headers.authorization?.slice(7).trim();
+  const token = extractSessionToken(req);
 
   const fb = await submitFeedback({ token, type, rating, content, contactInfo });
 

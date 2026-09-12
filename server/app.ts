@@ -11,6 +11,7 @@ import { quotaRouter } from './routes/quota.js';
 import { sharesRouter } from './routes/shares.js';
 import { foldersRouter } from './routes/folders.js';
 import { errorHandler } from './middleware/error-handler.js';
+import { sameOriginGuard } from './middleware/same-origin.js';
 import { checkDbStatus } from './core/db-status.js';
 
 /**
@@ -35,8 +36,14 @@ export function createApp(): express.Express {
 
   app.use(cookieParser());
   app.use(express.json({ limit: '10mb' }));
-  // form-urlencoded 解析：支付宝异步通知（POST /api/subscriptions/notify）以该格式回调（ADR-0014）
-  app.use(express.urlencoded({ extended: false }));
+  // form-urlencoded 解析**只挂给支付宝异步通知**（POST /api/subscriptions/notify，ADR-0014）——
+  // 全仓唯一消费方（tests/alipay-payment.test.ts 实证）。此前是全局挂载，等于给所有端点
+  // 开了一道表单编码面（技术债 #0013 加固项），收窄后 JSON 端点不再接受表单体。
+  app.use('/api/subscriptions/notify', express.urlencoded({ extended: false }));
+
+  // 变更方法同源守卫（技术债 #0013，ADR-0020）：必须在所有路由之前、body parser 之后。
+  // 只作用于 POST/PUT/PATCH/DELETE，不带 Origin 的非浏览器客户端一律放行。
+  app.use(sameOriginGuard);
 
   // Health check
   app.get('/api/health', (_req, res) => {
