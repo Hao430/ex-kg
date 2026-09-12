@@ -24,6 +24,9 @@ process.env.DATABASE_URL =
   process.env.PG_TEST_URL || 'postgres://postgres:postgres@127.0.0.1:5433/arborize_test';
 process.env.APP_URL = process.env.APP_URL || 'http://127.0.0.1:3000';
 
+// 建表必须显式调用（ADR-0019：懒迁移已从仓储摘除，生产改由部署期 migrate 步骤）。
+// 用动态 import：静态导入会被提升到 process.env.DATABASE_URL 赋值之前。
+const { initDbSchema } = await import('../../server/core/schema.js');
 const { createApp } = await import('../../server/app.js');
 const { getSystemPool } = await import('../../server/core/pool.js');
 
@@ -107,6 +110,7 @@ describe('H2 PG 真库：合并写入与墓碑', () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const { port } = server.address() as AddressInfo;
     base = `http://127.0.0.1:${port}`;
+    await initDbSchema();
     await waitPgReady();
     cookie = await signIn('admin@deepdive.ai', 'Admin123456!');
   });

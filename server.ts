@@ -25,8 +25,12 @@ const app = createApp();
 const PORT = Number(process.env.PORT) || 3000;
 
 async function start() {
-  // DB schema 初始化先行（后台）
-  initDbSchema().catch((err) => console.warn('Background initDbSchema warning:', err?.message || err));
+  // schema 迁移已移出生产进程（ADR-0019）：生产由部署期 `npm run migrate` 以 owner 角色执行，
+  // 应用进程零 DDL 权限。非生产保留启动兜底，保住 `npm run dev` 与既有 PG 冒烟套件的现状
+  // （它们不设 NODE_ENV，且需要「起来即有表」）。
+  if (process.env.NODE_ENV !== 'production') {
+    initDbSchema().catch((err) => console.warn('Background initDbSchema warning:', err?.message || err));
+  }
 
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

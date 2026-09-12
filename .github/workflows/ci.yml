@@ -1,13 +1,14 @@
 # CI/CD：门禁 + 生产部署 + 一键回退
 #
-# 流程：push/PR main → ci（tsc/测试/arch/build/PG 冒烟，自动）→
+# 流程：push/PR main → ci（tsc/测试/arch/build/PG 冒烟 ×2，自动）→
 #   - 部署：Actions 页手动 Run workflow（留空 rollback_snapshot）→
-#     备份快照 → rsync → 依赖 → 重启 → 验收
+#     备份快照 → rsync → 依赖预检 → **部署期迁移（失败即中止，不重启）** → 重启 → 验收
 #   - 回退：手动 Run workflow 填 rollback_snapshot → 执行部署手册 §5
 #
 # 人工放行 = 手动触发（私有仓库 Free 套餐无 Environment Required reviewers，
 # 见部署手册 §11）；部署目标与全部命令口径来自 docs/部署与回退手册.md。
-# 所需 Secrets：DEPLOY_HOST / DEPLOY_PORT / DEPLOY_USER / DEPLOY_SSH_KEY
+# 所需 Secrets：DEPLOY_HOST / DEPLOY_PORT / DEPLOY_USER / DEPLOY_SSH_KEY /
+#   DATABASE_ADMIN_URL（owner 凭据，仅「部署期迁移」步骤使用，即用即删——ADR-0019）
 name: CI/CD
 
 on:
@@ -76,6 +77,39 @@ jobs:
         run: npm run build
 
       - name: PG 真库冒烟（tests/pg/*.test.ts，PG_SMOKE 门控）
+        run: PG_SMOKE=1 npx tsx --test 'tests/pg/*.test.ts'
+
+      # ADR-0019 的关键一验：同一套 PG 冒烟以**双角色**再跑一遍。
+      # 第一遍（上一步）是 owner 单角色，只覆盖既有行为；这一遍以 app（受 RLS）为主
+      # 角色，是唯一能证明「每个 PG 路径都带上了作用域」「每条策略都放行得通」的检验，
+      # 也是生产翻 DATABASE_URL 开关的唯一依据。
+      # 角色与授权必须在第一遍之后建：表由 initDbSchema 创建，授权要作用于已存在的表。
+      - name: 建 PG 冒烟角色（app / system）并授权
+        run: |
+          set -e
+          PGPASSWORD=postgres psql -h 127.0.0.1 -p 5433 -U postgres -d arborize_test -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE arborize_app LOGIN PASSWORD 'app_pw';
+          CREATE ROLE arborize_system LOGIN PASSWORD 'system_pw';
+          -- BYPASSRLS 需超级用户；CI 的 postgres 即超级用户（生产见 ADR-0019 的退路）
+          ALTER ROLE arborize_system BYPASSRLS;
+          GRANT USAGE ON SCHEMA public TO arborize_app, arborize_system;
+          GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO arborize_app, arborize_system;
+          GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO arborize_app, arborize_system;
+          -- 后续迁移新建的表/序列自动授权（生产同样要设，否则新表对 app 角色不可见）
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public
+            GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO arborize_app, arborize_system;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public
+            GRANT USAGE, SELECT ON SEQUENCES TO arborize_app, arborize_system;
+          SQL
+          echo "双角色已就绪"
+
+      - name: PG 真库冒烟（双角色：app 受 RLS + system 跨租户，ADR-0019）
+        env:
+          PG_TEST_URL: postgres://arborize_app:app_pw@127.0.0.1:5433/arborize_test
+          DATABASE_SYSTEM_URL: postgres://arborize_system:system_pw@127.0.0.1:5433/arborize_test
+          # 迁移类用例（initDbSchema）仍以 owner 执行——生产里这一步在部署期 migrate 步骤，
+          # CI 里 NODE_ENV 非 production，故 checkRuntimeDbRoleInvariants 不介入
+          DATABASE_ADMIN_URL: postgres://postgres:postgres@127.0.0.1:5433/arborize_test
         run: PG_SMOKE=1 npx tsx --test 'tests/pg/*.test.ts'
 
       # 测试通过的构建物即发布物（不经本地二次构建）
@@ -176,6 +210,43 @@ jobs:
           ${{ env.SERVER_NODE }} -e "const src=require('fs').readFileSync('dist/server.cjs','utf8');const re=/require\(\"([a-z@][^\"]*)\"\)/g;const set=new Set();let m;while((m=re.exec(src)))set.add(m[1]);let bad=0;for(const n of set){try{require(n)}catch(e){console.log('MISSING',n);bad++}}if(bad){process.exit(1)}console.log('依赖齐')"
           REMOTE
 
+      # ADR-0019：迁移是部署期的独立步骤，**在重启之前**。失败即中止且不重启——
+      # 旧进程继续服务，而不是起一个半 schema 的新进程。
+      # owner 凭据经 ssh **stdin** 落到远端 mode-600 临时文件（不进 argv，远端 ps 看不到），
+      # 用后即删；绝不写进运行期 .env（checkRuntimeDbRoleInvariants 会拒绝带 owner 凭据启动）。
+      - name: 部署期迁移（owner 凭据即用即删；失败即中止不重启）
+        env:
+          DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
+        run: |
+          set -e
+          if [ -z "$DATABASE_ADMIN_URL" ]; then
+            echo "缺少 Secret DATABASE_ADMIN_URL：无法执行部署期迁移（ADR-0019）"; exit 1
+          fi
+          printf 'DATABASE_ADMIN_URL=%s\n' "$DATABASE_ADMIN_URL" | \
+            ssh -i ~/.ssh/deploy_key -p ${{ secrets.DEPLOY_PORT }} \
+              ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+              "umask 077 && cat > ${{ env.SITE_DIR }}/.migrate.env"
+
+          ssh -i ~/.ssh/deploy_key -p ${{ secrets.DEPLOY_PORT }} \
+            ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} 'bash -s' <<'REMOTE'
+          set -e
+          cd /www/wwwroot/ex-kg
+          trap 'rm -f /www/wwwroot/ex-kg/.migrate.env' EXIT
+          set -a; . /www/wwwroot/ex-kg/.migrate.env; set +a
+          export NODE_ENV=production
+          # 迁移失败 → 中止发布（不重启，手册 §8）
+          MIGRATE_OUT=$(${{ env.SERVER_NODE }} dist/migrate.cjs 2>&1) || {
+            echo "$MIGRATE_OUT"
+            echo "❌ 迁移失败——已中止发布，未重启进程（旧版本继续服务）"
+            exit 1
+          }
+          echo "$MIGRATE_OUT"
+          # 迁移结果必须显式校验：成功标志缺失 = 静默失败，不能放行到重启
+          echo "$MIGRATE_OUT" | grep -q "verified and initialized" \
+            || { echo "❌ 迁移未打印成功标志（缺日志或静默失败）"; exit 1; }
+          echo "schema ok"
+          REMOTE
+
       - name: 重启进程（手册 Step5：优雅退出 + kill -9 兜底 + su www 启动）
         run: |
           ssh -i ~/.ssh/deploy_key -p ${{ secrets.DEPLOY_PORT }} \
@@ -191,13 +262,13 @@ jobs:
           tail -4 /www/wwwlogs/nodejs/ex_kg.log
           grep -q "listening on http://0.0.0.0:2998" /www/wwwlogs/nodejs/ex_kg.log \
             || { echo "启动日志未见 listening 行"; tail -30 /www/wwwlogs/nodejs/ex_kg.log; exit 1; }
-          # schema 迁移校验（手册 §8）：initDbSchema 失败只打日志、不阻断监听，
-          # health/首页/bundle 验收照样过 —— 必须显式拦截最近一次启动的迁移结果。
-          SCHEMA_LINE=$(grep -E "verified and initialized|Failed to initialize PostgreSQL schema" /www/wwwlogs/nodejs/ex_kg.log | tail -1)
-          case "$SCHEMA_LINE" in
-            *"verified and initialized"*) echo "schema ok";;
-            *) echo "数据库 schema 未成功初始化（缺日志或静默失败）"; echo "${SCHEMA_LINE:-<日志中无 schema 结果行>}"; tail -30 /www/wwwlogs/nodejs/ex_kg.log; exit 1;;
-          esac
+          # 启动日志里不应再出现 owner 凭据不变量告警（ADR-0019）——生产已零 DDL 权限
+          if grep -q "DATABASE_ADMIN_URL" /www/wwwlogs/nodejs/ex_kg.log; then
+            echo "❌ 运行期进程检测到 owner 凭据（DATABASE_ADMIN_URL）——迁移凭据泄漏进 .env"
+            tail -30 /www/wwwlogs/nodejs/ex_kg.log; exit 1
+          fi
+          # schema 迁移校验已上移到「部署期迁移」步骤：生产进程不再执行 DDL，
+          # 启动日志里**不会**再有 schema 结果行（此前在此 grep 的做法已失效）。
           REMOTE
 
       - name: 发布验收（health / 首页 / 新 bundle）

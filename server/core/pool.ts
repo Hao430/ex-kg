@@ -13,7 +13,7 @@ const { Pool } = pg;
  *
  * **owner 凭据不进运行期进程**：`DATABASE_ADMIN_URL` 只由部署期的迁移步骤注入
  * （`server/core/migrate-cli.ts`），不得写进运行期 `.env`。
- * `assertRuntimeHasNoAdminCredential()` 在启动时对生产环境断言这一点。
+ * `checkRuntimeDbRoleInvariants()` 在启动时对生产环境断言这一点。
  *
  * 本模块**不再导出无差别的 `getPool()`**——那等于给出一条绕过作用域的通道。
  * 业务代码一律走 `server/core/db.ts` 的 `getDb()`（自带作用域校验）。
@@ -31,7 +31,7 @@ function connectionStringFor(kind: PoolKind): string | undefined {
     case 'system':
       // 未单独配置时回落 DATABASE_URL：让「加 DATABASE_SYSTEM_URL」这一步本身
       // 对行为零影响（发布顺序第 3 步），也让本地开发/内存测试无需多配一个变量。
-      // 生产的环境不变量由 assertRuntimeDbRolesConfigured() 保证不回落到同一角色。
+      // 生产的环境不变量由 checkRuntimeDbRoleInvariants() 保证不静默用错角色。
       return process.env.DATABASE_SYSTEM_URL || process.env.DATABASE_URL;
     case 'admin':
       return process.env.DATABASE_ADMIN_URL;
