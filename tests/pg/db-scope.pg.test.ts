@@ -44,6 +44,7 @@ const { initDbSchema } = await import('../../server/core/schema.js');
 const { closePools } = await import('../../server/core/pool.js');
 const { runWithUser, runWithSystem, currentScope } = await import('../../server/core/db-context.js');
 const { getDb } = await import('../../server/core/db.js');
+const { asyncHandler } = await import('../../server/lib/async-handler.js');
 
 const ALICE = '00000000-0000-4000-8000-0000000000c1';
 const BOB = '00000000-0000-4000-8000-0000000000c2';
@@ -86,8 +87,11 @@ function buildApp(): express.Express {
     runWithUser(uid, () => next());
   });
 
-  // 下游 handler：与中间件不在同一个栈帧里
-  app.get('/scoped', async (_req, res) => {
+  // 下游 handler：与中间件不在同一个栈帧里。
+  // 一律经 asyncHandler —— **与生产路由同构**（Express 4 不捕获 async handler 的 rejection）。
+  // 这不是形式主义：/noscope 正是一条必然 reject 的路由，不包它请求会一直挂着——
+  // 2026-09-12 CI 实测挂了 300s 被 undici 判 HeadersTimeout，而不是响亮地 500。
+  app.get('/scoped', asyncHandler(async (_req, res) => {
     const scope = currentScope();
     const guc = await getDb()!.query(GUC_SQL);
     const own = await getDb()!.query('SELECT id FROM canvases WHERE user_id = $1 ORDER BY id', [
@@ -98,26 +102,29 @@ function buildApp(): express.Express {
       guc: (guc.rows[0] as any).uid,
       ids: own.rows.map((r: any) => r.id),
     });
-  });
+  }));
 
   // 刻意不建立作用域的路由：证明作用域**不会**从上一个请求泄漏过来
-  app.get('/noscope', async (_req, res) => {
+  app.get('/noscope', asyncHandler(async (_req, res) => {
     await getDb()!.query('SELECT count(*)::int AS n FROM canvases');
     res.json({ ok: true });
-  });
+  }));
 
-  // 单个请求内两种作用域都要走一遍
-  app.get('/scopes', async (_req, res) => {
+  // 单个请求内两种作用域都要走一遍，并记录**嵌套调用返回之后**的环境作用域
+  app.get('/scopes', asyncHandler(async (_req, res) => {
     const asSystem = await runWithSystem('db-scope 用例：system 作用域不注入用户 GUC', () =>
       getDb()!.query(GUC_SQL)
     );
+    const afterSystem = currentScope()?.kind ?? null;
     const asUser = await runWithUser(ALICE, () => getDb()!.query(GUC_SQL));
+    const afterUser = currentScope()?.kind ?? null;
     res.json({
       systemGuc: (asSystem.rows[0] as any).uid,
       userGuc: (asUser.rows[0] as any).uid,
-      leftover: currentScope()?.kind ?? null,
+      afterSystem,
+      afterUser,
     });
-  });
+  }));
 
   app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     res.status(err?.status || 500).json({ error: err?.message, code: err?.code ?? null });
@@ -288,13 +295,19 @@ describe('ADR-0019 请求级作用域（决策三）', () => {
     assert.equal(((await res.json()) as any).code, 'DB_SCOPE_MISSING');
   });
 
-  t('同一请求内两种作用域各自独立，且路由返回时不残留', async () => {
+  t('同一请求内两种作用域各自独立，嵌套返回后回到请求自己的作用域', async () => {
     const res = await fetch(`${base}/scopes`, { headers: { 'x-test-user': ALICE } });
     assert.equal(res.status, 200);
     const body = (await res.json()) as any;
     assert.ok(!body.systemGuc, 'system 作用域下不得有用户 GUC');
     assert.equal(body.userGuc, ALICE, 'user 作用域下 GUC 应为该用户');
-    assert.equal(body.leftover, null, '路由返回时不得残留作用域（否则下一个请求会继承）');
+    // 这里断言 'user' 而非 null 是关键：中间件那句 `runWithUser(user.id, () => next())`
+    // 把**整个下游请求处理**都包在自己的作用域里（ALS 穿过 next()），所以路由里
+    // currentScope() 本来就应该还是 'user'。要钉的是**嵌套的 system 作用域没有留下来**——
+    // 若 afterSystem 变成 'system'，跨租户（BYPASSRLS）身份就会泄漏给同一请求后续所有查询，
+    // 而这条路径上没有任何别的东西会变红。
+    assert.equal(body.afterSystem, 'user', '嵌套的 system 作用域返回后必须回到请求自己的作用域');
+    assert.equal(body.afterUser, 'user', '嵌套的 user 作用域返回后同样回到外层请求作用域');
   });
 
   // ---------- 组二：隔离真的生效了吗（需要受限角色）----------

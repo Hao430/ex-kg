@@ -26,6 +26,7 @@ process.env.APP_URL = process.env.APP_URL || 'http://127.0.0.1:3000';
 const { initDbSchema } = await import('../../server/core/schema.js');
 const { createApp } = await import('../../server/app.js');
 const { getSystemPool } = await import('../../server/core/pool.js');
+const { runWithSystem } = await import('../../server/core/db-context.js');
 const { cleanupCanvasTombstones } = await import('../../server/repositories/canvas.repository.js');
 
 let server: http.Server;
@@ -95,6 +96,20 @@ async function backdate(canvasId: string, days: number): Promise<void> {
   );
 }
 
+/**
+ * 跑一次 GC —— 与 `server/jobs/log-cleanup.ts` 里那次调用**逐字同构**。
+ *
+ * 墓碑 GC 是跨租户批量删除，生产里包在 system 作用域内（ADR-0019），所以本文件也必须
+ * 包：裸调 `cleanupCanvasTombstones()` 会因缺少请求作用域抛 `DB_SCOPE_MISSING`，
+ * 而仓储的 catch 会把它**吞成 `{nodes:0, edges:0}`**（内存兜底语义）——测试不会红，
+ * 只会安静地断言「回收了 0 行」并从此证明不了任何事。CI 2026-09-12 就是这么红的。
+ */
+function gc(retentionDays = 30) {
+  return runWithSystem('s6 用例：墓碑 GC（同构 log-cleanup 的跨租户批量删除）', () =>
+    cleanupCanvasTombstones(retentionDays)
+  );
+}
+
 describe('S6 PG 真库：墓碑 GC', () => {
   before(async () => {
     const app = createApp();
@@ -122,7 +137,7 @@ describe('S6 PG 真库：墓碑 GC', () => {
     assert.deepEqual(deadBefore[0], { n: 1, e: 2 }, '前提：删除留下 1 个节点墓碑 + 2 个边墓碑');
 
     await backdate(id, 40); // 墓碑「已过期」（保留期 30 天）
-    const freed = await cleanupCanvasTombstones(30);
+    const freed = await gc();
     assert.ok(freed.nodes >= 1 && freed.edges >= 2, `应回收本画布的墓碑（实际 ${JSON.stringify(freed)}）`);
 
     const after = await row(
@@ -146,7 +161,7 @@ describe('S6 PG 真库：墓碑 GC', () => {
     assert.equal((await save(id, { deletedNodeIds: ['f2'] })).status, 200);
 
     // 保留期 30 天，刚删的墓碑只有几毫秒龄 → 必须留着
-    await cleanupCanvasTombstones(30);
+    await gc();
     const fresh = await row(
       `SELECT COUNT(*)::int AS n FROM nodes WHERE canvas_id = $1 AND deleted_at IS NOT NULL`,
       [id]
@@ -155,7 +170,7 @@ describe('S6 PG 真库：墓碑 GC', () => {
 
     // 同一个墓碑一旦过期就回收，且只有它是被回收的那批
     await backdate(id, 31);
-    await cleanupCanvasTombstones(30);
+    await gc();
     const gone = await row(
       `SELECT COUNT(*)::int AS n FROM nodes WHERE canvas_id = $1 AND deleted_at IS NOT NULL`,
       [id]
@@ -175,7 +190,7 @@ describe('S6 PG 真库：墓碑 GC', () => {
 
     // 墓碑被 GC 之后，同一个 id 会被当作新节点插入（节点 id 由客户端生成、不可能与他人复用）
     await backdate(id, 40);
-    await cleanupCanvasTombstones(30);
+    await gc();
     const afterGc = await save(id, { nodes: [node('r2', '乙')] });
     assert.equal(afterGc.status, 200);
     assert.deepEqual(afterGc.body.canvas.ignoredNodeIds, [], '墓碑没了就没有守卫，节点被重建');
