@@ -52,6 +52,8 @@ const ALICE_BOARD = 'scope-alice-board';
 const BOB_BOARD = 'scope-bob-board';
 
 const ownerPool = new Pool({ connectionString: OWNER_URL });
+/** 应用实际使用的角色（PG_TEST_URL / DATABASE_URL）——作用域判据只能问它，见 before() */
+const appPool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 /** 读当前连接上 RLS 判据的那个 GUC —— 本文件的核心观测量 */
 const GUC_SQL = "SELECT current_setting('app.user_id', true) AS uid";
@@ -142,9 +144,12 @@ describe('ADR-0019 请求级作用域（决策三）', () => {
       await new Promise((res) => setTimeout(res, 500));
     }
 
-    const who = await ownerPool.query('SELECT current_user AS role');
+    // 作用域判据必须问**应用实际使用的那个角色**（DATABASE_URL / PG_TEST_URL），
+    // 不是问夹具用的属主池：属主天然绕过 RLS，拿它判「受不受 RLS 约束」永远是否，
+    // 双角色轮会因此误报「PG_TEST_URL 未生效」（2026-09-12 CI 实测）。
+    const who = await appPool.query('SELECT current_user AS role');
     appRole = who.rows[0].role;
-    const probe = await ownerPool.query("SELECT row_security_active('canvases') AS active");
+    const probe = await appPool.query("SELECT row_security_active('canvases') AS active");
     rlsActive = probe.rows[0].active === true;
     if (!rlsActive) {
       assert.equal(
@@ -179,6 +184,7 @@ describe('ADR-0019 请求级作用域（决策三）', () => {
     await ownerPool.query('DELETE FROM canvases WHERE id = ANY($1)', [[ALICE_BOARD, BOB_BOARD]]);
     await ownerPool.query('DELETE FROM users WHERE id = ANY($1)', [[ALICE, BOB]]);
     await ownerPool.end();
+    await appPool.end();
     await closePools();
   });
 

@@ -86,33 +86,50 @@ jobs:
       # 第一遍（上一步）是 owner 单角色，只覆盖既有行为；这一遍以 app（受 RLS）为主
       # 角色，是唯一能证明「每个 PG 路径都带上了作用域」「每条策略都放行得通」的检验，
       # 也是生产翻 DATABASE_URL 开关的唯一依据。
-      # 角色与授权必须在第一遍之后建：表由 initDbSchema 创建，授权要作用于已存在的表。
-      - name: 建 PG 冒烟角色（app / system）并授权
+      #
+      # ⚠️ 这一遍必须跑在**自己的空库**（arborize_rls_test）上，不能复用第一遍的
+      # arborize_test：PG 冒烟用例注册的是**固定邮箱**（j3-*/p-pg-*），复用已写过的库
+      # 会在 send-register-code 撞 EMAIL_EXISTS(409)——表现为「应发出验证码邮件」失败，
+      # 而真因在测试夹具而非被测行为。「PG 冒烟必须空库跑」是既有硬约束（部署手册 §8.3），
+      # 这里用独立库来满足它，而不是放宽用例。
+      - name: 建 PG 冒烟角色（app / system）并授权（两个库）
         run: |
           set -e
-          PGPASSWORD=postgres psql -h 127.0.0.1 -p 5433 -U postgres -d arborize_test -v ON_ERROR_STOP=1 <<'SQL'
+          PGPASSWORD=postgres psql -h 127.0.0.1 -p 5433 -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
           CREATE ROLE arborize_app LOGIN PASSWORD 'app_pw';
           CREATE ROLE arborize_system LOGIN PASSWORD 'system_pw';
           -- BYPASSRLS 需超级用户；CI 的 postgres 即超级用户（生产见 ADR-0019 的退路）
           ALTER ROLE arborize_system BYPASSRLS;
+          -- 双角色轮专用空库（用例自带 createApp + initDbSchema，会自己建表）
+          CREATE DATABASE arborize_rls_test;
+          SQL
+
+          # 角色是集群级的，库级授权两个库都要做一遍。
+          # ALTER DEFAULT PRIVILEGES 按**库**存储，且必须在建表之前生效——
+          # 否则后续迁移新建的表对 app 角色不可见（表现为「表不存在」）。
+          cat > /tmp/pg-smoke-grants.sql <<'SQL'
           GRANT USAGE ON SCHEMA public TO arborize_app, arborize_system;
           GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO arborize_app, arborize_system;
           GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO arborize_app, arborize_system;
-          -- 后续迁移新建的表/序列自动授权（生产同样要设，否则新表对 app 角色不可见）
           ALTER DEFAULT PRIVILEGES IN SCHEMA public
             GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO arborize_app, arborize_system;
           ALTER DEFAULT PRIVILEGES IN SCHEMA public
             GRANT USAGE, SELECT ON SEQUENCES TO arborize_app, arborize_system;
           SQL
-          echo "双角色已就绪"
+          for DB in arborize_test arborize_rls_test; do
+            echo "授权 $DB"
+            PGPASSWORD=postgres psql -h 127.0.0.1 -p 5433 -U postgres -d "$DB" \
+              -v ON_ERROR_STOP=1 -f /tmp/pg-smoke-grants.sql
+          done
+          echo "双角色已就绪（arborize_test / arborize_rls_test）"
 
       - name: PG 真库冒烟（双角色：app 受 RLS + system 跨租户，ADR-0019）
         env:
-          PG_TEST_URL: postgres://arborize_app:app_pw@127.0.0.1:5433/arborize_test
-          DATABASE_SYSTEM_URL: postgres://arborize_system:system_pw@127.0.0.1:5433/arborize_test
+          PG_TEST_URL: postgres://arborize_app:app_pw@127.0.0.1:5433/arborize_rls_test
+          DATABASE_SYSTEM_URL: postgres://arborize_system:system_pw@127.0.0.1:5433/arborize_rls_test
           # 迁移类用例（initDbSchema）仍以 owner 执行——生产里这一步在部署期 migrate 步骤，
           # CI 里 NODE_ENV 非 production，故 checkRuntimeDbRoleInvariants 不介入
-          DATABASE_ADMIN_URL: postgres://postgres:postgres@127.0.0.1:5433/arborize_test
+          DATABASE_ADMIN_URL: postgres://postgres:postgres@127.0.0.1:5433/arborize_rls_test
         run: PG_SMOKE=1 npx tsx --test --test-concurrency=1 'tests/pg/*.test.ts'
 
       # 测试通过的构建物即发布物（不经本地二次构建）
