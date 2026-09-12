@@ -21,7 +21,7 @@
 | [0002](./0002-dual-mode-persistence.md) | PostgreSQL + 内存双模自动容灾 | Accepted | 2026-09-09 | 未配 `DATABASE_URL` 或 PG 失败时降级内存；每个 repository 函数固定双模写法 |
 | [0004](./0004-strict-tenant-ownership.md) | 多租户严格属主制 | Accepted | 2026-09-09 | 画布读/写/删只允许属主本人；唯一放行是 `default-board` 共享画板（admin 例外由 ADR-0016 移除，共享放行由 ADR-0018 收口） |
 | [0005](./0005-soft-delete-with-30d-cooldown.md) | 软删除 + 30 天冷却期 | Accepted | 2026-09-09 | users/canvases 软删 + Admin 恢复窗口；30 天后硬删级联 |
-| [0012](./0012-default-canvas-no-delete.md) | 默认画板禁删 | Accepted | 2026-09-09 | 全局共享画板删除会锁死所有用户，物理禁删 |
+| [0012](./0012-default-canvas-no-delete.md) | 默认画板禁删 | Accepted | 2026-09-09 | 公开 id（`default-board`/`default-canvas`）被客户端硬编码引用，软删即让引用永久 404；禁删与授权解耦（2026-09-12 修订） |
 | [0013](./0013-frontend-node-id-truncation.md) | 节点 ID 前端生成 + 截断前缀 24 字符 | Accepted | 2026-09-09 | 避免深层级画布触发 PG `varchar(64)` 22001 |
 | [0015](./0015-canvas-library-single-level-folders.md) | 画板管理采用「检索 + 收藏/归档 + 单层分组」 | Accepted | 2026-09-10 | 复用已建 `is_favorite`/`is_archived`；新增 `folders` + `canvases.folder_id`（无 parent_id、删组不删板）；拒绝任意层级树；标签仍按二期共存 |
 | [0016](./0016-admin-strict-canvas-tenancy.md) | 画布数据严格属主制收口——移除 admin 例外 | Accepted | 2026-09-11 | 删除画布读/写/删/meta/分享/chat 归因/配额的 admin 放行；admin 只保留运营台聚合统计与日志及配额额度；顺带收紧 auto-title 归属 |
@@ -48,7 +48,8 @@
 
 | # | 标题 | 状态 | 日期 | 摘要 |
 | :--- | :--- | :--- | :--- | :--- |
-| [0008](./0008-sync-state-machine.md) | 同步状态机 + 乐观锁 | Accepted | 2026-09-09 | `pending/saved/conflict/error` 四态，指数退避重试，冲突不重试 |
+| [0008](./0008-sync-state-machine.md) | 同步状态机 + 乐观锁 | Accepted | 2026-09-09 | `pending/saved/conflict/error` 四态，指数退避重试，冲突不重试；画布保存的冲突面已由 ADR-0017 收窄到节点（2026-09-12 修订） |
+| [0017](./0017-node-level-merge-and-tombstones.md) | 节点级合并与墓碑语义 | Accepted | 2026-09-12 | `protocolVersion:2` 差分协议：客户端只发本次改动，服务端节点级 upsert（"没带 = 不动"），删除即 `deleted_at` 墓碑且稳定胜出；`SAVE_LEGACY_REPLACE_ENABLED` 熔断旧整板路径，墓碑按 `CANVAS_TOMBSTONE_RETENTION_DAYS`（默认 30）回收 |
 
 ## 已废弃 / 取代 (Deprecated / Superseded)
 

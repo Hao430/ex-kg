@@ -1,6 +1,6 @@
 # ADR-0008: 同步状态机 + 乐观锁
 
-- **Status**: Accepted
+- **Status**: Accepted（2026-09-12 修订：画布保存冲突面收窄，见下）
 - **Date**: 2026-09-09
 - **Deciders**: 枝想架构组
 - **Tags**: frontend, sync, conflict-resolution, optimistic-lock
@@ -15,6 +15,12 @@
 - 浏览器崩溃后重新打开。
 
 旧实现（`localStorage` 直存）会让**最后一次保存覆盖前面的所有改动**——这是用户视角的"数据丢失"。
+
+> **2026-09-12 修订（ADR-0017/0018）**：本 ADR 描述的**状态机本身仍然有效**——`pending/saved/conflict/fail` 四态、指数退避、`online` 事件驱动、删除确认制全部沿用。变的是**冲突的来源**：
+>
+> - 画布保存已改为**节点级合并**（ADR-0017）。合并路径下服务端**刻意不校验画板级乐观锁**，`CANVAS_SAVE_CONFLICT` 只在旧协议的整板替换路径上出现（老客户端），并随 `SAVE_LEGACY_REPLACE_ENABLED=false` 一起退场。冲突面从「整块画板」缩到「同一个节点」，用户看到的 409「请刷新后重试」因此大幅减少——那正是本 ADR 记为 Negative 的「冲突时只能留一份」在实际使用中的主要痛点。
+> - 用户投诉的「改完被云端覆盖」不是本状态机的 bug：状态机正确地把本地改动送了上去，是服务端的**整板替换**语义把没碰过的节点一起回写了。修在协议层，不在状态机层（ADR-0017）。
+> - `default-board` 私有化（ADR-0018）后，保存可能因**非属主**而 403（`CANVAS_FORBIDDEN`）。客户端把它归入**永久失败**（`conflict`，不进指数退避），并按「不可访问」处理——迁移本地存量到自己的新画板并改绑，见 `src/lib/board-migrate.ts`。这类失败重试永远不会成功，塞进队列只会变成重试风暴。
 
 ## Decision Drivers
 
@@ -42,6 +48,10 @@ pending  ── flush ok ──▶  saved
    │                       (3s 后回退 idle)
    │
    ├── flush conflict ──▶  conflict  (派发 deepdive:canvas-save-conflict)
+   │                                （ADR-0017 后仅旧协议整板路径会出现；冲突不重试）
+   │
+   ├── flush 403/404 ──▶  conflict（永久失败，不重试）
+   │                      403 = 配额/权限（提示升级，保留草稿）；404 = 幽灵板收敛，停重试风暴
    │
    └── flush fail ──▶  fail  (指数退避重试 min(2^n × 2s, 30s))
                           超过 MAX_RETRIES=5 → error
@@ -63,12 +73,13 @@ pending  ── flush ok ──▶  saved
 
 ### Negative Consequences
 
-- **不是 CRDT**：冲突时只能"留一份"，不能"自动合并"；
+- **不是 CRDT**：冲突时只能"留一份"，不能"自动合并"——ADR-0017 把这个"一份"的单位从整块画板缩小到一个节点，但同一节点的并发编辑仍是有一次写入被覆盖（无字段级合并、无 `rev` 参与的 CAS）；
 - 状态机与 `App.tsx` 耦合较紧，UI 状态散落（见技术债清单 §前端可改进）；
 - 状态机本身无 vitest 单测（仅集成测试覆盖）。
 
 ### Follow-up / Mitigation
 
+- 同一节点的并发编辑若要"不丢"，需要在协议里带上 `baseRev` 做节点级 CAS——`nodes.rev` / `edges.rev` 两个列已经存在且严格递增（ADR-0017），届时不必再改 schema；
 - 二期"团队协作"场景应升级到 CRDT（Yjs / Automerge）；
 - 增加 `sync-queue` 的 vitest 单测；
 - 暴露状态机事件给 `useCanvasUIState` 集中管理。
@@ -97,5 +108,6 @@ pending  ── flush ok ──▶  saved
 
 ## References
 
-- 代码：`src/lib/sync-queue.ts:1-165`、`src/lib/storage.ts`、`src/components/canvas/DeepDiveCanvas.tsx:78-90`
+- 代码：`src/lib/sync-queue.ts`、`src/lib/storage.ts`、`src/lib/board-ops.ts`（差分与基线，ADR-0017）、`src/components/canvas/DeepDiveCanvas.tsx`
+- 相关决策：`docs/adr/0017-node-level-merge-and-tombstones.md`（冲突面收窄到节点，本 ADR 的上游变更）、`docs/adr/0018-default-board-private.md`（403/404 终态）
 - 文档：`docs/specs/A4-乐观锁冲突检测.md`、`docs/specs/A5-断网重试队列与同步状态.md`、`docs/specs/A6-冲突自愈与未登录草稿合并.md`

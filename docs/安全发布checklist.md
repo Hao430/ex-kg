@@ -35,7 +35,9 @@
 - [ ] 删除为软删（`UPDATE SET deleted_at=NOW()`），子表清理语义明确并测试锁定
 - [ ] upsert 带 `WHERE deleted_at IS NULL` 防复活；已软删 id 的 save → 404
 - [ ] 前端删除确认制：仅 2xx/404 清本地 + `sync-queue.dequeue`；403/5xx/断网保留本地
-- [ ] 共享默认板（`default-board`）禁删且有测试
+- [ ] 公开 id 画板（`default-board`/`default-canvas`）禁删且有测试——禁删按**公开 id 集合**判定（`isDefaultCanvasPublicId`，与授权开关无关），`SAVE_DEFAULT_BOARD_MODE=private` 下同样禁删
+- [ ] 默认画板私有化切换遵守发布顺序（ADR-0018）：**客户端先行 + soak ≥7 天**再翻 `SAVE_DEFAULT_BOARD_MODE=private`；翻之前有当日 `pg_dump`
+- [ ] 翻转 `SAVE_LEGACY_REPLACE_ENABLED=false` 前，`[canvas-save]` 日志里 `mode=replace` 已归零（否则旧客户端会集体 409 `CLIENT_OUTDATED`），且有当日 `pg_dump`
 
 > 来源：H1 缺陷 1/2/4（前缀放行、删除竞态复活、软删口径不统一）。
 

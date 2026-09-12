@@ -72,5 +72,5 @@ ADR-0004 确立严格属主制，保留的唯一放行是全局共享默认画�
 - 代码：`server/repositories/canvas.repository.ts`（`isDefaultCanvasPublicId` / `isSharedDefaultCanvas`）、`server/services/canvas.service.ts`、`server/middleware/quota.ts`、`src/App.tsx`（新板 id 生成与不可访问回退）、`src/lib/board-migrate.ts`（存量内容再落位）、`src/lib/board-store.ts`（`dropLocalEntry`）、`src/lib/board-scope.ts`（游客草稿认领、迁移幂等标记）
 - 开关：`.env.example` 的 `SAVE_DEFAULT_BOARD_MODE`（`legacy` 默认 / `private`）
 - 测试：`tests/h4-default-board-private.test.ts`（private 模式）、`tests/h1-canvas-tenant-softdelete.test.ts`（legacy 共享回归）、`tests/board-migrate.test.ts`（存量再落位）
-- 前置决策：`docs/adr/0004-strict-tenant-ownership.md`（本 ADR 移除其唯一放行）、`docs/adr/0016-admin-strict-canvas-tenancy.md`、`docs/adr/0017-*.md`（节点级合并，本 ADR 的动因）
+- 前置决策：`docs/adr/0004-strict-tenant-ownership.md`（本 ADR 移除其唯一放行）、`docs/adr/0016-admin-strict-canvas-tenancy.md`、`docs/adr/0017-node-level-merge-and-tombstones.md`（节点级合并，本 ADR 的动因）
 - 需修订：`docs/adr/0012-default-canvas-no-delete.md`（禁删理由改写）
