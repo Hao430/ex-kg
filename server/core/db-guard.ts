@@ -54,7 +54,26 @@ function isRlsViolation(e: unknown): boolean {
   return err?.code === '42501' && /row-level security policy/i.test(err?.message || '');
 }
 
+/**
+ * 缺请求作用域（ADR-0019）。与 RLS 拒绝同理，**必须与「PG 故障」区分开**：
+ * 语义是「调用方忘了包 runWithUser()/runWithSystem()」——**代码 bug**，不是数据库不可用。
+ *
+ * 不拦的后果（本分支存在的原因）：生产会把它改写成 503 `DB_UNAVAILABLE`，并且
+ * `notePgError()` 把 `degraded` 点亮——响应文案、健康信号、可能的告警与重启，全都把
+ * 排障方向指向数据库，而真凶在应用层少写了一个作用域包裹。原样重抛即可。
+ */
+function isScopeMissing(e: unknown): boolean {
+  return e instanceof AppError && e.code === 'DB_SCOPE_MISSING';
+}
+
 export function handlePgError(e: unknown): void {
+  if (isScopeMissing(e)) {
+    console.error(
+      `[db-guard] 数据库访问缺少请求作用域——**应用层漏了 runWithUser/runWithSystem**（这是代码 bug，不是数据库故障）| ${(e as AppError).message}`
+    );
+    throw e;
+  }
+
   if (isRlsViolation(e)) {
     const err = e as { message?: string };
     // 不 notePgError：这不是故障，不该点亮 degraded
