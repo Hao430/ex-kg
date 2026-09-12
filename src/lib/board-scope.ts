@@ -5,6 +5,10 @@
  * 命名空间（guest 或 userId），画板内容 blob 仍按 UUIDv7 id 全局存放（id 不可枚举，
  * 列表不泄漏即内容不泄漏）。
  *
+ * 2026-09-12 云优先收口后，**列表索引（indexKey）只是绘制缓存**：冷启动先把上次的画面
+ * 画出来、以及游客认领时判定哪些是纯本地草稿；它不是真相，服务端列表一到即被整体替换
+ * （见 board-store.recompute/hydrateFromServer）。真相判定不得再依赖此索引。
+ *
  * 本模块保持零内部依赖，供 board-store / quota-store / sync-queue / storage 共享，避免循环引用。
  */
 import type { DeepDiveBoardMeta } from '../types';

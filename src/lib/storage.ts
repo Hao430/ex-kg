@@ -2,8 +2,8 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * 画板本地持久化 + 服务端同步（2026-09-10 重构为 local-first）。
- * - 列表真相移交 board-store（服务端快照 ∪ 本地草稿 − 墓碑）
+ * 画板本地持久化 + 服务端同步（2026-09-12 云优先：服务端是唯一真相，本地只留未确认缓冲）。
+ * - 列表真相在 board-store（服务端快照 + 本地未确认缓冲 − 墓碑）
  * - 同步队列升级为持久化的上传/删除意图队列
  * - 删除改乐观 + 墓碑，游客/纯本地草稿无需服务端
  */
@@ -117,15 +117,16 @@ function persistBoard(cleanedBoard: StoredBoard, opts?: { dirty?: boolean }): vo
     `${STORAGE_BOARD_PREFIX}${cleanedBoard.id}`,
     JSON.stringify(cleanedBoard)
   );
-  boardStore.upsertLocal(
-    {
-      id: cleanedBoard.id,
-      name: cleanedBoard.name,
-      updatedAt: cleanedBoard.updatedAt,
-      nodeCount: cleanedBoard.nodes.length,
-    },
-    { dirty: opts?.dirty !== false }
-  );
+  const meta = {
+    id: cleanedBoard.id,
+    name: cleanedBoard.name,
+    updatedAt: cleanedBoard.updatedAt,
+    nodeCount: cleanedBoard.nodes.length,
+  };
+  // dirty:false 的调用点只有两处，内容来源都是服务端（fetch 落盘 / 冲突后采用服务端版），
+  // 属于「已确认」而非未确认缓冲——必须显式区分，不能靠版本小键猜（见 upsertServerMeta 注释）。
+  if (opts?.dirty === false) boardStore.upsertServerMeta(meta);
+  else boardStore.upsertLocal(meta, { dirty: true });
 }
 
 /**
@@ -380,6 +381,13 @@ export async function syncBoardToBackend(
     // 基线推进为**本次已上行的那份快照**（不是当前画面）：飞行期间用户又改的那些，
     // 与基线仍然不同，会被下一轮保存照常上行。反过来用当前画面推基线就会漏掉它们。
     boardOps.advanceBase(board.id, board);
+    // 服务端已确认：列表条目按**服务端回包**落定（云优先——本地投影只代表「我以为的」，
+    // 拿它顶替服务端条目会让「他端改名 + 本端保存」把列表名永久停在旧值上）。
+    boardStore.confirmServerSave(board.id, {
+      title: body?.canvas?.title,
+      nodeCount: body?.canvas?.nodeCount,
+      updatedAt: body?.canvas?.updatedAt,
+    });
     // 墓碑守卫拒绝的 id（删除胜出）：本次不算冲突，但要让观测看得见
     const ignored = Array.isArray(body?.canvas?.ignoredNodeIds) ? body.canvas.ignoredNodeIds.length : 0;
     if (ignored > 0) trackEvent('canvas_merge_ignored', { count: ignored });
@@ -404,13 +412,13 @@ setSyncExecutor(async (boardId, opts) => {
   const board = loadBoard(boardId);
   if (!board) return 'ok'; // 本地已无该画布，视为完成
   const localVersion = board.updatedAt;
-  const outcome = await syncBoardToBackend(board, opts);
+  const outcome = await syncBoardToBackend(board, opts); // 成功路径内部已按服务端回包确认条目
   if (outcome === 'ok') {
-    boardStore.confirmServerSave(boardId);
     quotaStore.confirmCreate(boardId);
-    // 同步期间本地又被编辑过：以新数据重新入队，避免"标记已同步但云端是旧数据"
-    const meta = boardStore.getBoardList().find((b) => b.id === boardId);
-    const latestVersion = meta ? meta.updatedAt : loadBoard(boardId)?.updatedAt;
+    // 同步期间本地又被编辑过：以新数据重新入队，避免"标记已同步但云端是旧数据"。
+    // 比的是**本地内容版本**（blob 的 updatedAt），不是列表 meta——列表 meta 现在拿服务端时间，
+    // 与本地版本不同源，拿它比会每次保存都误判成「飞行期间又被改过」而空转重入队。
+    const latestVersion = loadBoard(boardId)?.updatedAt;
     if (latestVersion !== undefined && latestVersion !== localVersion) {
       enqueue(boardId);
     }

@@ -107,12 +107,12 @@ describe('board-store 合并与一致性', () => {
     assert.equal(list[0].name, '缓存板');
   });
 
-  test('幽灵板：有服务端版本、非 dirty、服务端已无 → 移出列表并派发事件', () => {
-    boardStore.bindScope('u1');
+  test('幽灵板：曾同步过（有版本小键）却不在服务端快照里 → 水合时收敛并派发事件', () => {
+    // 绘制缓存里有一条上次同步过的板；版本小键 = 「服务端本应有它」的证据
     store.set(`${boardScope.SERVER_TS_PREFIX}ghost`, '2026-09-10T00:00:00.000Z');
-    boardStore.upsertLocal(meta('ghost'), { dirty: true });
-    boardStore.markDirty('ghost', false);
-    assert.equal(boardStore.getBoardList().length, 1, '水合前不作为幽灵');
+    boardScope.writeScopedIndex([meta('ghost')], 'u1');
+    boardStore.bindScope('u1');
+    assert.equal(boardStore.getBoardList().length, 1, '水合前用缓存出画面');
 
     boardStore.hydrateFromServer([]); // 服务端列表成功返回但无此板
     assert.equal(boardStore.getBoardList().length, 0, '幽灵应移出列表');
@@ -122,17 +122,70 @@ describe('board-store 合并与一致性', () => {
     );
   });
 
-  test('confirmServerSave：清 dirty 且列表立即反映最新本地 meta', () => {
+  test('未确认改动优先于远端删除判定：dirty 的板不因服务端快照里没有而消失', () => {
+    store.set(`${boardScope.SERVER_TS_PREFIX}wip`, '2026-09-10T00:00:00.000Z');
+    boardScope.writeScopedIndex([meta('wip')], 'u1');
+    boardStore.bindScope('u1');
+    boardStore.upsertLocal(meta('wip', '本地改过的名'), { dirty: true });
+
+    boardStore.hydrateFromServer([]);
+    assert.deepEqual(
+      boardStore.getBoardList().map((m) => m.id),
+      ['wip'],
+      '还没传上去的改动不能被「服务端没有」判成已删'
+    );
+    assert.equal(boardStore.isDirty('wip'), true);
+  });
+
+  test('confirmServerSave：清 dirty，并以服务端回包收敛条目（本地投影不顶替服务端真相）', () => {
     boardStore.bindScope('u1');
     boardStore.hydrateFromServer([meta('s1', 'old-name', 100)]);
-    boardStore.upsertLocal(meta('s1', 'new-name', 200), { dirty: true });
+    boardStore.upsertLocal(meta('s1', 'local-name', 200, 2), { dirty: true });
     assert.equal(boardStore.isDirty('s1'), true);
 
-    boardStore.confirmServerSave('s1');
+    boardStore.confirmServerSave('s1', {
+      title: 'server-name',
+      nodeCount: 7,
+      updatedAt: new Date(9000).toISOString(),
+    });
     assert.equal(boardStore.isDirty('s1'), false);
     const entry = boardStore.getBoardList().find((m) => m.id === 's1');
-    assert.equal(entry?.name, 'new-name');
-    assert.equal(entry?.updatedAt, 200);
+    assert.equal(entry?.name, 'server-name', '服务端确认过的字段由服务端回包决定');
+    assert.equal(entry?.nodeCount, 7, 'nodeCount 取事务内重算值（含墓碑拒绝）');
+    assert.equal(entry?.updatedAt, 9000);
+  });
+
+  test('confirmServerSave：回包里没有的字段退回本地（新建板第一次保存）', () => {
+    boardStore.bindScope('u1');
+    boardStore.upsertLocal(meta('fresh', '我的新板', 500, 1), { dirty: true });
+
+    boardStore.confirmServerSave('fresh');
+    const entry = boardStore.getBoardList().find((m) => m.id === 'fresh');
+    assert.equal(entry?.name, '我的新板');
+    assert.equal(boardStore.getState().serverIds.has('fresh'), true, '保存成功即归入服务端快照');
+  });
+
+  test('未落地的改名不被内容保存回包吞掉（metaDirty 期间保持本地值）', () => {
+    boardStore.bindScope('u1');
+    boardStore.hydrateFromServer([meta('s1', 'old-name', 100)]);
+    boardStore.updateMetaLocal('s1', { name: '改过的名' }); // 入队 PATCH，尚未确认
+    boardStore.upsertLocal(meta('s1', '改过的名', 200), { dirty: true });
+
+    // 内容保存先回来：服务端此时回包里的 title 仍是旧名（PATCH 还没落）
+    boardStore.confirmServerSave('s1', { title: 'old-name', updatedAt: new Date(300).toISOString() });
+    const entry = boardStore.getBoardList().find((m) => m.id === 's1');
+    assert.equal(entry?.name, '改过的名', 'meta 执行器从列表读 PATCH body，吞掉即等于取消用户改名');
+    assert.equal(boardStore.getState().metaDirty.has('s1'), true, 'PATCH 未确认前必须保持待同步');
+  });
+
+  test('[不变量] 已同步条目的展示值只能由服务端推进，本地非脏回写不产生陈旧覆盖', () => {
+    boardStore.bindScope('u1');
+    boardStore.hydrateFromServer([meta('s1', 'server-name', 100)]);
+    // 采用服务端版落盘：内容就是服务端那份，不得留成永不失效的本地覆盖
+    boardStore.upsertServerMeta(meta('s1', 'stale-local', 50));
+    boardStore.hydrateFromServer([meta('s1', 'renamed-elsewhere', 300)]);
+    const entry = boardStore.getBoardList().find((m) => m.id === 's1');
+    assert.equal(entry?.name, 'renamed-elsewhere', '他端改名必须能透出（旧实现在这里会永久停在本地值）');
   });
 
   test('hydrateClaimedDrafts：游客草稿迁入账号 scope 且标 dirty，guest 索引移除该条', () => {

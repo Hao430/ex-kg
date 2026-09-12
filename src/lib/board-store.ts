@@ -1,8 +1,12 @@
 /**
- * 画板列表唯一真相（2026-09-10 画布列表/同步重构）。
+ * 画板列表：服务端快照（唯一真相）+ 本地未确认缓冲（乐观显示）。
  *
- * 列表 = 服务端快照 ∪ 本地未同步草稿 − 墓碑，按 id 去重；内存为权威、localStorage 为投影。
- * 修「列表缩水」（服务端列表从不落本地索引）与「幽灵板」（远端已删仍留在列表）。
+ * 2026-09-12 云优先收口（画板同步重构阶段 4b）：
+ * - **真相只有服务端**。列表 = 服务端快照，叠加「服务端尚未确认」的本地 meta（内容 dirty /
+ *   meta dirty / 纯本地草稿）。本地不再有「胜出」裁决——服务端确认过的字段只能由服务端回包
+ *   推进；旧实现的 `confirmServerSave` 拿本地 meta 顶替服务端条目，正是这条残留。
+ * - localStorage 索引降级为**绘制缓存**：冷启动先出画面、游客认领判定要用它，但它不参与裁决。
+ *   服务端列表一到就整体替换，曾同步过（有版本小键）却不在快照里的条目 = 他端已删 → 收敛并提示。
  *
  * 依赖约定：本模块只依赖 board-scope（无 storage/sync-queue 引用，避免循环）。
  */
@@ -17,17 +21,30 @@ export interface BoardStoreState {
   tombstones: ReadonlySet<string>;
 }
 
+/** 服务端确认保存后回传的权威字段（取 save 响应，缺字段则保留快照原值） */
+export interface ServerConfirm {
+  title?: string;
+  nodeCount?: number;
+  updatedAt?: string;
+}
+
 const EMPTY: DeepDiveBoardMeta[] = Object.freeze([]) as unknown as DeepDiveBoardMeta[];
 
 let snapshot: DeepDiveBoardMeta[] = EMPTY;
+/** 服务端快照（真相 + 顺序基准）。冷启动时暂由绘制缓存填充，水合后整体替换 */
 let serverMetas: DeepDiveBoardMeta[] = [];
 let serverIds = new Set<string>();
-let localIndex = new Map<string, DeepDiveBoardMeta>();
-let tombstones = new Set<string>();
+/**
+ * 未确认缓冲：本地已改但服务端还没确认的 meta。
+ * - 服务端已知的画板：只存「待上行的那份 meta」，展示时叠加在服务端快照之上
+ * - 服务端未知的画板（纯本地草稿 / 游客板 / 认领后待上传）：整条都在这里
+ * 服务端一确认（confirmServerSave / confirmServerMeta）就出列，本地投影绝不留存为真相。
+ */
+let pending = new Map<string, DeepDiveBoardMeta>();
 let dirty = new Set<string>();
 /** Spec L1：收藏/归档等元数据待同步（与内容 dirty 分离，避免触发全量上传） */
 let metaDirty = new Set<string>();
-let serverHydrated = false;
+let tombstones = new Set<string>();
 let boundScope: scope.ScopeKey | null = null;
 const ghostsEmitted = new Set<string>();
 const listeners = new Set<() => void>();
@@ -67,43 +84,47 @@ function dispatchRemoteDeleted(boardId: string, name: string): void {
   }
 }
 
-/** 合并重算：服务端顺序为基准，本地草稿/幽灵判定，dirty 本地版胜出 */
+/** 本地当前认知里该画板的 meta：未确认缓冲优先，其次服务端快照 */
+function currentMeta(id: string): DeepDiveBoardMeta | null {
+  return pending.get(id) ?? serverMetas.find((m) => m.id === id) ?? null;
+}
+
+/**
+ * 服务端快照（顺序基准）+ 未确认缓冲 → 展示投影。
+ * 服务端已确认的条目，只有未确认缓冲能改写其展示字段；缓冲出列后即回到服务端值。
+ */
 function recompute(): void {
   const list: DeepDiveBoardMeta[] = [];
   const seen = new Set<string>();
 
   for (const sm of serverMetas) {
-    if (seen.has(sm.id) || tombstones.has(sm.id)) continue;
+    if (tombstones.has(sm.id)) continue;
     seen.add(sm.id);
-    const local = localIndex.get(sm.id);
-    // 内容脏或元数据脏：本地版胜出，服务端快照不得回退用户刚做的改动
-    list.push((dirty.has(sm.id) || metaDirty.has(sm.id)) && local ? { ...local } : { ...sm });
+    const overlay = pending.get(sm.id);
+    list.push(overlay ? { ...sm, ...overlay } : { ...sm });
   }
 
-  const ghostIds: string[] = [];
-  for (const [id, meta] of localIndex) {
+  // 服务端还不知道的条目（纯本地草稿 / 游客板 / 认领后待上传）
+  for (const [id, meta] of pending) {
     if (seen.has(id) || tombstones.has(id)) continue;
-    const shared = scope.SHARED_BOARD_IDS.has(id);
-    // 仅在成功水合过服务端列表后，才把「有服务端版本、非 dirty、服务端已无」判为幽灵
-    if (!shared && serverHydrated && !dirty.has(id) && scope.hasServerVersion(id)) {
-      ghostIds.push(id);
-      continue;
-    }
-    seen.add(id);
     list.push({ ...meta });
   }
 
-  for (const id of ghostIds) {
-    const name = localIndex.get(id)?.name ?? id;
-    localIndex.delete(id);
-    serverIds.delete(id);
-    dirty.delete(id);
-    dispatchRemoteDeleted(id, name);
-  }
-
+  serverIds = new Set(serverMetas.map((m) => m.id));
   snapshot = list;
   persist();
   notify();
+}
+
+/**
+ * 缓存收敛判据：曾同步过（有服务端版本小键）、本次服务端快照里没有、且本地没有未确认改动
+ * 的条目 = 他端已删。纯本地草稿（无版本小键）服务端本就不该有，不收敛；共享默认板不收敛。
+ */
+function isRemoteDeleted(id: string, serverIdsNow: ReadonlySet<string>): boolean {
+  if (serverIdsNow.has(id) || tombstones.has(id)) return false;
+  if (scope.SHARED_BOARD_IDS.has(id)) return false;
+  if (dirty.has(id) || metaDirty.has(id)) return false; // 有未确认改动：等上传，不当作已删
+  return scope.hasServerVersion(id);
 }
 
 export function subscribe(cb: () => void): () => void {
@@ -122,19 +143,25 @@ export function getState(): BoardStoreState {
   return { metas: snapshot, serverIds, dirty, metaDirty, tombstones };
 }
 
-/** 绑定作用域：迁移旧索引 → 载入 scoped 索引/墓碑/脏标记 → 重算 */
+/** 绑定作用域：迁移旧索引 → 载入绘制缓存/墓碑/脏标记 → 按「是否已同步」拆成快照与未确认缓冲 */
 export function bindScope(scopeKey: scope.ScopeKey): void {
   if (boundScope === scopeKey) return;
   scope.setActiveScopeKey(scopeKey);
   scope.adoptLegacyIndex(scopeKey);
   boundScope = scopeKey;
-  localIndex = new Map(scope.readScopedIndex(scopeKey).map((m) => [m.id, m]));
   tombstones = scope.loadTombstones(scopeKey);
   dirty = scope.readStringSet(scope.dirtyKey(scopeKey));
   metaDirty = scope.readStringSet(scope.metaDirtyKey(scopeKey));
   serverMetas = [];
-  serverIds = new Set();
-  serverHydrated = false;
+  pending = new Map();
+  for (const m of scope.readScopedIndex(scopeKey)) {
+    const entry = { ...m };
+    if (dirty.has(entry.id) || metaDirty.has(entry.id) || !scope.hasServerVersion(entry.id)) {
+      pending.set(entry.id, entry);
+    } else {
+      serverMetas.push(entry); // 暂定快照：等 fetchBoardListFromServer 用服务端列表替换
+    }
+  }
   ghostsEmitted.clear();
   recompute();
 }
@@ -142,29 +169,64 @@ export function bindScope(scopeKey: scope.ScopeKey): void {
 /** 服务端列表水合；null/失败必须 no-op（离线不得清空缓存） */
 export function hydrateFromServer(metas: DeepDiveBoardMeta[] | null): void {
   if (!Array.isArray(metas)) return;
-  serverHydrated = true;
   const seen = new Set<string>();
-  serverMetas = metas.filter((m) => {
+  const next = metas.filter((m) => {
     if (!m || typeof m.id !== 'string' || seen.has(m.id)) return false;
     seen.add(m.id);
     return true;
   });
-  serverIds = new Set(serverMetas.map((m) => m.id));
+  const nextIds = new Set(next.map((m) => m.id));
+
+  // 整体替换前先收敛：曾同步过却不在新快照里的条目（他端删除）
+  const removed: DeepDiveBoardMeta[] = [];
   for (const sm of serverMetas) {
-    if (tombstones.has(sm.id)) continue;
-    const local = localIndex.get(sm.id);
-    if ((dirty.has(sm.id) || metaDirty.has(sm.id)) && local) continue; // 本地有未同步改动，本地版胜出
-    localIndex.set(sm.id, { ...sm });
+    if (isRemoteDeleted(sm.id, nextIds)) removed.push(sm);
   }
+  for (const [id, meta] of pending) {
+    if (isRemoteDeleted(id, nextIds)) removed.push(meta);
+  }
+  for (const m of removed) {
+    pending.delete(m.id);
+    dirty.delete(m.id);
+    metaDirty.delete(m.id);
+    dispatchRemoteDeleted(m.id, m.name ?? m.id);
+  }
+
+  serverMetas = next;
+  // 服务端未确认的本地改动留在缓冲里，等各自的上行链路确认
   recompute();
 }
 
-/** 本地保存后更新该条 meta；dirty 默认 true */
+/**
+ * 本地保存后更新该条 meta；dirty 默认 true（进未确认缓冲，等服务端确认）。
+ *
+ * `dirty: false` 只在「本地内容就是服务端那份」时使用（采用服务端版落盘等）：此时若该板已同步，
+ * 直接写服务端快照——留在缓冲里会变成一份永不失效的陈旧覆盖，他端改名再也显示不出来。
+ */
 export function upsertLocal(meta: DeepDiveBoardMeta, opts?: { dirty?: boolean }): void {
+  const unsynced = opts?.dirty !== false;
   // 合并而非覆盖：内容保存路径传入的 meta 不含收藏/归档字段，直接覆盖会抹掉用户偏好
-  const prev = localIndex.get(meta.id);
-  localIndex.set(meta.id, prev ? { ...prev, ...meta } : { ...meta });
-  if (opts?.dirty !== false) dirty.add(meta.id);
+  const prev = currentMeta(meta.id);
+  const next = prev ? { ...prev, ...meta } : { ...meta };
+  if (unsynced || !scope.hasServerVersion(meta.id)) {
+    pending.set(meta.id, next);
+  } else {
+    serverMetas = [next, ...serverMetas.filter((m) => m.id !== meta.id)];
+  }
+  if (unsynced) dirty.add(meta.id);
+  recompute();
+}
+
+/**
+ * 采用服务端内容后写回该条 meta：条目归入**服务端快照**，不进未确认缓冲。
+ *
+ * 与 `upsertLocal(..., {dirty:false})` 的区别是显式的：这里的内容来源就是服务端（fetch 落盘 /
+ * 冲突后采用服务端版），不是「本地改完还没传」。靠 `hasServerVersion` 小键去猜来源的话，
+ * 新设备首次拉取（版本小键尚未写入）会被误判成本地草稿，留成一份永不失效的陈旧覆盖。
+ */
+export function upsertServerMeta(meta: DeepDiveBoardMeta): void {
+  const prev = currentMeta(meta.id);
+  serverMetas = [{ ...prev, ...meta }, ...serverMetas.filter((m) => m.id !== meta.id)];
   recompute();
 }
 
@@ -173,16 +235,16 @@ export function upsertLocal(meta: DeepDiveBoardMeta, opts?: { dirty?: boolean })
  * 不触碰内容 dirty，故不会触发整板上传；未知画板 no-op。
  */
 export function updateMetaLocal(id: string, patch: Partial<DeepDiveBoardMeta>): void {
-  const cur = localIndex.get(id);
+  const cur = currentMeta(id);
   if (!cur) return;
-  localIndex.set(id, { ...cur, ...patch });
+  pending.set(id, { ...cur, ...patch });
   metaDirty.add(id);
   recompute();
 }
 
 /**
- * 服务端确认 meta 变更：清 metaDirty，并以服务端回包收敛权威字段（nodeCount 回包无此字段，
- * 保留本地值）。服务端回包的 updatedAt（触发器推进）同步写入列表，供内容保存推进乐观锁版本。
+ * 服务端确认 meta 变更：清 metaDirty、出未确认缓冲，并以服务端回包收敛权威字段
+ * （nodeCount 回包无此字段，保留快照值）。updatedAt 同步写入列表，供内容保存推进乐观锁版本。
  */
 export function confirmServerMeta(
   id: string,
@@ -195,38 +257,73 @@ export function confirmServerMeta(
   }
 ): void {
   metaDirty.delete(id);
-  const prev = localIndex.get(id);
+  const local = pending.get(id);
+  // 内容侧仍未确认（dirty）时保留缓冲，否则出列
+  if (!dirty.has(id)) pending.delete(id);
+  const prev = serverMetas.find((m) => m.id === id);
   const parsedUpdatedAt = server.updatedAt ? Date.parse(server.updatedAt) : NaN;
   const meta: DeepDiveBoardMeta = {
     id,
-    name: server.title ?? prev?.name ?? id,
-    updatedAt: Number.isNaN(parsedUpdatedAt) ? prev?.updatedAt ?? Date.now() : parsedUpdatedAt,
-    nodeCount: prev?.nodeCount ?? 0,
-    isFavorite: server.isFavorite ?? prev?.isFavorite ?? false,
-    isArchived: server.isArchived ?? prev?.isArchived ?? false,
+    name: server.title ?? prev?.name ?? local?.name ?? id,
+    updatedAt: Number.isNaN(parsedUpdatedAt)
+      ? prev?.updatedAt ?? local?.updatedAt ?? Date.now()
+      : parsedUpdatedAt,
+    nodeCount: prev?.nodeCount ?? local?.nodeCount ?? 0,
+    isFavorite: server.isFavorite ?? prev?.isFavorite ?? local?.isFavorite ?? false,
+    isArchived: server.isArchived ?? prev?.isArchived ?? local?.isArchived ?? false,
     // null 是有效值（移出分组），不能用 ?? 把 null 吞成旧值
-    folderId: server.folderId !== undefined ? server.folderId : prev?.folderId ?? null,
+    folderId:
+      server.folderId !== undefined ? server.folderId : prev?.folderId ?? local?.folderId ?? null,
   };
-  localIndex.set(id, meta);
-  serverIds.add(id);
-  serverMetas = serverMetas.map((m) => (m.id === id ? { ...meta } : m));
-  if (!serverMetas.some((m) => m.id === id)) serverMetas = [{ ...meta }, ...serverMetas];
+  serverMetas = [meta, ...serverMetas.filter((m) => m.id !== id)];
   recompute();
 }
 
-/** 服务端确认保存：清 dirty，并确保条目进入服务端集合（立即显示为已同步） */
-export function confirmServerSave(id: string): void {
+/**
+ * 服务端确认保存：清 dirty、出未确认缓冲，条目归入服务端快照并置顶。
+ *
+ * **字段以服务端回包为准**（`confirmServer`）：本地投影只代表「我以为的」，服务端才是真相——
+ * 拿本地 meta 顶替服务端条目会让「他端改名 + 本端保存」把列表名永久停在旧值上。
+ * 回包缺字段（旧路径/测试）时保留快照原值，都没有才退回本地（新建板第一次保存）。
+ */
+export function confirmServerSave(id: string, server?: ServerConfirm): void {
   dirty.delete(id);
-  serverIds.add(id);
-  // 刚保存成功：本地 meta 即最新服务端状态，置顶并替换（否则列表名/时间停留旧值）
-  const meta = localIndex.get(id);
-  if (meta) serverMetas = [{ ...meta }, ...serverMetas.filter((m) => m.id !== id)];
+  const local = pending.get(id);
+  if (!metaDirty.has(id)) pending.delete(id); // 元数据仍有未确认改动时保留缓冲（见下）
+  const prev = serverMetas.find((m) => m.id === id);
+  const parsedUpdatedAt = server?.updatedAt ? Date.parse(server.updatedAt) : NaN;
+  const meta: DeepDiveBoardMeta = {
+    id,
+    name: server?.title ?? prev?.name ?? local?.name ?? id,
+    updatedAt: Number.isNaN(parsedUpdatedAt)
+      ? prev?.updatedAt ?? local?.updatedAt ?? Date.now()
+      : parsedUpdatedAt,
+    nodeCount: server?.nodeCount ?? prev?.nodeCount ?? local?.nodeCount ?? 0,
+    isFavorite: prev?.isFavorite ?? local?.isFavorite ?? false,
+    isArchived: prev?.isArchived ?? local?.isArchived ?? false,
+    folderId: prev?.folderId ?? local?.folderId ?? null,
+  };
+  if (metaDirty.has(id) && local) {
+    // 改名/收藏的 PATCH 还没落：内容保存的回包里没有这些改动，用本地未确认值顶住。
+    // 丢掉它不只是显示回退——meta 执行器是从列表读 PATCH body 的，会把改名一起吞掉。
+    meta.name = local.name ?? meta.name;
+    meta.isFavorite = local.isFavorite ?? meta.isFavorite;
+    meta.isArchived = local.isArchived ?? meta.isArchived;
+    meta.folderId = local.folderId !== undefined ? local.folderId : meta.folderId;
+  }
+  serverMetas = [meta, ...serverMetas.filter((m) => m.id !== id)];
   recompute();
 }
 
 export function markDirty(id: string, value = true): void {
-  if (value) dirty.add(id);
-  else dirty.delete(id);
+  if (value) {
+    dirty.add(id);
+  } else {
+    dirty.delete(id);
+    // 内容已与服务端一致：这条不该再留未确认投影——留着会永久遮蔽服务端后续的改名/计数更新
+    // （除非还有未确认的 meta 改动，那部分仍要顶住，等 PATCH 确认）
+    if (!metaDirty.has(id) && scope.hasServerVersion(id)) pending.delete(id);
+  }
   recompute();
 }
 
@@ -245,11 +342,10 @@ export function addTombstone(id: string): void {
   recompute();
 }
 
-/** 服务端删除确认（2xx/404）或本地草稿删除：清墓碑/索引/blob */
+/** 服务端删除确认（2xx/404）或本地草稿删除：清墓碑/缓冲/blob */
 export function confirmServerDelete(id: string): void {
   tombstones.delete(id);
-  localIndex.delete(id);
-  serverIds.delete(id);
+  pending.delete(id);
   serverMetas = serverMetas.filter((m) => m.id !== id);
   dirty.delete(id);
   metaDirty.delete(id);
@@ -257,28 +353,31 @@ export function confirmServerDelete(id: string): void {
   recompute();
 }
 
-/** 403 回滚：取消墓碑，画板重新可见（索引未删，天然可恢复） */
+/** 403 回滚：取消墓碑，画板重新可见（缓冲/快照未删，天然可恢复） */
 export function restoreFromTombstone(id: string): void {
   tombstones.delete(id);
   recompute();
 }
 
-/** Spec L1：删除分组后本地解除所有画板归属（服务端已 SET NULL） */
+/** Spec L1：删除分组后本地解除所有画板归属（服务端已 SET NULL，属已确认状态，故不标脏） */
 export function clearFolderOnBoards(folderId: string): void {
   let changed = false;
-  for (const [id, meta] of localIndex) {
-    if (meta.folderId === folderId) {
-      localIndex.set(id, { ...meta, folderId: null });
-      changed = true;
-    }
+  const clear = (m: DeepDiveBoardMeta): DeepDiveBoardMeta => {
+    if (m.folderId !== folderId) return m;
+    changed = true;
+    return { ...m, folderId: null };
+  };
+  serverMetas = serverMetas.map(clear);
+  for (const [id, m] of pending) {
+    const next = clear(m);
+    if (next !== m) pending.set(id, next);
   }
   if (changed) recompute();
 }
 
 /** 幽灵收敛：远端已删（save 404），移出列表、保留 blob */
 export function reconcileRemoteDeletion(id: string): void {
-  localIndex.delete(id);
-  serverIds.delete(id);
+  pending.delete(id);
   serverMetas = serverMetas.filter((m) => m.id !== id);
   dirty.delete(id);
   metaDirty.delete(id);
@@ -286,11 +385,11 @@ export function reconcileRemoteDeletion(id: string): void {
   recompute();
 }
 
-/** 游客→账号认领：把纯本地草稿并入当前 scope，标 dirty，清空 guest 索引 */
+/** 游客→账号认领：把纯本地草稿并入当前 scope 的未确认缓冲，标 dirty，清空 guest 索引 */
 export function hydrateClaimedDrafts(metas: DeepDiveBoardMeta[], userId: string): void {
   if (!metas.length) return;
   for (const m of metas) {
-    localIndex.set(m.id, { ...m });
+    pending.set(m.id, { ...m });
     dirty.add(m.id);
   }
   // 只移除已认领条目，保留 guest 索引中其他条目（防误清数据）
@@ -306,11 +405,10 @@ export function resetForTest(): void {
   snapshot = EMPTY;
   serverMetas = [];
   serverIds = new Set();
-  localIndex = new Map();
+  pending = new Map();
   tombstones = new Set();
   dirty = new Set();
   metaDirty = new Set();
-  serverHydrated = false;
   boundScope = null;
   ghostsEmitted.clear();
   scope.setActiveScopeKey('guest');

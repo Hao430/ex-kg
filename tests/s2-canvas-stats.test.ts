@@ -192,6 +192,7 @@ let fetchScript: MockRes[] = [];
 };
 
 const { syncBoardToBackend } = await import('../src/lib/storage.js');
+const boardStore = await import('../src/lib/board-store.js');
 
 function makeBoard(): any {
   return { id: 's2-fe-board', name: '统计', updatedAt: Date.now(), nodes: [], edges: [] };
@@ -240,6 +241,32 @@ describe('S2 canvas_save_conflict 前端埋点', () => {
     const hits = tracked.filter((t) => t.name === 'canvas_save_conflict');
     assert.equal(hits.length, 1);
     assert.deepEqual(hits[0].data, { adopted: 0 });
+  });
+
+  test('保存成功：列表条目按服务端回包收敛，本地投影不顶替服务端真相', async () => {
+    boardStore.resetForTest();
+    boardStore.bindScope('u1');
+    boardStore.hydrateFromServer([
+      { id: 's2-fe-board', name: '旧名', updatedAt: 100, nodeCount: 1 },
+    ]);
+    boardStore.upsertLocal(
+      { id: 's2-fe-board', name: '本地以为的名', updatedAt: 200, nodeCount: 2 },
+      { dirty: true }
+    );
+    fetchScript = [
+      {
+        status: 200,
+        body: {
+          canvas: { title: '服务端名', nodeCount: 9, updatedAt: '2026-09-09T00:00:03.000Z' },
+        },
+      },
+    ];
+
+    assert.equal(await syncBoardToBackend(makeBoard()), 'ok');
+    const entry = boardStore.getBoardList().find((b) => b.id === 's2-fe-board');
+    assert.equal(entry?.name, '服务端名', 'save 回包的 title 才是真相（他端改名场景靠它收敛）');
+    assert.equal(entry?.nodeCount, 9, 'nodeCount 取服务端事务内重算值');
+    assert.equal(boardStore.isDirty('s2-fe-board'), false);
   });
 
   test('keepalive 补传遇 409 → 不做冲突决策，不埋点', async () => {
