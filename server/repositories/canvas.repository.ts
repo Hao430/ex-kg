@@ -8,12 +8,30 @@ import { handlePgError } from '../core/db-guard.js';
 
 /**
  * 画布访问权限（H1 安全加固，2026-09-07）：严格属主制——读/写/删一律属主本人或 admin。
- * 唯一放行是全局共享默认画板：所有用户首屏共用同一行（default-board/default-canvas），
- * 因此不可删除（软删会导致所有用户对该 id 永久 404，全局默认板锁死）。
+ *
+ * 默认画板 `default-board` / `default-canvas`（ADR-0018，2026-09-12）：
+ * - 历史语义是「全局共享单行」（ADR-0004 保留的唯一放行），所有登录用户读写同一行。节点级
+ *   合并上线后它从「覆盖竞争」升级为「跨租户节点稳定混合 + 持续跨租户读」，与 ADR-0016 的
+ *   严格属主承诺直接冲突，必须收口。
+ * - `SAVE_DEFAULT_BOARD_MODE=private` 后它退化为**首个认领者的普通画板**：授权路径不再有
+ *   任何放行，未认领 = 行不存在（由首个保存者 upsert 创建并认领，无需 DROP NOT NULL）。
+ * - 两种模式下公开 id 都**不可删除**：软删会让所有用户对该 id 永久 404，默认板锁死。
+ *
  * 已废弃的历史放行：board- 前缀、seed_ 前缀、demo-user-1 属主、guest_* 属主（游客模式已删除）。
  */
-export function isSharedDefaultCanvas(canvasId: string): boolean {
+
+/** 公开 id 判定，**与授权无关**：仅供「禁删」与 id 归属判断使用 */
+export function isDefaultCanvasPublicId(canvasId: string): boolean {
   return canvasId === 'default-board' || canvasId === 'default-canvas';
+}
+
+/**
+ * 默认画板是否仍按「全局共享」放行（仅授权路径使用）。
+ * 默认 legacy = 部署时零行为变化；发布顺序是**客户端先行 + soak ≥7 天**，再翻 private
+ * （见 ADR-0018：窗口期内非属主的旧标签页会在保存时才失败）。
+ */
+export function isSharedDefaultCanvas(canvasId: string): boolean {
+  return process.env.SAVE_DEFAULT_BOARD_MODE !== 'private' && isDefaultCanvasPublicId(canvasId);
 }
 
 /** 将行数组按 size 分块，供批量多值 INSERT 控制单条 SQL 参数数量 */
@@ -958,8 +976,8 @@ export async function saveCanvas(
 }
 
 export async function deleteCanvas(canvasId: string, userId: string): Promise<boolean> {
-  // 共享默认画板禁删：软删会让所有用户对该 id 永久 404，全局默认板锁死
-  if (isSharedDefaultCanvas(canvasId)) {
+  // 默认画板禁删（两种模式都禁，与授权解耦）：软删会让所有用户对该 id 永久 404
+  if (isDefaultCanvasPublicId(canvasId)) {
     throw new ForbiddenError('默认画板不可删除', 'CANVAS_FORBIDDEN');
   }
 
@@ -1017,8 +1035,9 @@ export interface CanvasMetaPatch {
 /**
  * 轻量元数据更新（收藏 / 归档 / 标题）。
  *
- * 与 deleteCanvas 同口径的属主校验；共享默认板为全局单行（所有用户共用），
- * 任何用户级偏好（收藏/归档）都会影响他人，故整体禁改（变更标题请走画板自身保存）。
+ * 与 deleteCanvas 同口径的属主校验。legacy 模式下默认板是全局单行（所有用户共用），任何
+ * 用户级偏好（收藏/归档）都会影响他人，故整体禁改（变更标题请走画板自身保存）；private 模式
+ * 下它是属主自己的普通画板，收藏/归档照常（判据用 isSharedDefaultCanvas，随模式切换）。
  * 返回最新 updated_at：canvases 的 set_timestamp_canvases 触发器会推进该列，
  * 前端必须用它推进乐观锁版本，否则下一次内容保存会 409。
  */
