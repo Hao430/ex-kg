@@ -44,6 +44,7 @@ import {
 import { DeepDiveBoardMeta } from '../../types';
 import type { FolderMeta } from '../../lib/folder-store';
 import { buildQuickSections } from '../../lib/board-sections';
+import { SHARED_BOARD_IDS } from '../../lib/board-scope';
 import { useAuth } from '../../context/AuthContext';
 import { useQuotaView } from '../../hooks/useBoards';
 import { Tooltip } from './Tooltip';
@@ -348,7 +349,8 @@ export const Topbar: React.FC<TopbarProps> = ({
                         </span>
                         <span className="flex items-center gap-0.5 shrink-0">
                           {b.id === currentBoardId && <Check className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />}
-                          {b.id !== 'default-board' && (
+                          {/* 旧共享默认板两种模式下都禁删（ADR-0012/0018）：不给入口，免得点了只收到 403 */}
+                          {!SHARED_BOARD_IDS.has(b.id) && (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();

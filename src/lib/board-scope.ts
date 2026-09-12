@@ -17,8 +17,15 @@ export type ScopeKey = string; // 'guest' | userId
 
 const SCOPE_VERSION = 'deepdive_v2';
 
+/**
+ * 旧版「全局共享默认板」id：客户端曾把它硬编码成「新板 id」。
+ * 阶段 5b（ADR-0018）起客户端不再用它新建画板——新板一律生成 uuidv7；只有存量用户、以及
+ * 服务端私有化后的首个认领者，列表里才会再出现它（存量内容的再落位见 board-migrate.ts）。
+ */
+export const LEGACY_DEFAULT_BOARD_ID = 'default-board';
+
 /** 全局共享默认画板 id：可见但不参与配额/认领/幽灵判定 */
-export const SHARED_BOARD_IDS = new Set(['default-board', 'default-canvas']);
+export const SHARED_BOARD_IDS = new Set([LEGACY_DEFAULT_BOARD_ID, 'default-canvas']);
 
 /** 旧版无作用域索引键（迁移来源） */
 export const LEGACY_INDEX_KEYS = ['deepdive_boards_index_v1', 'rabbithole_boards_index_v1'];
@@ -263,6 +270,32 @@ export function isGuestClaimed(userId: string): boolean {
   if (!store) return false;
   try {
     return store.getItem(guestClaimMarkerKey(userId)) === '1';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 旧共享默认板存量再落位的幂等标记（阶段 5b，见 board-migrate.ts）：按账号只搬一次。
+ * 与游客认领标记一样按 userId 而非 scope 命名——换账号登录是另一个人的一次迁移。
+ */
+export function defaultBoardMigratedKey(userId: string): string {
+  return `${SCOPE_VERSION}:default_board_migrated:${userId}`;
+}
+export function markDefaultBoardMigrated(userId: string): void {
+  const store = ls();
+  if (!store) return;
+  try {
+    store.setItem(defaultBoardMigratedKey(userId), '1');
+  } catch {
+    /* ignore */
+  }
+}
+export function isDefaultBoardMigrated(userId: string): boolean {
+  const store = ls();
+  if (!store) return false;
+  try {
+    return store.getItem(defaultBoardMigratedKey(userId)) === '1';
   } catch {
     return false;
   }

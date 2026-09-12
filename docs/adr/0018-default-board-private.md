@@ -50,9 +50,9 @@ ADR-0004 确立严格属主制，保留的唯一放行是全局共享默认画�
 
 **「未认领」= 行不存在**：服务端不 seed 默认板，行由首个保存者 upsert 创建并认领，因此**不需要** `ALTER COLUMN user_id DROP NOT NULL`。
 
-**客户端配套**（发布顺序要求客户端先行）：
-- 需要新画板时生成新 id（uuidv7），不再硬编码 `default-board`；
-- `default-board` 不可访问（404/403）时建一块新板，并把本地已有的 `default-board` 内容经既有的游客草稿认领机制**带走**，不丢弃。
+**客户端配套**（发布顺序要求客户端先行，阶段 5b）：
+- 新画板一律生成 uuidv7，不再硬编码 `default-board`（启动引导占位 / 新建画板 / 删空后的兜底）。空白账号的占位板要等服务端确认「一块都没有」后才落地，离线不凭空多出画板；
+- `default-board` **不可访问（404/403）**且本地确有内容时，把它整份搬成一块自己的新板并排队上传（`src/lib/board-migrate.ts`）：**只有服务端明确拒绝才搬**——服务端仍可读时什么都不做（legacy 共享期是空操作，否则会把共享板复制成一堆副本）；离线 / 401 / 5xx 不打标记、下次启动重试；本地只剩引导态则直接摘掉旧引用，交给调用方给一块新画布。按账号一次性幂等标记，与游客认领同形状，但**必须换新 id**（沿用 `default-board` 等于去抢那行共享板）；
 
 ### Positive Consequences
 
@@ -69,8 +69,8 @@ ADR-0004 确立严格属主制，保留的唯一放行是全局共享默认画�
 
 ## References
 
-- 代码：`server/repositories/canvas.repository.ts`（`isDefaultCanvasPublicId` / `isSharedDefaultCanvas`）、`server/services/canvas.service.ts`、`server/middleware/quota.ts`、`src/App.tsx`（新板 id 生成与不可访问回退）、`src/lib/board-scope.ts`（游客草稿认领）
+- 代码：`server/repositories/canvas.repository.ts`（`isDefaultCanvasPublicId` / `isSharedDefaultCanvas`）、`server/services/canvas.service.ts`、`server/middleware/quota.ts`、`src/App.tsx`（新板 id 生成与不可访问回退）、`src/lib/board-migrate.ts`（存量内容再落位）、`src/lib/board-store.ts`（`dropLocalEntry`）、`src/lib/board-scope.ts`（游客草稿认领、迁移幂等标记）
 - 开关：`.env.example` 的 `SAVE_DEFAULT_BOARD_MODE`（`legacy` 默认 / `private`）
-- 测试：`tests/h4-default-board-private.test.ts`（private 模式）、`tests/h1-canvas-tenant-softdelete.test.ts`（legacy 共享回归）
+- 测试：`tests/h4-default-board-private.test.ts`（private 模式）、`tests/h1-canvas-tenant-softdelete.test.ts`（legacy 共享回归）、`tests/board-migrate.test.ts`（存量再落位）
 - 前置决策：`docs/adr/0004-strict-tenant-ownership.md`（本 ADR 移除其唯一放行）、`docs/adr/0016-admin-strict-canvas-tenancy.md`、`docs/adr/0017-*.md`（节点级合并，本 ADR 的动因）
 - 需修订：`docs/adr/0012-default-canvas-no-delete.md`（禁删理由改写）

@@ -342,8 +342,13 @@ export function addTombstone(id: string): void {
   recompute();
 }
 
-/** 服务端删除确认（2xx/404）或本地草稿删除：清墓碑/缓冲/blob */
-export function confirmServerDelete(id: string): void {
+/**
+ * 本地摘除一条条目：出列（含未确认缓冲）、清 dirty/metaDirty、清内容 blob，不留墓碑、不上行。
+ * 两个调用方语义不同但动作一致：
+ * - 服务端删除确认（2xx/404）：这条画板已经没了；
+ * - 阶段 5b：旧共享默认板的内容已搬到自己新板，这条缓存已不属于本账号（见 board-migrate.ts）。
+ */
+export function dropLocalEntry(id: string): void {
   tombstones.delete(id);
   pending.delete(id);
   serverMetas = serverMetas.filter((m) => m.id !== id);
@@ -351,6 +356,11 @@ export function confirmServerDelete(id: string): void {
   metaDirty.delete(id);
   scope.purgeBoardBlobs(id);
   recompute();
+}
+
+/** 服务端删除确认（2xx/404）或本地草稿删除 */
+export function confirmServerDelete(id: string): void {
+  dropLocalEntry(id);
 }
 
 /** 403 回滚：取消墓碑，画板重新可见（缓冲/快照未删，天然可恢复） */

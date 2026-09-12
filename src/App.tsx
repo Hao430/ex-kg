@@ -25,6 +25,7 @@ import { ChatNodeData } from './types';
 import { onSyncState } from './lib/sync-queue';
 import * as boardStore from './lib/board-store';
 import * as boardScope from './lib/board-scope';
+import * as boardMigrate from './lib/board-migrate';
 import * as quotaStore from './lib/quota-store';
 import * as syncQueue from './lib/sync-queue';
 import * as folderStore from './lib/folder-store';
@@ -99,7 +100,7 @@ function MainApp() {
 
   const boards = useBoards();
   const foldersView = useFolders();
-  const [currentBoardId, setCurrentBoardId] = useState<string>('default-board');
+  const [currentBoardId, setCurrentBoardId] = useState<string>(''); // boot 时由 applyLoadedBoard 落定
   const [boardName, setBoardName] = useState<string>('量子计算深度探索');
   const [initialNodes, setInitialNodes] = useState<Node[] | undefined>(undefined);
   const [initialEdges, setInitialEdges] = useState<Edge[] | undefined>(undefined);
@@ -412,23 +413,42 @@ function MainApp() {
         syncQueue.hydrateQueue(boardScope.readJson(boardScope.queueKey(scopeKey), []));
       } catch { /* ignore */ }
       syncQueue.recoverDirtyDrafts(boardStore.getDirtyIds());
+
+      // 阶段 5b（ADR-0018）：服务端翻私有化开关后，旧共享默认板（default-board）对本账号不再可读，
+      // 而本地那份内容此刻往往是用户唯一剩下的副本——不可访问时落成一块自己的新板（见 board-migrate）。
+      // 与游客认领同理，只在绑定 scope 时跑一次；服务端仍可读（legacy 共享期）时是空操作。
+      if (user && scopeKey !== 'guest') {
+        void boardMigrate.rehomeLegacyDefaultBoard(user.id).then((r) => {
+          if (cancelled || seq !== loadSeqRef.current) return;
+          if (r.status === 'skipped') return;
+          // 正看着这块板的人要跟着换走，否则后续编辑会写进一块存不上去的板
+          if (currentBoardIdRef.current === boardScope.LEGACY_DEFAULT_BOARD_ID) {
+            const moved = r.newBoardId ? loadBoard(r.newBoardId) : null;
+            if (moved) applyLoadedBoard(moved);
+            else applyStarterBoard(uuidv7(), '未命名思维画布');
+          }
+          showToast(
+            r.status === 'migrated' ? '默认画板已迁移为你自己的画板' : '默认画板已失效，已为你开启一块新画板'
+          );
+        });
+      }
     }
 
     const boot = async () => {
       // 1) 本地列表立即决定活动画板（无网络等待）
       const localList = boardStore.getBoardList();
-      let activeId: string | undefined = localList[0]?.id;
-      const DEFAULT_META = () => ({
-        id: 'default-board',
+      const hadLocalList = localList.length > 0;
+      // 空列表时用一块**新 id** 当引导态占位：等服务端确认「一块都没有」后才真的落地成画板。
+      // 阶段 5b 起不再硬编码 default-board——那是旧共享板 id，私有化后未必归自己（ADR-0018）。
+      const activeId: string = localList[0]?.id ?? uuidv7();
+      const STARTER_META = (id: string) => ({
+        id,
         name: '未命名思维画布',
         updatedAt: Date.now(),
         nodeCount: 1,
       });
-      if (!activeId) {
-        activeId = 'default-board';
-        // 游客直接落一棵默认板；登录用户先渲染引导态，等服务端列表确认后再落（避免已有画板者多出空板）
-        if (!user) boardStore.upsertLocal(DEFAULT_META(), { dirty: false });
-      }
+      // 游客直接落一块引导板；登录用户先渲染引导态，等服务端列表确认后再落（避免已有画板者多出空板）
+      if (!hadLocalList && !user) boardStore.upsertLocal(STARTER_META(activeId), { dirty: false });
 
       // 2) 本地内容立即渲染
       const cached = loadBoard(activeId);
@@ -453,12 +473,14 @@ function MainApp() {
       void fetchBoardListFromServer().then((serverList) => {
         if (cancelled || seq !== loadSeqRef.current) return;
         if (serverList && serverList.length > 0) {
-          // 冷启动引导态（未编辑、未落盘）→ 自动切到最近一块真实画板
-          const onFreshDefault =
-            currentBoardIdRef.current === 'default-board' &&
-            !loadBoard('default-board') &&
-            !boardStore.isDirty('default-board');
-          if (onFreshDefault) {
+          // 冷启动引导态（不在服务端列表里、本地无内容、无未同步改动）→ 自动切到最近一块真实画板，
+          // 免得已有画板的人停在刚生成的占位空板上。本地草稿有 blob、dirty 板有改动，两种都不会误切。
+          const bootId = currentBoardIdRef.current;
+          const onEmptyPlaceholder =
+            !serverList.some((b) => b.id === bootId) &&
+            !boardStore.isDirty(bootId) &&
+            !loadBoard(bootId);
+          if (onEmptyPlaceholder) {
             void fetchBoardFromServer(serverList[0].id).then((loaded) => {
               if (cancelled || seq !== loadSeqRef.current || !loaded) return;
               applyLoadedBoard(loaded);
@@ -466,9 +488,10 @@ function MainApp() {
           }
           return;
         }
-        // 服务端确认为空（或离线拉取失败）：落一棵默认板，保证列表可见
-        if (!boardStore.getBoardList().some((b) => b.id === 'default-board')) {
-          boardStore.upsertLocal(DEFAULT_META(), { dirty: false });
+        // 服务端确认为空：把引导态那块板落地，保证列表里有画板可用。
+        // 离线（serverList === null）不动本地缓存，也不凭空多出一块板。
+        if (serverList && serverList.length === 0 && boardStore.getBoardList().length === 0) {
+          boardStore.upsertLocal(STARTER_META(activeId), { dirty: false });
         }
       });
       void fetchBoardFromServer(activeId).then((loaded) => {
@@ -555,8 +578,8 @@ function MainApp() {
         applyStarterBoard(nextId, remaining[0].name);
       }
     } else {
-      // 全部删除：初始化「新画布 + 待填写主题」引导节点（对齐新账号语义）
-      applyStarterBoard('default-board', '未命名思维画布');
+      // 全部删除：初始化「新画布 + 待填写主题」引导节点（对齐新账号语义；新 id，不复活旧共享板）
+      applyStarterBoard(uuidv7(), '未命名思维画布');
     }
   };
 
