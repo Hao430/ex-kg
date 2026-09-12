@@ -26,6 +26,7 @@
 | [0015](./0015-canvas-library-single-level-folders.md) | 画板管理采用「检索 + 收藏/归档 + 单层分组」 | Accepted | 2026-09-10 | 复用已建 `is_favorite`/`is_archived`；新增 `folders` + `canvases.folder_id`（无 parent_id、删组不删板）；拒绝任意层级树；标签仍按二期共存 |
 | [0016](./0016-admin-strict-canvas-tenancy.md) | 画布数据严格属主制收口——移除 admin 例外 | Accepted | 2026-09-11 | 删除画布读/写/删/meta/分享/chat 归因/配额的 admin 放行；admin 只保留运营台聚合统计与日志及配额额度；顺带收紧 auto-title 归属 |
 | [0018](./0018-default-board-private.md) | 默认画板私有化——移除最后一个跨租户放行 | Accepted | 2026-09-12 | `default-board` 从全局共享单行收口为「首个认领者的普通画板」：授权路径零放行（`SAVE_DEFAULT_BOARD_MODE=private`），禁删与授权解耦；客户端改用新 id 并带走本地存量；客户端先行 + soak ≥7 天再翻开关 |
+| [0019](./0019-db-role-separation-and-rls.md) | 数据库角色分离 + 行级安全（RLS）+ 请求级作用域 | Accepted | 2026-09-12 | 三角色（owner 仅迁移 / system 跨租户 `BYPASSRLS` / app 受 RLS），owner 凭据不进运行期；迁移移出应用进程；`getDb()` 为唯一句柄，无作用域即 `DB_SCOPE_MISSING`；`ENABLE`（不用 `FORCE`）RLS + 显式豁免清单；`canvas_probe` 特权探针保住既有 403/404 契约 |
 
 ### AI 集成
 
@@ -43,6 +44,7 @@
 | [0010](./0010-scrypt-hardening.md) | scrypt 加固参数（N=2^16 / r=8 / p=1） | Accepted | 2026-09-09 | 单次校验 ≥200ms 抗 GPU 暴力；版本头 `scrypt$N$r$p$salt:key` 支持存量升级 |
 | [0011](./0011-email-verification-code-first.md) | 邮箱验证（验证码先行） | Accepted | 2026-09-09 | 注册先发 6 位码（10 分钟、连错 5 次作废），账号出生即 `email_verified=true` |
 | [0014](./0014-alipay-page-pay.md) | 支付宝电脑网站支付（alipay.trade.page.pay） | Accepted | 2026-09-10 | 官方 alipay-sdk v4；三要素齐备走支付宝、否则回落 mock；notify 验签+金额+app_id 三重校验、幂等激活、查单兜底 |
+| [0020](./0020-same-origin-guard.md) | 变更方法同源守卫 + 会话 cookie 属性单一事实源 | Accepted | 2026-09-12 | 只对 `POST/PUT/PATCH/DELETE` 的显式来源校验（`Sec-Fetch-Site`/`Origin`/`Referer`），**无 `Origin` 一律放行**（锁定非浏览器客户端契约）；cookie 属性收敛为单一事实源；`urlencoded` 收窄到支付宝通知单端点；两个改状态的 GET 记录为已接受 |
 
 ### 同步与并发
 
@@ -65,10 +67,10 @@
 
 ## 按主题浏览
 
-- **部署 / 运维**：[0001](./0001-single-port-fullstack.md)
-- **持久化 / 数据**：[0002](./0002-dual-mode-persistence.md) · [0004](./0004-strict-tenant-ownership.md) · [0005](./0005-soft-delete-with-30d-cooldown.md) · [0012](./0012-default-canvas-no-delete.md) · [0013](./0013-frontend-node-id-truncation.md) · [0015](./0015-canvas-library-single-level-folders.md) · [0016](./0016-admin-strict-canvas-tenancy.md)
+- **部署 / 运维**：[0001](./0001-single-port-fullstack.md) · [0019](./0019-db-role-separation-and-rls.md)
+- **持久化 / 数据**：[0002](./0002-dual-mode-persistence.md) · [0004](./0004-strict-tenant-ownership.md) · [0005](./0005-soft-delete-with-30d-cooldown.md) · [0012](./0012-default-canvas-no-delete.md) · [0013](./0013-frontend-node-id-truncation.md) · [0015](./0015-canvas-library-single-level-folders.md) · [0016](./0016-admin-strict-canvas-tenancy.md) · [0019](./0019-db-role-separation-and-rls.md)
 - **AI 集成**：[0003](./0003-multi-model-failover.md) · [0009](./0009-150-node-subtree-split.md)
-- **业务与安全**：[0007](./0007-independent-rate-limiters.md) · [0010](./0010-scrypt-hardening.md) · [0011](./0011-email-verification-code-first.md) · [0014](./0014-alipay-page-pay.md)
+- **业务与安全**：[0007](./0007-independent-rate-limiters.md) · [0010](./0010-scrypt-hardening.md) · [0011](./0011-email-verification-code-first.md) · [0014](./0014-alipay-page-pay.md) · [0020](./0020-same-origin-guard.md)
 - **同步与并发**：[0008](./0008-sync-state-machine.md)
 
 > 索引本身由 ADR 维护者更新；新增 ADR 时把行加到对应主题段，并按编号升序排列。
