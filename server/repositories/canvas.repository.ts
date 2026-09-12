@@ -656,10 +656,13 @@ export async function saveCanvas(
   // ADR-0017 协议分流：判据只能是显式版本号。旧客户端的整板 payload 与新客户端的
   // 「本次改动」结构上无法区分，且空数组在旧客户端是「清空」、在新客户端是「无删除」。
   const merge = (data.protocolVersion ?? 1) >= 2;
+  // 回执里带上「本次按哪个协议解释」，与 saveMode 一起排障（阶段 6 观测）
+  const protocolVersion = data.protocolVersion ?? 1;
 
   // 熔断旧写路径（阶段 6 soaker 之后再翻）：旧客户端会命中其降级分支弹「请刷新」并停止重试。
   // 刻意**不**带 latest_updated_at——带上会触发旧客户端的重试循环。
   if (!merge && process.env.SAVE_LEGACY_REPLACE_ENABLED === 'false') {
+    console.warn(`[canvas-save] 409 CLIENT_OUTDATED canvas=${data.id}（旧协议客户端仍在写入）`);
     throw new ConflictError('客户端版本过旧，请刷新页面后重试', 'CLIENT_OUTDATED');
   }
 
@@ -682,6 +685,9 @@ export async function saveCanvas(
     if (Number.isNaN(known)) return; // 非法时间串视为未携带，避免恒等比较误报
     const current = new Date(serverUpdatedAt).getTime();
     if (known !== current) {
+      // 409 只有一个来源：整板替换路径的画板级乐观锁（合并路径刻意不校验它，见下）。记一行，
+      // 它是「还有多少旧客户端在跑」的直接读数——为 0 才能安全翻 SAVE_LEGACY_REPLACE_ENABLED。
+      console.warn(`[canvas-save] 409 CANVAS_SAVE_CONFLICT canvas=${data.id}（整板替换路径版本落后）`);
       throw new ConflictError('画板已被其他窗口修改，请刷新获取最新内容后再保存', 'CANVAS_SAVE_CONFLICT', {
         latest_updated_at: new Date(serverUpdatedAt).toISOString(),
       });
@@ -821,6 +827,7 @@ export async function saveCanvas(
         nodeCount: mergeResult ? mergeResult.nodeCount : normalized.nodes.length,
         edgeCount: mergeResult ? mergeResult.edgeCount : normalized.edges.length,
         saveMode: merge ? 'merge' : 'replace',
+        protocolVersion,
         ...(mergeResult
           ? {
               ignoredNodeIds: mergeResult.ignoredNodeIds,
@@ -870,6 +877,7 @@ export async function saveCanvas(
       nodeCount: normalized.nodes.length,
       edgeCount: normalized.edges.length,
       saveMode: 'replace',
+      protocolVersion,
     };
     inMemoryStore.canvases.set(data.id, record);
     return record;
@@ -968,6 +976,7 @@ export async function saveCanvas(
     nodeCount: mergedNodes.filter((n) => !n.deleted_at).length,
     edgeCount: mergedEdges.filter((e) => !e.deleted_at).length,
     saveMode: 'merge',
+    protocolVersion,
     ignoredNodeIds,
     repairedNodeIds,
   };
@@ -1038,9 +1047,54 @@ export interface CanvasMetaPatch {
  * 与 deleteCanvas 同口径的属主校验。legacy 模式下默认板是全局单行（所有用户共用），任何
  * 用户级偏好（收藏/归档）都会影响他人，故整体禁改（变更标题请走画板自身保存）；private 模式
  * 下它是属主自己的普通画板，收藏/归档照常（判据用 isSharedDefaultCanvas，随模式切换）。
- * 返回最新 updated_at：canvases 的 set_timestamp_canvases 触发器会推进该列，
+ * 返回最新 updated_at：由应用层在每个 UPDATE 里显式 `NOW()` 推进（`initDbSchema()` **不创建
+ * 任何触发器**，设计稿里的 `trigger_set_timestamp()` 只是历史设计稿，见 docs/数据库建表脚本.sql），
  * 前端必须用它推进乐观锁版本，否则下一次内容保存会 409。
  */
+/**
+ * 节点/边墓碑 GC（ADR-0017，挂日清任务）。
+ *
+ * 合并写入把「删除」表达为软删墓碑（`deleted_at` 非空的 nodes/edges 行），而不是物理删行——
+ * 墓碑是「删除胜出」的载体：陈旧的挂机设备再上传那些节点时会被 `WHERE deleted_at IS NULL`
+ * 的守卫拒绝，不会把删掉的内容复活。代价是墓碑会随删除次数无限累积，需要按保留期回收。
+ *
+ * - 保留期默认 30 天（对齐 ADR-0005 的软删冷却口径），由 `CANVAS_TOMBSTONE_RETENTION_DAYS` 配置；
+ * - **先删边再删节点**：边引用节点，顺序反过来会有一小段「边还在、节点没了」的窗口；
+ * - 只回收**过期的**墓碑，新墓碑一律保留（否则刚删的内容会被挂机设备当场复活）。
+ *
+ * 风险边界（接受）：GC 之后，超过保留期未联网、本地仍持有那些节点的陈旧客户端再上传时会把
+ * 它们复活。复活的内容是该用户自己的、节点 id 由客户端生成（UUIDv7，不可能与他人复用），
+ * 且 30 天远大于 sync-queue 的退避上限（`MAX_RETRIES=5`，间隔 `min(2^n·2s, 30s)`），
+ * 正常联网的设备不可能拖到那时还没把删除传上来。
+ *
+ * 内存分支无需 GC：墓碑就是进程内 Map 里记录的 `deleted_at` 字段，重启即空。
+ */
+export async function cleanupCanvasTombstones(
+  retentionDays = 30
+): Promise<{ edges: number; nodes: number }> {
+  const p = getPool();
+  if (p) {
+    try {
+      // 保留期 <= 0 视为「全部回收」（与 cleanupDeletedUsers 口径一致，便于运维一键清空）
+      const expired =
+        retentionDays > 0
+          ? `deleted_at IS NOT NULL AND deleted_at <= NOW() - make_interval(days => $1)`
+          : `deleted_at IS NOT NULL`;
+      const args = retentionDays > 0 ? [retentionDays] : [];
+      const edges = await p.query(`DELETE FROM edges WHERE ${expired}`, args);
+      const nodes = await p.query(`DELETE FROM nodes WHERE ${expired}`, args);
+      return { edges: edges.rowCount || 0, nodes: nodes.rowCount || 0 };
+    } catch (e) {
+      handlePgError(e);
+      console.warn('PG cleanupCanvasTombstones failed:', e);
+    }
+  }
+
+  // 内存兜底：内存分支的删除是数组内标记（`deleted_at` 字段），随进程消亡，没有可回收的行
+  void inMemoryStore.canvases.size;
+  return { edges: 0, nodes: 0 };
+}
+
 export async function updateCanvasMeta(
   canvasId: string,
   patch: CanvasMetaPatch,

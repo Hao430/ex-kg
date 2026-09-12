@@ -127,6 +127,8 @@ export interface CanvasRecord {
   deleted_at?: string | null;
   /** ADR-0017：本次写入走的路径（协议分流），回执给客户端便于排障与埋点 */
   saveMode?: 'replace' | 'merge';
+  /** ADR-0017：本次按哪个协议版本解释请求（缺省 1 = 旧客户端的整板替换） */
+  protocolVersion?: number;
   /** 合并写入回执：被墓碑守卫拒绝的节点 id（删除胜出，陈旧设备不得复活） */
   ignoredNodeIds?: string[];
   /** 合并写入回执：父节点不可达、parentId 被置空的节点 id */

@@ -376,4 +376,21 @@ describe('H2 画布节点级合并（内存分支）', () => {
     const final = await getCanvas(adminCookie, id);
     assert.deepEqual(final.viewport, { x: 12, y: 34, zoom: 2 }, '缺省 viewport 同理不得被重置');
   });
+  test('墓碑 GC（内存分支）：返回 0/0 且不动内存里的墓碑行（重启即空，无需回收）', async () => {
+    const { cleanupCanvasTombstones } = await import('../server/repositories/canvas.repository.js');
+    const { inMemoryStore } = await import('../server/core/memory-store.js');
+
+    const id = 'h2-gc-memory';
+    await legacySave(adminCookie, id, [node('gc1', '甲'), node('gc2', '乙')]);
+    await mergeSave(adminCookie, id, { deletedNodeIds: ['gc2'] });
+    const tombstoned = () =>
+      (inMemoryStore.canvases.get(id)?.nodes || []).filter((n: any) => n.deleted_at).length;
+
+    assert.equal(tombstoned(), 1, '前提：删除留下了墓碑');
+
+    // retentionDays 再小也一样是空操作——内存分支的墓碑随进程消亡，没有可回收的行
+    assert.deepEqual(await cleanupCanvasTombstones(0), { edges: 0, nodes: 0 });
+    assert.equal(tombstoned(), 1, '内存分支不得因 GC 改动画布内容');
+    assert.deepEqual(nodeIds(await getCanvas(adminCookie, id)), ['gc1'], '存活节点照旧');
+  });
 });

@@ -119,6 +119,26 @@ canvasesRouter.post('/:id/save', asyncHandler(async (req: Request, res: Response
     user.role === 'admin'
   );
 
+  // ADR-0017 观测（阶段 6）：一次保存一行结构化回执——它就是「是否真的只发改动」的线上证据，
+  // 也是翻 SAVE_LEGACY_REPLACE_ENABLED=false 与调 CANVAS_TOMBSTONE_RETENTION_DAYS 的依据：
+  //   bytes  = 本次请求体字节数（合并后应显著低于整板；与旧值的对比就是收益）
+  //   ops    = 本次 ops 分布（新增/改动节点、边、两类墓碑）
+  //   ignored= 被墓碑守卫拒绝的节点数（「删除胜出」的实际命中数）
+  //   repaired = 父链不可达被置空的节点数（客户端 diff 丢父节点时才出现，正常为 0）
+  // 只记计数与画板 id；节点内容属用户数据，不进日志。
+  if (saved.saveMode === 'merge') {
+    console.log(
+      `[canvas-save] canvas=${saved.id} mode=merge protocolVersion=${saved.protocolVersion} bytes=${
+        Buffer.byteLength(JSON.stringify(body))
+      } ops=${JSON.stringify({
+        nodes: body.nodes?.length ?? 0,
+        edges: body.edges?.length ?? 0,
+        delNodes: body.deletedNodeIds?.length ?? 0,
+        delEdges: body.deletedEdgeIds?.length ?? 0,
+      })} ignored=${saved.ignoredNodeIds?.length ?? 0} repaired=${saved.repairedNodeIds?.length ?? 0}`
+    );
+  }
+
   // 响应瘦身：前端与测试仅消费 canvas.updatedAt（乐观锁版本），不再回显全量 nodes/edges
   const { nodes: _nodes, edges: _edges, ...canvasMeta } = saved;
   res.json({ success: true, canvas: canvasMeta });
