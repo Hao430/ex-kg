@@ -234,6 +234,13 @@ function MainApp() {
   // 保存冲突提示（Spec A4 乐观锁）+ 同步状态订阅（Spec A5，仅指示当前画板）
   const [syncState, setSyncState] = useState<'idle' | 'saved' | 'pending' | 'error' | 'conflict'>('idle');
   const [boardReady, setBoardReady] = useState(false); // Spec A2：画布数据就绪前不挂载画布
+  /**
+   * 画布重挂载计数。`DeepDiveCanvas` 用 `useNodesState(initialNodes)` 取初值——**只在首次
+   * 渲染读一次**，之后改 `initialNodes` 这个 prop 是空操作；重挂载又只由 `key` 变化触发，
+   * 而 key 里的 `currentBoardId` 在「同一块画板重新播种内容」时并不变。所以必须把本计数
+   * 并入 key，光换 initialNodes 没有用（换画板时 id 本身就变了，不依赖它）。
+   */
+  const [canvasEpoch, setCanvasEpoch] = useState(0);
   const currentBoardIdRef = useRef(currentBoardId);
   useEffect(() => {
     currentBoardIdRef.current = currentBoardId;
@@ -356,6 +363,10 @@ function MainApp() {
     currentEdgesRef.current = loaded.edges;
     setNodeCount(loaded.nodes.length);
     setBoardReady(true);
+    // 必须换 key 才会重挂载：initialNodes 只在首次渲染生效（见 canvasEpoch 注释）。
+    // 少了这一句，本函数对**已挂载**的画布等于什么都没做——内容没换，只是 ref 被改写，
+    // 画布内部仍旧攥着旧节点。
+    setCanvasEpoch((n) => n + 1);
   }, []);
 
   useEffect(() => {
@@ -1126,7 +1137,7 @@ function MainApp() {
       <main className="flex-1 w-full h-full pt-14 relative bg-slate-50/50 dark:bg-[#070b14] transition-colors duration-200">
         <ReactFlowProvider>
           <DeepDiveCanvas
-            key={currentBoardId}
+            key={`${currentBoardId}:${canvasEpoch}`}
             initialNodes={initialNodes}
             initialEdges={initialEdges}
             onCanvasChange={handleCanvasChange}
