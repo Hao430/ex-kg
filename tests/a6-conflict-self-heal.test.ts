@@ -441,6 +441,27 @@ describe('A6 版本冲突收敛（服务端为准）', () => {
     );
   });
 
+  test('自愈重映射：旧 id 作为删除上行，不在服务端留孤儿', async () => {
+    seedDirtyLocal(LOCAL_BASE, [LOCAL_NODE]);
+    // 基线里记着旧 id（这块板此前同步过）。重映射之后旧 id 在本板已不存在，
+    // 差分必须把它们当成本次删除上行——合并语义是「没带 = 不动」，不显式墓碑的话
+    // 服务端那几行会原地留下成为孤儿，谁也不再引用它们。
+    boardOps.writeBase(BOARD_ID, { nodes: { [LOCAL_NODE.id]: 'stale-hash' }, edges: {} });
+    scriptSave(BOARD_ID, [
+      { status: 400, body: { code: 'NODE_CANVAS_MISMATCH' } },
+      { status: 200, body: { canvas: { updatedAt: SERVER_AHEAD } } },
+    ]);
+
+    const outcome = await syncBoardToBackend(makeBoard(LOCAL_BASE, [LOCAL_NODE]) as any);
+
+    assert.equal(outcome, 'ok');
+    const retry = savesFor(BOARD_ID)[1];
+    assert.deepEqual(retry.body.deletedNodeIds, [LOCAL_NODE.id], '旧 id 必须作为删除上行');
+    const sentIds = (retry.body.nodes || []).map((n: any) => n.id);
+    assert.equal(sentIds.length, 1);
+    assert.notEqual(sentIds[0], LOCAL_NODE.id, '同时要把新 id 带上去');
+  });
+
   test('自愈只做一轮：重映射后仍被拒 → rejected，不递归重映射', async () => {
     seedDirtyLocal(LOCAL_BASE, [LOCAL_NODE]);
     scriptSave(BOARD_ID, [
