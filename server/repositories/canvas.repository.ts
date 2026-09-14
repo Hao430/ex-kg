@@ -492,11 +492,22 @@ async function mergeWriteCanvas(
 ): Promise<MergeWriteResult> {
   // 1) 跨板搬节点拦截：id 是全局主键，把他人板内节点提交到本板必须拒绝（只报 id，不泄露内容）
   if (payloadNodes.length > 0) {
+    const submittedIds = payloadNodes.map((n) => n.id);
+    // 不带 LIMIT：早退只对「有冲突」这条错误路径有意义（无冲突时两者都返回 0 行），
+    // 而错误路径马上就要抛异常——多取几行换来的是能一次看全到底撞了哪些 id。
     const clash = await client.query(
-      'SELECT id FROM nodes WHERE id = ANY($1::varchar[]) AND canvas_id <> $2 LIMIT 1',
-      [payloadNodes.map((n) => n.id), canvasId]
+      'SELECT id, canvas_id FROM nodes WHERE id = ANY($1::varchar[]) AND canvas_id <> $2',
+      [submittedIds, canvasId]
     );
     if (clash.rows.length > 0) {
+      // 排障必需：这个异常原先只带一句文案，线上 26 次出现、零可定位信息——定位那块
+      // 卡在 400 循环里的画板只能靠 nginx 访问日志反查 URL（2026-09-14）。
+      // 关键是**撞上的节点属于哪块画板**：那才是「谁在复制谁」的答案。
+      // 只记标识符（画板 id / 节点 id），不记任何用户内容，与上面的「只报 id」口径一致。
+      console.warn(
+        `[saveCanvas] 跨板搬节点被拒 canvas=${canvasId} 提交=${submittedIds.length} 个节点 ` +
+          `冲突=${clash.rows.map((r: any) => `${r.id}@${r.canvas_id}`).join(',')}`
+      );
       throw new ValidationError('节点不属于当前画板，已拒绝保存', 'NODE_CANVAS_MISMATCH');
     }
   }
@@ -892,7 +903,15 @@ export async function saveCanvas(
     const submitted = new Set(normalized.nodes.map((n) => n.id));
     for (const [cid, c] of inMemoryStore.canvases) {
       if (cid === data.id) continue;
-      if ((c.nodes || []).some((n: any) => submitted.has(n.id))) {
+      const clash = (c.nodes || [])
+        .filter((n: any) => submitted.has(n.id))
+        .map((n: any) => n.id);
+      if (clash.length > 0) {
+        // 与 PG 分支同一条口径：只记标识符（含撞到的那块画板），不记用户内容
+        console.warn(
+          `[saveCanvas] 跨板搬节点被拒 canvas=${data.id} 提交=${normalized.nodes.length} 个节点 ` +
+            `冲突=${clash.map((id: string) => `${id}@${cid}`).join(',')}`
+        );
         throw new ValidationError('节点不属于当前画板，已拒绝保存', 'NODE_CANVAS_MISMATCH');
       }
     }

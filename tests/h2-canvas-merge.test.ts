@@ -266,9 +266,25 @@ describe('H2 画布节点级合并（内存分支）', () => {
     await legacySave(adminCookie, mine, [node('ca1', '我的')]);
     await legacySave(adminCookie, theirs, [node('cb1', '别处的')]);
 
-    const r = await mergeSave(adminCookie, mine, { nodes: [node('cb1', '偷来的')] });
+    const warnings: string[] = [];
+    const origWarn = console.warn;
+    console.warn = (...args: any[]) => void warnings.push(args.join(' '));
+    let r: any;
+    try {
+      r = await mergeSave(adminCookie, mine, { nodes: [node('cb1', '偷来的')] });
+    } finally {
+      console.warn = origWarn;
+    }
     assert.equal(r.status, 400);
     assert.equal(r.body?.code, 'NODE_CANVAS_MISMATCH');
+
+    // 这个异常原先只带一句文案，线上 26 次出现、零可定位信息——定位那块卡在 400 循环里的
+    // 画板只能靠 nginx 访问日志反查 URL。告警必须点名「哪个节点」与「它属于哪块画板」，
+    // 那才是「谁在复制谁」的答案（只记标识符，不记用户内容）。
+    const hit = warnings.find((w) => w.includes('跨板搬节点被拒'));
+    assert.ok(hit, '必须留下可定位的告警');
+    assert.ok(hit!.includes(mine), '告警要点名被拒的画板');
+    assert.ok(hit!.includes(`cb1@${theirs}`), '告警要点名冲突节点及其所属画板');
 
     assert.deepEqual(nodeIds(await getCanvas(adminCookie, mine)), ['ca1'], '本板不得被写入');
     assert.deepEqual(
