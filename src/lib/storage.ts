@@ -180,6 +180,13 @@ function rememberConflictCopy(boardId: string, copyId: string | null): void {
   }
 }
 
+/**
+ * 派生哈希的分段分隔符。用可打印字符而不是 NUL：NUL 会让整个文件被 `file` / `grep` /
+ * diff 当成二进制——`grep` 会**静默跳过**它（2026-09-14 踩过，排查时白找半天）。
+ * id 只含 uuidv7 的十六进制与短横，竖线不会与之混淆。
+ */
+const HASH_SEP = '|';
+
 /** 32bit FNV-1a：稳定、同步、零依赖，够这个用途（单块副本的节点量级为百） */
 function fnv1a32(input: string): number {
   let h = 0x811c9dc5;
@@ -204,7 +211,7 @@ function derivedCopyNodeId(copyId: string, oldId: string): string {
   const tsHex = copyId.replace(/-/g, '').slice(0, 12); // 副本 id 的 48bit 时间戳
   const bytes = new Uint8Array(10);
   for (let seg = 0; seg < 5; seg++) {
-    const h = fnv1a32(`${copyId} ${oldId} ${seg}`);
+    const h = fnv1a32(`${copyId}${HASH_SEP}${oldId}${HASH_SEP}${seg}`);
     bytes[seg * 2] = (h >>> 8) & 0xff;
     bytes[seg * 2 + 1] = h & 0xff;
   }
