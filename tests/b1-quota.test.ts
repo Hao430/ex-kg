@@ -40,12 +40,21 @@ async function signIn(email: string, password: string): Promise<string> {
   return (res.headers.get('set-cookie') || '').split(';')[0];
 }
 
+/**
+ * 造 count 个**已消耗过推理**的 chat 节点。
+ *
+ * 必须带 `answer`：节点归一化规则是 `d.status || (answer ? 'idle' : 'suggested')`，没有 answer
+ * 也没有显式 status 的节点会被判为 suggested 灵感占位——而占位按 2026-09-14 起的口径**不计入**
+ * 节点额度（尚未提问、未消耗推理）。旧口径「chat 全量计数」下这两个 fixture 恰好等价，
+ * 故此前用空占位冒充已推理节点不会被发现；改口径后它会变成「造了 10 个占位 → 计数 0 →
+ * 配额闸门放行 → 请求落到后面的校验层返回 400」，用例随即失去判别力。
+ */
 function makeNodes(count: number, prefix: string): any[] {
   return Array.from({ length: count }, (_, i) => ({
     id: `${prefix}${i}`,
     type: 'chat',
     position: { x: i * 10, y: 0 },
-    data: { title: `节点${i}`, depth: 0 },
+    data: { title: `节点${i}`, depth: 0, answer: `第 ${i} 次推理的答案` },
   }));
 }
 
@@ -124,6 +133,37 @@ describe('B1+B2 配额服务端化', () => {
     assert.equal(chat.status, 403);
     const body = await chat.json() as any;
     assert.equal(body.code, 'NODE_LIMIT_REACHED');
+  });
+
+  /**
+   * 2026-09-14 口径翻转的用户侧收益（本条与上条互为对照）：
+   * 上条「10 个已推理节点 → 403」；本条「9 个已推理 + 3 个灵感占位 → 不被额度拦」。
+   * 旧口径下 9+3=12 个 chat 节点即触发 NODE_LIMIT_REACHED，而每条回答会附带 3 个占位，
+   * 于是「体验版 10 个节点」实际只够问 2~3 次——占位吃掉额度的部分现已归还给用户。
+   */
+  test('灵感占位不计入额度：9 个已推理 + 3 个占位不触发 NODE_LIMIT_REACHED', async () => {
+    let target = 'b1-board-1';
+    const check = await fetch(`${base}/api/canvases/b1-board-1`, { headers: { cookie: userCookie } });
+    if (check.status !== 200) target = 'default-board';
+
+    const answered = makeNodes(9, 'qa-');
+    const placeholders = Array.from({ length: 3 }, (_, i) => ({
+      id: `qs-${i}`,
+      type: 'chat',
+      position: { x: i * 10, y: 400 },
+      data: { title: `灵感${i}`, depth: 1, status: 'suggested', question: `可以继续问什么 ${i}？` },
+    }));
+    const save = await saveBoard(userCookie, target, [...answered, ...placeholders]);
+    assert.ok([200, 403].includes(save.status));
+
+    const chat = await fetch(`${base}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', cookie: userCookie },
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'ping' }], canvasId: target }),
+    });
+    // 无 GEMINI_API_KEY 时可能是 4xx/5xx 推演错误——要断言的是**没被额度闸门拦下**
+    const code = chat.status === 403 ? ((await chat.json()) as any).code : null;
+    assert.notEqual(code, 'NODE_LIMIT_REACHED', '9 个已推理节点未满 10，占位不得把额度吃满');
   });
 
   test('过期 VIP：推理被拒 / 新建画板被拒 / 读取与保存正常', async () => {

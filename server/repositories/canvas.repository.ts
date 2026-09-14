@@ -1220,15 +1220,28 @@ export async function getCanvasOwnerInfo(
   return { exists: Boolean(canvas && !canvas.deleted_at), ownerId: canvas?.user_id ?? null };
 }
 
-/** 画布内 AI 推理节点（chat 类型）数量 */
+/**
+ * 画布内**实际消耗过推理**的节点数（chat 类型，排除 note，**排除 suggested 灵感占位**）。
+ *
+ * 口径（2026-09-14 调整，原为「chat 全量含 suggested」）：灵感占位是 AI 每条回答附带的
+ * 「下一步可以问什么」候选，尚未提问、未消耗推理，不应占用节点额度。原口径下每条回答会
+ * 产生 1 个回答节点 + 3 个占位 = 4 个节点，所谓「体验版 10 个节点」实际只够问 2~3 次——
+ * 与前端展示的承诺不符。现已排除 suggested，10 个额度对应 10 次真实推理。
+ *
+ * ⚠️ 已知边界（已接受，见技术债 #0090）：`status` 由客户端在 saveCanvas 里提供，故「算不算
+ * 一个节点」可被构造的客户端影响（把节点一律存成 suggested 即可绕过节点墙）。兜底是
+ * chat 路径独立的每日 token 配额（服务端判定）。详见 `docs/安全发布checklist.md §4`。
+ */
 export async function countCanvasNodes(canvasId: string): Promise<number> {
   const db = getDb();
   if (db) {
     try {
-      const res = await db.query('SELECT COUNT(*)::int as count FROM nodes WHERE canvas_id = $1 AND type = $2 AND deleted_at IS NULL', [
-        canvasId,
-        'chat',
-      ]);
+      // status 列 NOT NULL DEFAULT 'idle'（schema.ts），所有写入路径都显式给值，无需 COALESCE
+      const res = await db.query(
+        `SELECT COUNT(*)::int as count FROM nodes
+         WHERE canvas_id = $1 AND type = $2 AND status <> 'suggested' AND deleted_at IS NULL`,
+        [canvasId, 'chat']
+      );
       return res.rows[0].count;
     } catch (e) {
       handlePgError(e);
@@ -1236,7 +1249,14 @@ export async function countCanvasNodes(canvasId: string): Promise<number> {
     }
   }
   const canvas = inMemoryStore.canvases.get(canvasId);
-  return (canvas?.nodes || []).filter((n: any) => (n.type || 'chat') === 'chat' && !n?.deleted_at).length;
+  return (canvas?.nodes || []).filter((n: any) => {
+    if ((n.type || 'chat') !== 'chat' || n?.deleted_at) return false;
+    // ⚠️ status 在内存节点里位于 `data.status`（`normalizeMemoryNode` 保留客户端形状，
+    // 见本文件上方），**不是**顶层字段——读错位置会把全部节点都当成 suggested 排除掉。
+    // 缺省回退与归一化处同一条规则：`d.status || (answer ? 'idle' : 'suggested')`
+    const status = n.data?.status || (n.data?.answer ? 'idle' : 'suggested');
+    return status !== 'suggested';
+  }).length;
 }
 
 /**

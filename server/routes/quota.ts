@@ -23,7 +23,8 @@ export const quotaRouter = Router();
  *     node:  { used, limit: number | null, remaining: number | null } | null,
  *     vipOnlyModelCount: number,                      // VIP 专享模型数（Spec K7/D3，未配置为 0）
  *   }
- * node 仅在携带 canvasId 时返回；计数为已保存画布的 chat 节点全量（含 suggested 占位）。
+ * node 仅在携带 canvasId 时返回；计数为已保存画布中**实际消耗过推理**的 chat 节点
+ * （排除 note，排除 suggested 灵感占位——占位尚未提问不占额度，2026-09-14 起）。
  * 归属校验：canvasId 存在但不属于当前用户 → 404（严格属主制，不泄露存在性）。
  */
 const QuotaQuerySchema = z.object({

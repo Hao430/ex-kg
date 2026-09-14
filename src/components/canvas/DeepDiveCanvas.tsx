@@ -133,7 +133,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
   nodesRef.current = nodes;
   edgesRef.current = edges;
 
-  // Spec J2：服务端配额单一事实源（GET /api/quota，口径含 suggested 与后端拦截完全一致）。
+  // Spec J2：服务端配额单一事实源（GET /api/quota，口径「排除 suggested 占位」与后端拦截完全一致）。
   // null = 余量未知（VIP/Admin 不受限、查询失败或未同步）——此时前端不做本地拦截，由服务端 chat 403 兜底。
   const [serverNodeQuota, setServerNodeQuota] = useState<{ limit: number; remaining: number } | null>(null);
   const refreshServerQuota = useCallback(async () => {
@@ -174,9 +174,13 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
   const checkAiQuota = useCallback((): boolean => {
     if (isVip) return true;
     if (serverNodeQuota !== null) {
-      // 乐观余量：用本地实时 chat 节点数（含 suggested，与后端同口径）对齐 limit，
-      // 消除「编辑后到防抖保存完成前」的滞后窗口——删除节点余量立即可见，新增也即时计入
-      const localUsed = nodesRef.current.filter((n) => (n.type || 'chat') === 'chat').length;
+      // 乐观余量：用本地实时 chat 节点数（**排除 suggested 灵感占位**，与后端同口径）对齐 limit，
+      // 消除「编辑后到防抖保存完成前」的滞后窗口——删除节点余量立即可见，新增也即时计入。
+      // 占位不计入：与 /api/quota 的 used 口径必须逐字一致，否则又回到 D2 那种「前端说还能问、
+      // 后端 403」的错位（那正是本口径 2026-09-14 由「含 suggested」翻转的原因之一）。
+      const localUsed = nodesRef.current.filter(
+        (n) => (n.type || 'chat') === 'chat' && (n.data as any)?.status !== 'suggested'
+      ).length;
       const effectiveRemaining = Math.max(0, serverNodeQuota.limit - localUsed);
       if (effectiveRemaining <= 0) {
         // K4 事件 10：配额墙触达（免费版转化漏斗核心指标；remaining 为计数非 PII）
@@ -1339,7 +1343,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
 
   // 探索灵感节点视图级隐藏：对 suggested 节点及其连线注入 ReactFlow hidden 字段，
   // 仅影响渲染（含 MiniMap），nodes/edges state 保持数据真源不被污染——
-  // 保存、配额计数（含 suggested，与后端同口径）与再次开启后的位置均不受影响
+  // 保存、配额计数（排除 suggested，与后端同口径）与再次开启后的位置均不受影响
   const hiddenSuggestedIds = useMemo(() => {
     if (showSuggestions) return null;
     return new Set(

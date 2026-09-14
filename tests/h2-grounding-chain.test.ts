@@ -226,11 +226,14 @@ describe('H2 来源索引链路', () => {
   });
 
   test('#2 配额生效：画布满 10 个 chat 节点后推理 → 403 NODE_LIMIT_REACHED', async () => {
+    // 必须带 answer：无 answer 且无显式 status 的节点会被判为 suggested 灵感占位，
+    // 而占位自 2026-09-14 起**不计入**节点额度（见 countCanvasNodes）。用空占位冒充
+    // 「已推理的 10 个节点」会让配额闸门放行，本用例随即失去判别力。
     const nodes = Array.from({ length: 10 }, (_, i) => ({
       id: `h2-n${i}`,
       type: 'chat',
       position: { x: i * 10, y: 0 },
-      data: { title: `节点${i}`, depth: 0 },
+      data: { title: `节点${i}`, depth: 0, answer: `第 ${i} 次推理的答案` },
     }));
     const save = await saveCanvas(userCookie, 'h2-limit-board', nodes);
     assert.equal(save.status, 200);

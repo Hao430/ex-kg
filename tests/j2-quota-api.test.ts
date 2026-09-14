@@ -2,7 +2,8 @@
  * J2 — 配额余量 API：服务端单一事实源（跟踪清单 D2 / 里程碑 J 组）
  *
  * 决策：新增 GET /api/quota 返回 {plan, board:{used,limit}, node:{used,limit,remaining}}；
- * node 计数与 chatQuotaMiddleware 完全同口径（已保存画布的 chat 节点，含 suggested 占位）。
+ * node 计数与 chatQuotaMiddleware 完全同口径（已保存画布**实际消耗过推理**的 chat 节点：
+ * 排除 note，排除 suggested 灵感占位——口径 2026-09-14 由「含 suggested」翻转，见计数处注释）。
  * 前端删除本地预检，只做展示；后端保持唯一裁判。
  * 归属校验：非属主 / 不存在的 canvasId → 404（严格属主制，不泄露存在性）。
  */
@@ -96,7 +97,7 @@ describe('J2 配额余量 API（D2）', () => {
     bobCookie = await signIn('j2-bob@test.local', 'Bob123456!');
 
     // alice 画板：7 个 chat 节点，其中 2 个为 suggested 占位 + 1 个 note 节点
-    // 服务端口径应计 7（chat 全量含 suggested），note 不计
+    // 服务端口径应计 5（chat 全量 7 减去 2 个 suggested 占位），note 不计
     const nodes = [
       chatNode('j2-n1'),
       chatNode('j2-n2'),
@@ -129,12 +130,13 @@ describe('J2 配额余量 API（D2）', () => {
     assert.equal(body.vipOnlyModelCount, 0);
   });
 
-  test('体验版带 canvasId：node 计数与 chatQuotaMiddleware 同口径（含 suggested，排除 note）', async () => {
+  test('体验版带 canvasId：node 计数与 chatQuotaMiddleware 同口径（排除 suggested 占位与 note）', async () => {
     const res = await getQuota(aliceCookie, 'j2-alice-board');
     assert.equal(res.status, 200);
     const body = (await res.json()) as any;
     assert.equal(body.plan, 'trial');
-    assert.deepEqual(body.node, { used: 7, limit: 10, remaining: 3 });
+    // 7 个 chat 节点中 2 个是 suggested 占位（尚未提问、不占额度）→ used 5
+    assert.deepEqual(body.node, { used: 5, limit: 10, remaining: 5 });
   });
 
   test('新注册体验版：board.used=0、未知画布 node 计 0', async () => {
