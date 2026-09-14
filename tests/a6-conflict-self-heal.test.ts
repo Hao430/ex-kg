@@ -160,6 +160,27 @@ function seedDirtyLocal(base: string, nodes: any[] = []): void {
 }
 
 const conflictCopies = () => loadBoardList().filter((b) => b.name.endsWith(CONFLICT_SUFFIX));
+
+/**
+ * 副本断言：**内容保真、id 全新**。
+ *
+ * 曾经这里断言的是 `deepEqual(副本.nodes, [LOCAL_NODE])`——即「副本节点 id 与源相同」，
+ * 等于把这个 bug 写成了预期。服务端 `nodes.id` 是全局主键，跨板搬节点会被
+ * `mergeWriteCanvas` 拒成 400 `NODE_CANVAS_MISMATCH`，副本于是**永远传不上去**，
+ * 只活在本机 localStorage（2026-09-14 线上事故）。断言必须钉住「id 已重映射」。
+ */
+function assertRemappedCopy(actual: any[] | undefined, source: any[], label = '副本'): void {
+  assert.ok(actual, `${label}必须落盘`);
+  assert.equal(actual!.length, source.length, `${label}节点数量保真`);
+  assert.equal(new Set(actual!.map((n) => n.id)).size, actual!.length, `${label}内节点 id 唯一`);
+  for (const [i, src] of source.entries()) {
+    const got = actual![i];
+    assert.notEqual(got.id, src.id, `${label}第 ${i} 个节点 id 必须与源不同，否则跨板拦截会拒收`);
+    assert.deepEqual(got.data, src.data, `${label}第 ${i} 个节点内容保真`);
+    assert.deepEqual(got.position, src.position, `${label}第 ${i} 个节点位置保真`);
+    assert.equal(got.type, src.type, `${label}第 ${i} 个节点类型保真`);
+  }
+}
 const savesFor = (id: string) =>
   fetchCalls.filter((c) => c.method === 'POST' && c.url.endsWith(`/${id}/save`));
 
@@ -202,7 +223,7 @@ describe('A6 版本冲突收敛（服务端为准）', () => {
     const copies = conflictCopies();
     assert.equal(copies.length, 1, '本地未同步版必须另存副本，不得随采用服务端版一起消失');
     const copyId = copies[0].id;
-    assert.deepEqual(loadBoard(copyId)?.nodes, [LOCAL_NODE]);
+    assertRemappedCopy(loadBoard(copyId)?.nodes, [LOCAL_NODE]);
 
     // 原画板：内容 = 服务端版，基线对齐
     const original = loadBoard(BOARD_ID);
@@ -354,7 +375,7 @@ describe('A6 版本冲突收敛（服务端为准）', () => {
     // 加载/切换画板时会静默把本地改动挪进副本——必须把 id 交给上层弹提示，
     // 否则用户只会看到列表里莫名多出一块画板
     assert.ok(result.conflictCopyId, '必须回传副本 id 供上层告知用户');
-    assert.deepEqual(loadBoard(result.conflictCopyId!)?.nodes, [LOCAL_NODE]);
+    assertRemappedCopy(loadBoard(result.conflictCopyId!)?.nodes, [LOCAL_NODE]);
     assert.deepEqual(loadBoard(BOARD_ID)?.nodes, [SERVER_NODE]);
   });
 
