@@ -42,11 +42,26 @@ describe('F5 scrypt 参数提升', () => {
     assert.equal(needsRehash(legacy), true);
   });
 
-  test('hashPassword 耗时 ≥100ms（64MB scrypt 下界）', async () => {
-    const start = Date.now();
-    await hashPassword('TimingCheck1');
-    const elapsed = Date.now() - start;
-    assert.ok(elapsed >= 100, `scrypt N=2^16 应耗时 ≥100ms，实际 ${elapsed}ms`);
+  /**
+   * 2026-09-14 重写：原断言是墙钟下界 `elapsed >= 100`，度量的是**机器速度而不是被测行为**——
+   * CI 快 runner 上实测 87ms 即变红（run 34815112227），而它卡在默认套件里，
+   * 等于随机拦住所有人的合并，与被测代码的正确性无关。
+   *
+   * 本用例真正要守的信号是「工作因子确实提升到 N=2^16 / 64MB」，而这个事实**由哈希头如实编码**
+   * （且 verify 用的正是头里的参数）。把 N 调小会让头一起变、上一行的精确匹配同时失败——
+   * 不需要靠计时。故改为确定性断言，去掉全部墙钟依赖。
+   */
+  test('工作因子由哈希头如实编码（N=2^16 / r=8 / p=1，推导内存 ≥64MB）', async () => {
+    const hash = await hashPassword('TimingCheck1');
+    const [N, r, p] = hash.split('$').slice(1, 4).map(Number);
+
+    assert.equal(N, 2 ** 16, `N 应为 2^16，实际 ${N}`);
+    assert.equal(r, 8, `r 应为 8，实际 ${r}`);
+    assert.equal(p, 1, `p 应为 1，实际 ${p}`);
+
+    // scrypt 推导内存 ≈ 128 * N * r 字节；N=2^16/r=8 即约 64MB（maxmem 128MB 留余量）
+    const derivedMb = (128 * N * r) / 1024 / 1024;
+    assert.ok(derivedMb >= 64, `scrypt 推导内存应 ≥64MB，实际 ${derivedMb}MB`);
   });
 });
 
