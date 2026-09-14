@@ -55,6 +55,7 @@
     "@types/node": "^22.14.0",
     "@types/nodemailer": "^8.0.1",
     "autoprefixer": "^10.4.21",
+    "dependency-cruiser": "^18.3.0",
     "esbuild": "^0.25.0",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",

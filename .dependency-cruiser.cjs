@@ -26,35 +26,17 @@
  *   - docs/开发规范.md §3.2
  */
 module.exports = {
-  // 不扫描的目录（与 .gitignore 对齐）
-  forbidden: [],
-
-  // 不参与依赖图的资源（构建产物 / 锁文件 / 第三方）
-  doNotFollow: {
-    path: '(node_modules|/dist|/coverage|/build)',
-  },
-
-  // 文件系统扫描选项
-  webpackConfig: {
-    fileName: null, // 不使用 webpack 配置
-  },
-
-  // TypeScript / ESM 项目需要指定入口解析
-  tsConfig: {
-    fileName: 'tsconfig.json',
-  },
-
-  // 增强：开启 TypeScript 解析 + 解析 package.json exports
-  enhancedResolveOptions: {
-    exportsFields: ['exports'],
-    conditionNames: ['import', 'require', 'node', 'default'],
-  },
-
-  // 包含与排除
-  includeOnly: '^src/|^server/',
-
-  // 重点：依赖规则（rule 顺序敏感，先匹配先生效）
-  rules: {
+  /**
+   * 依赖规则（rule 顺序敏感，先匹配先生效）。
+   *
+   * ⚠️ 键名是 `forbidden`：dependency-cruiser **没有** `rules` 这个顶层键。
+   * 本文件此前写作 `rules: { … }`——键名错，且该放数组却放了对象——于是**连语法都解析不过**，
+   * `npm run arch:check` 从未真正跑起来过。又因为 CI 只跑 arch-tests、不跑 arch:check，
+   * 这个坏掉的配置一直没人发现（2026-09-14 修复）。
+   *
+   * 另：v16 起其余选项一律收进 `options`，顶层不再接受——原先顶层与 `options` 里各写了一份。
+   */
+  forbidden: [
     // ---------- 0. 全局禁止 ----------
     {
       name: 'no-circular',
@@ -227,7 +209,7 @@ module.exports = {
       from: { path: '^(src|server)/' },
       to: { path: '^tests/' },
     },
-  },
+  ],
 
   // 输出选项
   options: {
@@ -237,14 +219,14 @@ module.exports = {
     tsConfig: {
       fileName: 'tsconfig.json',
     },
+    // 包含与排除（原先误写在顶层；v16 起必须放这里，否则不生效）
+    includeOnly: '^src/|^server/',
     enhancedResolveOptions: {
       exportsFields: ['exports'],
       conditionNames: ['import', 'require', 'node', 'default'],
     },
-    reporterOptions: {
-      text: {
-        showErrorSummary: true,
-      },
-    },
+    // 注：原先这里配了 reporterOptions.text.showErrorSummary，v18 已不接受该属性
+    //（schema 校验直接报 must NOT have additional properties），且它只影响错误摘要的展示，
+    // 与判据无关，故移除。
   },
 };
