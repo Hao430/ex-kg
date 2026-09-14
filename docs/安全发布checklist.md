@@ -45,7 +45,9 @@
 ## 4. 配额与计费语义（服务端唯一裁判）
 
 - [ ] 前端不承担配额判定——展示数据一律来自 `/api/quota`（Spec J2），本地预检已删除
-- [ ] 后端计数口径测试锁定（含 suggested 占位、排除 note，与 chatQuotaMiddleware 同源）
+- [ ] 后端计数口径测试锁定（**排除 suggested 灵感占位**、排除 note，与 chatQuotaMiddleware 同源；2026-09-14 由「含 suggested」翻转）
+- [ ] **配额口径改一处必须改全部镜像点**：服务端 `countCanvasNodes`（PG + 内存两分支语义必须等价）与前端 `DeepDiveCanvas.localUsed`。只改一边 = 重演 D2「前端说还能问、后端 403」的错位
+- [ ] ⚠️ **已知边界（2026-09-14 接受，记入技术债 #0090）**：`nodes.status` 由客户端在 `saveCanvas` 里提供，而节点额度按 `status <> 'suggested'` 计——即「算不算一个节点」可被构造的客户端影响（把节点一律存成 suggested 即可绕过节点墙）。**本项即上方「直连 API 绕过前端无法获得任何配额放宽」的一个显式例外**，需在产品层面接受；兜底是 chat 路径独立的每日 token 配额（服务端判定）。
 - [ ] 直连 API 绕过前端无法获得任何配额放宽（每条权益一条直连 403 测试）
 - [ ] **开通 VIP 的来源清单是封闭的**：只有订单结算与 admin 赠送能改 `role`/`vip_expires_at`。新增任何「直接开通」端点前先问「它凭什么证明收到钱了」
 - [ ] **开 `PAYMENT_ENABLED=true` 之前**：确认 `POST /api/auth/subscribe` 返回 404、且生效渠道下 `mock-pay` 返回 404（这两个都是开关一翻就敞口的无支付开通通道）
