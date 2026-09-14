@@ -80,8 +80,11 @@ export function getLayoutedElements(
     const dagreGraph = new dagre.graphlib.Graph();
     dagreGraph.setGraph({
       rankdir: direction,
-      nodesep: 50,  // Vertical gap between sibling branches
-      ranksep: 140, // Horizontal gap between depth levels
+      // 间距按「边缘到边缘」计（dagre 加在相邻两层的包围盒之间），故中心距 =
+      // ranksep + (父宽 + 子宽)/2，随节点宽度变；同层里较窄的节点视觉空隙会更大。
+      // ⚠️ 这两行的横/纵只在 rankdir='LR' 下成立（当前三处调用与默认值都是 LR）。
+      nodesep: 50,  // 同层兄弟之间的纵向缝（边缘到边缘）
+      ranksep: 250, // 相邻深度层之间的横向缝（边缘到边缘）
       marginx: 80,
       marginy: 80,
     });
