@@ -258,6 +258,27 @@ describe('支付宝支付链路（ADR-0014）', () => {
     }
   });
 
+  /**
+   * 资金安全回归（2026-09-14）：mock-pay 曾只挡 NODE_ENV=production，与生效渠道无关。
+   * 预发/灰度/忘了设 NODE_ENV=production 的线上，支付宝已是生效渠道，用户仍可对自己的
+   * pending 单 POST 一次就自助开通 VIP（实测 200 + VIP 生效）。判据改为「渠道就是 mock」。
+   */
+  test('支付宝渠道生效时 mock-pay 不可达 → 404 且订单保持 pending（防自助开通）', async () => {
+    resetSubLimiter();
+    const { orderNo } = await startOrder('monthly');
+
+    const pay = await fetch(`${base}/api/subscriptions/orders/${orderNo}/mock-pay`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', cookie: userCookie },
+    });
+    assert.equal(pay.status, 404, '支付宝渠道下 mock-pay 必须不可达');
+
+    const st = await (await fetch(`${base}/api/subscriptions/orders/${orderNo}`, {
+      headers: { cookie: userCookie },
+    })).json() as any;
+    assert.equal(st.order.status, 'pending', '自助开通不得发生，订单必须仍是 pending');
+  });
+
   test('非成功态 notify（TRADE_CLOSED）→ success 但不激活（查单兜底负责终态）', async () => {
     resetSubLimiter();
     const { orderNo } = await startOrder('monthly');

@@ -35,6 +35,18 @@ export function getPaymentProvider(): PaymentProvider {
 }
 
 /**
+ * 模拟支付是否可用：**判据是「当前生效渠道就是 mock」，不是「不是生产环境」**。
+ *
+ * 只看 NODE_ENV 会漏掉一整类部署：预发 / 灰度 / 忘了设 NODE_ENV=production 的线上，
+ * 支付宝已是生效渠道，而 `mock-pay` 仍可达——用户对自己的 pending 单 POST 一次就自助
+ * 开通 VIP（实测：渠道为 alipay 时 mock-pay 仍返回 200 且 VIP 生效）。
+ * 反过来，渠道是 mock 只可能发生在 ALIPAY 三要素没配齐的开发/测试环境，此时放行是安全的。
+ */
+export function isMockPaymentChannel(): boolean {
+  return getPaymentProvider().name === 'mock';
+}
+
+/**
  * Activate a paid order: extend VIP membership by order.durationDays
  * (base time = now, or existing expiry for renewal stacking; admin is never downgraded)
  */
@@ -97,7 +109,9 @@ export async function startSubscription(userId: string, plan: 'weekly' | 'monthl
 }
 
 /**
- * Simulate a successful payment callback for an order (mock/non-production only)
+ * Simulate a successful payment callback for an order (mock channel only).
+ * 渠道判据在服务层而不是只在路由：任何新增调用方都自动被挡住，不会漏。
+ * 对外一律 404（与「生产环境该端点不可达」同口径），不向调用方暴露渠道配置细节。
  */
 export async function mockPayOrder(userId: string, orderNo: string): Promise<{
   order: OrderRecord;
@@ -105,6 +119,10 @@ export async function mockPayOrder(userId: string, orderNo: string): Promise<{
   vip_expires_at: string;
   user: UserRecord;
 }> {
+  if (!isMockPaymentChannel()) {
+    throw new NotFoundError('Not Found');
+  }
+
   const order = await findOrderByNo(orderNo);
   if (!order) {
     throw new NotFoundError('订单不存在');

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { authMiddleware, subscriptionRateLimiter } from '../middleware/auth.js';
 import { asyncHandler } from '../lib/async-handler.js';
 import { validate } from '../lib/validate.js';
-import { startSubscription, mockPayOrder, getOrderStatus, handleAlipayNotify, isPaymentEnabled } from '../services/billing.service.js';
+import { startSubscription, mockPayOrder, getOrderStatus, handleAlipayNotify, isPaymentEnabled, isMockPaymentChannel } from '../services/billing.service.js';
 import { runWithSystem } from '../core/db-context.js';
 
 export const subscriptionsRouter = Router();
@@ -34,14 +34,19 @@ subscriptionsRouter.post('/orders', subscriptionRateLimiter, authMiddleware, asy
 
 /**
  * POST /api/subscriptions/orders/:orderNo/mock-pay
- * Simulate a successful payment callback (non-production only)
+ * Simulate a successful payment callback —— **仅 mock 渠道可达**
+ *
+ * 判据是「当前生效渠道就是 mock」（`isMockPaymentChannel()`），不是「不是生产环境」：
+ * 后者会漏掉预发/灰度/忘了设 NODE_ENV=production 的线上——那里支付宝已是生效渠道，
+ * 用户仍可对自己的 pending 单调本端点自助开通 VIP（实测 200 + VIP 生效）。
+ * 两道都留：路由这层给生产一个不依赖渠道配置的硬 404，服务层那层保证任何调用方都被挡住。
  */
 subscriptionsRouter.post('/orders/:orderNo/mock-pay', subscriptionRateLimiter, authMiddleware, asyncHandler(async (req: Request, res: Response) => {
   if (!isPaymentEnabled()) {
     res.status(503).json({ error: '在线支付暂未开放', code: 'PAYMENT_DISABLED' });
     return;
   }
-  if (process.env.NODE_ENV === 'production') {
+  if (process.env.NODE_ENV === 'production' || !isMockPaymentChannel()) {
     res.status(404).json({ error: 'Not Found' });
     return;
   }
