@@ -65,11 +65,18 @@ describe('F2+F3 审计日志与 zod 覆盖', () => {
     assert.ok(logs.length > 0, '应有 sign_in 记录');
   });
 
+  // 走真实链路（下单 → 结算）。原用 POST /api/auth/subscribe「一步开通」——
+  // 那是无支付即开通的白拿 VIP 端点，2026-09-14 已整条移除（见 e1-payment.test.ts 回归用例）。
   test('F2：订阅有 subscribe 审计记录', async () => {
-    await fetch(`${base}/api/auth/subscribe`, {
+    const order = await fetch(`${base}/api/subscriptions/orders`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', cookie: userCookie },
       body: JSON.stringify({ plan: 'weekly' }),
+    });
+    const orderBody = await order.json() as any;
+    await fetch(`${base}/api/subscriptions/orders/${orderBody.orderNo}/mock-pay`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', cookie: userCookie },
     });
     const logs = await auditActions('subscribe');
     assert.ok(logs.length > 0, '应有 subscribe 记录');

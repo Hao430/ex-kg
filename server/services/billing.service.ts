@@ -72,30 +72,6 @@ export async function activateOrder(order: OrderRecord): Promise<{ role: 'vip'; 
 }
 
 /**
- * Subscribe user to a time-based membership plan (weekly, monthly)
- * — one-step activation, kept for backward compatibility.
- */
-export async function subscribeUserPlan(data: {
-  userId: string;
-  plan: 'weekly' | 'monthly';
-}): Promise<{ role: 'vip'; vip_expires_at: string; user: UserRecord }> {
-  const planInfo = planInfoMap[data.plan] || planInfoMap.monthly;
-
-  // Create order log (already paid in one-step flow)
-  const created = await createOrder({
-    userId: data.userId,
-    planId: data.plan,
-    planName: planInfo.name,
-    amountCents: planInfo.amountCents,
-    durationDays: planInfo.days,
-    paymentMethod: 'online_pay',
-    status: 'paid',
-  });
-
-  return activateOrder(created);
-}
-
-/**
  * Start a subscription: create a pending order and get a (mock) payment URL
  */
 export async function startSubscription(userId: string, plan: 'weekly' | 'monthly'): Promise<{

@@ -142,12 +142,28 @@ describe('E1+E2 支付抽象与 Mock 生命周期', () => {
     assert.equal(cross.status, 403);
   });
 
-  test('一步开通 /api/auth/subscribe 回归 200', async () => {
+  /**
+   * 资金安全回归（2026-09-14）：旧「一步开通」端点 POST /api/auth/subscribe 只挡
+   * PAYMENT_ENABLED 就建单并激活，等于**任何登录用户白拿 30 天 VIP**（可无限叠加），
+   * 且恰好在「上线支付」把开关改成 true 那一步打开。端点已整条移除，此处锁死它不复活：
+   * 开通 VIP 的唯一真实来源是订单结算（支付宝 notify/查单）与 admin 后台赠送。
+   */
+  test('旧一步开通端点 /api/auth/subscribe 已移除 → 404，且不产生 VIP', async () => {
+    resetSubLimiter();
+    const before = await (await fetch(`${base}/api/auth/me`, { headers: { cookie: userCookie } })).json() as any;
+
     const res = await fetch(`${base}/api/auth/subscribe`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', cookie: userCookie },
       body: JSON.stringify({ plan: 'monthly' }),
     });
-    assert.equal(res.status, 200);
+    assert.equal(res.status, 404, '白拿 VIP 的旧端点不得复活');
+
+    const after = await (await fetch(`${base}/api/auth/me`, { headers: { cookie: userCookie } })).json() as any;
+    assert.equal(
+      after.user.vip_expires_at,
+      before.user.vip_expires_at,
+      '打到旧端点不得改变会员有效期'
+    );
   });
 });

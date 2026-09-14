@@ -15,6 +15,8 @@
 
 **保留**：`orders` 表与订单链路（E 组订阅用）、`subscribeUserPlan`、RechargeModal（订阅 UI，去点数文案）、`isVip` 逻辑。
 
+> **后续修订（2026-09-14）**：`subscribeUserPlan` 与其端点 `POST /api/auth/subscribe` 已**整条移除**——该端点只挡 `PAYMENT_ENABLED` 就建单并激活，等于无支付白拿 VIP。下文第 5 条的验收口径随之改为「订阅链路走 `/api/subscriptions/*` 下单+结算不回归」，见 `tests/c-cleanup.test.ts`。
+
 ## 2. 测试先行（`tests/c-cleanup.test.ts`）
 
 1. sign-up 响应与 /me 均无 `credits_balance` 字段

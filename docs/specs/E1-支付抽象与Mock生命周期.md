@@ -22,6 +22,8 @@ export interface PaymentProvider {
 - `mockPayOrder(userId, orderNo)`（仅 mock + 非生产）：校验订单存在/属主/pending → `handleCallback` → `updateOrderStatus(paid)` → VIP 激活（复用订阅的续期/角色逻辑，抽 `activateOrder(order)`）
 - `getOrderStatus(userId, orderNo)` → `queryPayment` + 订单记录
 - 既有 `subscribeUserPlan`（一步开通）保留，内部共用 activate 逻辑
+  > **后续修订（2026-09-14）**：`subscribeUserPlan` 与其端点已移除（无支付即开通的自助 VIP 通道），
+  > 开通只剩订单结算与 admin 赠送两条来源；测试第 6 条改为「旧端点 404」回归。
 - billing.repository 新增 `findOrderByNo(orderNo)`、`updateOrderStatus(orderNo, status)`
 
 **路由 `server/routes/subscriptions.ts`**（挂 `/api/subscriptions`，authMiddleware）：
@@ -38,7 +40,7 @@ export interface PaymentProvider {
 3. 重复 mock-pay 同单 → 409 ORDER_ALREADY_PAID
 4. 未知 orderNo mock-pay / 查询 → 404
 5. 他人订单 mock-pay → 403
-6. 一步开通 /api/auth/subscribe 回归 200
+6. ~~一步开通 /api/auth/subscribe 回归 200~~ → **（2026-09-14 修订）旧端点已移除 → 404 且不改变会员有效期**
 
 ## 3. 验收标准
 

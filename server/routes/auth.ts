@@ -5,7 +5,6 @@ import { recordAuditLog } from '../repositories/audit.repository.js';
 import { signUp, signIn, updateProfile, resendVerification, requestPasswordReset, resetPassword, changeOwnPassword, deleteOwnAccount, sendRegisterCode } from '../services/auth.service.js';
 import { markEmailVerifiedByToken } from '../repositories/user.repository.js';
 import { ValidationError } from '../lib/errors.js';
-import { subscribeUserPlan, isPaymentEnabled } from '../services/billing.service.js';
 import { submitFeedback } from '../services/feedback.service.js';
 import { asyncHandler } from '../lib/async-handler.js';
 import { validate } from '../lib/validate.js';
@@ -43,10 +42,6 @@ const FeedbackSchema = z.object({
   rating: z.number().int().min(1).max(5).optional(),
   content: z.string().min(1, '请填写反馈内容').max(2000),
   contactInfo: z.string().max(255).optional(),
-});
-
-const SubscribeSchema = z.object({
-  plan: z.enum(['weekly', 'monthly']),
 });
 
 const ForgotPasswordSchema = z.object({
@@ -346,40 +341,11 @@ authRouter.post('/feedback', asyncHandler(async (req: Request, res: Response) =>
 }));
 
 /**
- * POST /api/auth/subscribe
- * Subscribe to weekly / monthly / yearly Pro membership
- * 一期未接真实支付，PAYMENT_ENABLED 默认禁用（503），过渡走微信人工充值。
+ * 已删除（2026-09-14）：POST /api/auth/subscribe「一步开通」。
+ *
+ * 它只挡 `isPaymentEnabled()` 就建单并激活（`status:'paid'` + 叠期），**全程没有任何支付**：
+ * `PAYMENT_ENABLED=true` 的任何环境里，登录用户 POST 一次即白拿 30 天 VIP，可无限叠加。
+ * 该洞恰好在「上线支付」那一步打开（部署手册让人把开关改成 true）——与 ADR-0014
+ * 「替换人工充值入口」的目标直接冲突，故整条链路移除。开通 VIP 只剩两条真实来源：
+ * 支付宝 notify/查单结算（`/api/subscriptions/*`）与 admin 后台赠送（`admin.service`）。
  */
-authRouter.post('/subscribe', authMiddleware, asyncHandler(async (req: Request, res: Response) => {
-  if (!isPaymentEnabled()) {
-    res.status(503).json({ error: '在线支付暂未开放，请通过客服微信人工充值开通会员', code: 'PAYMENT_DISABLED' });
-    return;
-  }
-  const { plan } = validate(SubscribeSchema, req.body);
-  const user = req.user!;
-
-  const { role, vip_expires_at, user: updatedUser } = await subscribeUserPlan({
-    userId: user.id,
-    plan,
-  });
-
-  const planNames = {
-    weekly: '周度 Pro 会员 (7天)',
-    monthly: '月度 Pro 会员 (30天)',
-  };
-
-  res.json({
-    success: true,
-    message: `恭喜！已成功开通 ${planNames[plan]}，尊享无限画板与无限 AI 深度推演！`,
-    role,
-    vip_expires_at,
-    user: {
-      id: updatedUser.id,
-      email: updatedUser.email,
-      name: updatedUser.name,
-      role: updatedUser.role,
-      vip_expires_at: updatedUser.vip_expires_at,
-      is_active: updatedUser.is_active,
-    },
-  });
-}));

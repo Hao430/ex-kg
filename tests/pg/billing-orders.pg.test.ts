@@ -35,7 +35,8 @@ let userId = '';
 
 /**
  * 仓储调用一律包用户作用域——**与生产同构**：下单/查单/结算都发生在登录态请求里
- * （`subscriptionsRouter` 与 `/api/auth/subscribe` 均在 `authMiddleware` 之后），
+ * （`subscriptionsRouter` 各端点均在 `authMiddleware` 之后；`/api/auth/subscribe` 已于
+ * 2026-09-14 移除，因为它是「无支付即开通」的白拿 VIP 通道），
  * 由 `runWithUser` 注入 `app.user_id`（ADR-0019）。裸调会缺作用域，见下方 `createOrderInPg`。
  */
 const asUser = <T>(fn: () => Promise<T>): Promise<T> => runWithUser(userId, fn);

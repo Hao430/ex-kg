@@ -101,15 +101,24 @@ describe('C 清理算力点数体系', () => {
     assert.equal(res.status, 404);
   });
 
+  // 走真实链路（下单 → 结算）。原用 POST /api/auth/subscribe「一步开通」——
+  // 那是无支付即开通的白拿 VIP 端点，2026-09-14 已整条移除（见 e1-payment.test.ts 回归用例）。
   test('订阅链路不回归（orders 保留）', async () => {
-    const res = await fetch(`${base}/api/auth/subscribe`, {
+    const order = await fetch(`${base}/api/subscriptions/orders`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', cookie: userCookie },
       body: JSON.stringify({ plan: 'weekly' }),
     });
-    assert.equal(res.status, 200);
-    const body = await res.json() as any;
-    assert.equal(body.role, 'vip');
+    assert.equal(order.status, 201);
+    const orderBody = await order.json() as any;
+    assert.ok(orderBody.orderNo);
+
+    const pay = await fetch(`${base}/api/subscriptions/orders/${orderBody.orderNo}/mock-pay`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', cookie: userCookie },
+    });
+    assert.equal(pay.status, 200);
+    assert.equal(((await pay.json()) as any).order.status, 'paid');
   });
 
   test('admin overview 仍可用（token 统计已改源 ai_request_logs）', async () => {
