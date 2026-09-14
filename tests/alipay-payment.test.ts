@@ -16,8 +16,11 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { createApp } from '../server/app.js';
-import { subscriptionRateLimiter } from '../server/middleware/auth.js';
+import { subscriptionRateLimiter, orderStatusReadRateLimiter } from '../server/middleware/auth.js';
 import { ipKeyGenerator } from 'express-rate-limit';
+
+/** 种子用户 user@deepdive.ai 的固定 id，轮询限流器（orderStatusReadRateLimiter）按用户计数 */
+const SEED_USER_ID = '00000000-0000-0000-0000-000000000002';
 
 // —— 测试密钥对与环境（必须在首个支付请求前就位：getAlipayProvider 懒初始化单例）——
 const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
@@ -43,9 +46,10 @@ let server: http.Server;
 let base = '';
 let userCookie = '';
 
-/** 复位订阅限流器（/notify 不挂限流器，无需复位） */
+/** 复位订阅限流器：写请求走 subscriptionRateLimiter（按 IP），查单走独立实例（按用户） */
 function resetSubLimiter(): void {
   subscriptionRateLimiter.resetKey(ipKeyGenerator('127.0.0.1'));
+  orderStatusReadRateLimiter.resetKey(`user_${SEED_USER_ID}`);
 }
 
 async function waitSeeds(tries = 50): Promise<void> {

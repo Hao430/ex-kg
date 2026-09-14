@@ -6,16 +6,23 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createApp } from '../server/app.js';
-import { subscriptionRateLimiter } from '../server/middleware/auth.js';
+import { subscriptionRateLimiter, orderStatusReadRateLimiter } from '../server/middleware/auth.js';
 import { ipKeyGenerator } from 'express-rate-limit';
 
 let server: http.Server;
 let base = '';
 let userCookie = '';
 
-/** 复位订阅限流器：本文件同 IP 订阅请求 >10 次/分钟，会撞新加的 subscriptionRateLimiter 429（技术债 #0012） */
+/** 种子用户 user@deepdive.ai 的固定 id（schema.ts 里的种子常量），轮询限流器按用户计数 */
+const SEED_USER_ID = '00000000-0000-0000-0000-000000000002';
+
+/**
+ * 复位订阅限流器：本文件同 IP 订阅写请求 >10 次/分钟会撞 subscriptionRateLimiter 429（技术债 #0012）；
+ * 订单状态轮询走独立实例 orderStatusReadRateLimiter（按用户计数），一并复位。
+ */
 function resetSubLimiter(): void {
   subscriptionRateLimiter.resetKey(ipKeyGenerator('127.0.0.1'));
+  orderStatusReadRateLimiter.resetKey(`user_${SEED_USER_ID}`);
 }
 
 async function waitSeeds(tries = 50): Promise<void> {
@@ -105,6 +112,30 @@ describe('E1+E2 支付抽象与 Mock 生命周期', () => {
     });
     assert.equal(again.status, 409);
     assert.equal(((await again.json()) as any).code, 'ORDER_ALREADY_PAID');
+  });
+
+  /**
+   * 回归（2026-09-14）：订单状态轮询曾被 subscriptionRateLimiter（10/min）打死。
+   * 前端 RechargeModal 每 3s 轮一次 = 20 req/min，实测第 10 次（约第 27 秒）即 429，
+   * 而弹窗要等满 5 分钟——用户付完款看不到「会员已开通」，且 ADR-0014 的查单兜底
+   * （靠这个 GET 触发，是 notify 丢失时的唯一补偿）一并失效。
+   * 轮询现走独立实例（40/min per user），一个正常等待周期内不得出现 429。
+   */
+  test('订单状态轮询不再被下单限流器打死（25 次连续轮询全 200）', async () => {
+    resetSubLimiter();
+    const { body } = await startOrder('weekly');
+
+    const codes: number[] = [];
+    for (let i = 0; i < 25; i++) {
+      const res = await fetch(`${base}/api/subscriptions/orders/${body.orderNo}`, {
+        headers: { cookie: userCookie },
+      });
+      codes.push(res.status);
+    }
+    assert.ok(
+      codes.every((c) => c === 200),
+      `25 次轮询（≈75 秒的 3s 节奏）不得被限流，实际状态码：${codes.join(',')}`
+    );
   });
 
   test('未知 orderNo：mock-pay 与查询均 404', async () => {

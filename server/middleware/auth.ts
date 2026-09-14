@@ -193,6 +193,30 @@ export const forgotPasswordRateLimiter = rateLimit({
 });
 
 /**
+ * Rate limiter for 订单状态轮询（GET /api/subscriptions/orders/:orderNo）：40 req/min per user。
+ *
+ * 必须与 subscriptionRateLimiter（10/min）**分开实例**：前端 RechargeModal 每 3s 轮一次
+ * = 20 req/min，共用同一个 10/min 的桶会在约 27 秒后把轮询打死（弹窗却要等满 5 分钟），
+ * 用户付完款看不到「已开通」，且 ADR-0014 的查单兜底（靠这个 GET 触发）也一并失效。
+ * 「防刷下单」的额度不该被读端点消耗，读端点也不该挤下单额度。
+ *
+ * 按用户维度计数并挂在 authMiddleware 之后：同一 NAT 出口的多个用户不再互相挤额度
+ * （与 mySharesReadRateLimiter / adminLogReadRateLimiter 同惯例）。
+ * 40/min 是稳态 20/min 的 2 倍余量，够多标签页与会话重开。
+ */
+export const orderStatusReadRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 40,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => (req.user ? `user_${req.user.id}` : ipKeyGenerator(req.ip || 'anonymous')),
+  message: {
+    error: '订单状态查询过于频繁，请稍后再试',
+    code: 'RATE_LIMIT_EXCEEDED',
+  },
+});
+
+/**
  * Rate limiter for subscription endpoints: 10 req/min per IP（技术债 #0012，防刷"尝试下单"）
  */
 export const subscriptionRateLimiter = rateLimit({

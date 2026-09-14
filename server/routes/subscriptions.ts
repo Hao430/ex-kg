@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { authMiddleware, subscriptionRateLimiter } from '../middleware/auth.js';
+import { authMiddleware, subscriptionRateLimiter, orderStatusReadRateLimiter } from '../middleware/auth.js';
 import { asyncHandler } from '../lib/async-handler.js';
 import { validate } from '../lib/validate.js';
 import { startSubscription, mockPayOrder, getOrderStatus, handleAlipayNotify, isPaymentEnabled, isMockPaymentChannel } from '../services/billing.service.js';
@@ -66,8 +66,12 @@ subscriptionsRouter.post('/orders/:orderNo/mock-pay', subscriptionRateLimiter, a
  * GET /api/subscriptions/orders/:orderNo
  * Query order status (owner only)。alipay 渠道下 pending 单会先做一次查单对账兜底
  * （billing.service.getOrderStatus 内部节流）。
+ *
+ * 限流器与下单分开（orderStatusReadRateLimiter，40/min per user）：本端点是**读**且被
+ * 前端每 3s 轮询（20 req/min），挂在 subscriptionRateLimiter（10/min）上会在约 27 秒后
+ * 一直 429——用户付完款看不到开通，查单兜底也随之失效。按用户计数即需先过 authMiddleware。
  */
-subscriptionsRouter.get('/orders/:orderNo', subscriptionRateLimiter, authMiddleware, asyncHandler(async (req: Request, res: Response) => {
+subscriptionsRouter.get('/orders/:orderNo', authMiddleware, orderStatusReadRateLimiter, asyncHandler(async (req: Request, res: Response) => {
   const order = await getOrderStatus(req.user!.id, req.params.orderNo);
   res.json({ status: order.status, order });
 }));
