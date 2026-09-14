@@ -380,6 +380,32 @@ describe('A6 版本冲突收敛（服务端为准）', () => {
     assert.ok(dispatchedEvents[0].detail.conflictCopyId, '收敛与 latest 是否回传无关');
   });
 
+  test('400 NODE_CANVAS_MISMATCH → rejected：确定性拒绝不得转成无限重试，且必须告知用户', async () => {
+    seedDirtyLocal(LOCAL_BASE, [LOCAL_NODE]);
+    scriptSave(BOARD_ID, [
+      { status: 400, body: { error: '节点不属于当前画板，已拒绝保存', code: 'NODE_CANVAS_MISMATCH' } },
+    ]);
+
+    const outcome = await syncBoardToBackend(makeBoard(LOCAL_BASE, [LOCAL_NODE]) as any);
+
+    // 'fail' 会被 sync-queue 一路退避到慢速自愈（每 60s 一次、永不放弃）——那正是线上事故的形态
+    assert.equal(outcome, 'rejected', '结构性拒绝必须与「可能自己好起来」的失败区分开');
+    assert.equal(dispatchedEvents.length, 1, '这次没存上必须让用户知道，不能静默');
+    assert.equal(dispatchedEvents[0].type, 'deepdive:canvas-save-conflict');
+    assert.equal(dispatchedEvents[0].detail.code, 'NODE_CANVAS_MISMATCH');
+    assert.deepEqual(loadBoard(BOARD_ID)?.nodes, [LOCAL_NODE], '本地改动不得被清掉，只是没能上行');
+  });
+
+  test('400 其他码 → fail：用户把内容改了可能就过了，仍走退避重试且不打扰用户', async () => {
+    seedDirtyLocal(LOCAL_BASE, [LOCAL_NODE]);
+    scriptSave(BOARD_ID, [{ status: 400, body: { error: '字段不合法', code: 'VALIDATION_ERROR' } }]);
+
+    const outcome = await syncBoardToBackend(makeBoard(LOCAL_BASE, [LOCAL_NODE]) as any);
+
+    assert.equal(outcome, 'fail');
+    assert.equal(dispatchedEvents.length, 0, '可恢复的失败不该弹提示');
+  });
+
   test('keepalive 补传遇 409：不做冲突决策，不建副本、不发额外 GET', async () => {
     seedDirtyLocal(LOCAL_BASE, [LOCAL_NODE]);
     scriptSave(BOARD_ID, [{ status: 409, body: { latest_updated_at: SERVER_AHEAD } }]);

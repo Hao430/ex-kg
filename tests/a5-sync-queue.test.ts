@@ -154,6 +154,25 @@ describe('A5 重试队列', () => {
     assert.equal(executorCalls.length, 1); // 不重试
   });
 
+  test('rejected（服务端确定性拒绝）派发 error 且不重试——这正是与 fail 的分水岭', async () => {
+    setSyncExecutor(async (id) => {
+      executorCalls.push(id);
+      return 'rejected';
+    });
+
+    enqueue('b1');
+    await flush();
+
+    assert.equal(executorCalls.length, 1);
+    assert.equal(hasPending('b1'), false, '确定性拒绝必须摘除任务，不能留着无限重试');
+    assert.deepEqual(events.map((e) => e.state), ['pending', 'error']);
+
+    await flush();
+    assert.equal(executorCalls.length, 1); // 不重试
+
+    // 对照：同样只失败一次，'fail' 会留在队列里（见「失败退避重试」与「超过 MAX_RETRIES」两例）
+  });
+
   test('去重：同 id 重复 enqueue 只保留一个条目且尝试计数不重置', async () => {
     setSyncExecutor(async (id) => {
       executorCalls.push(id);

@@ -9,12 +9,13 @@
  * - enqueueMeta(boardId)：画板库元数据（收藏/归档）待同步，可与 upload 共存
  * - enqueueDelete(boardId)：待删除画布入队（服务端 DELETE），独占压制 upload/meta
  * - flush：按 delete→meta→upload 顺序执行对应 executor；'ok' → 'saved'；'conflict' → 'conflict'（不重试）；
+ *   'rejected' → 服务端**确定性拒绝**（内容结构性不合法），摘除该操作 + 派发 'error'（不重试）；
  *   'fail' → 退避重试 min(2^n × 2s, 30s)，超过 MAX_RETRIES 派发 'error'
  * - window 'online' 事件 → 立即 flush（断网恢复自动补传）
  */
 import * as boardScope from './board-scope';
 
-export type SyncOutcome = 'ok' | 'conflict' | 'fail';
+export type SyncOutcome = 'ok' | 'conflict' | 'fail' | 'rejected';
 export type SyncState = 'pending' | 'saved' | 'conflict' | 'error';
 /** 执行器可选参数：keepalive = 页面卸载前的最后补传（请求需在页面消失后仍送达） */
 export interface SyncExecOpts {
@@ -328,6 +329,15 @@ async function runOne(boardId: string, opts?: SyncExecOpts): Promise<void> {
       } else if (outcome === 'conflict') {
         after.ops = after.ops.filter((o) => o !== op);
         emit('conflict', boardId);
+      } else if (outcome === 'rejected') {
+        // 服务端确定性拒绝：同样的内容重发一万次结果一致。摘除该操作、不再重试，并派发 'error'
+        // 让用户看见（Topbar 的 'error' 文案正是「同步失败，已停止自动重试」）。
+        //
+        // 慢速自愈只该自愈「可能自己好起来」的失败（断网、5xx、限流）。把永久失败也丢进去
+        // 就等于静默无限重试：2026-09-14 线上事故里一块画板以 60s 间隔重试了 20 分钟，
+        // 期间用户只在第一轮被告知过一次，此后一路无声。
+        after.ops = after.ops.filter((o) => o !== op);
+        emit('error', boardId);
       } else {
         anyFail = true;
       }
