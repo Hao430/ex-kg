@@ -48,6 +48,22 @@
 - `settleOrderPaid` 条件更新 pending→paid + `activateOrder` 叠期，notify 与查单并发到达幂等；
 - 退款接口已实现（`alipay.trade.refund`）但一期不暴露业务端点。
 
+> **补强（2026-09-14，资金安全复核）**：本 ADR 上线后复核出四处问题，已修复。
+> 1. **无支付即开通**：遗留端点 `POST /api/auth/subscribe`（`subscribeUserPlan`「一步开通」）
+>    只挡 `PAYMENT_ENABLED` 就建单激活——开关改成 true 的那一刻，登录用户 POST 一次即白拿
+>    30 天 VIP。与决策 6「人工充值入口移除」的目标直接冲突，整条链路已删除。**开通 VIP 只剩
+>    订单结算与 admin 赠送两条来源。**
+> 2. **`mock-pay` 判据错位**：原判据是 `NODE_ENV === 'production'`，与生效渠道无关。预发/灰度/
+>    忘设 NODE_ENV 的线上，支付宝已是生效渠道而该端点仍可达。判据改为「生效渠道就是 mock」
+>    （`isMockPaymentChannel()`），生产那道硬 404 保留作纵深防御。
+> 3. **结算非原子**：`settleOrderPaid` 先提交 paid、再叠期，第二段失败会留下「已付款未开通」
+>    且三处补偿路径都进不去（永久不自愈）。现改为 `withTransaction` 内一并提交，并把叠期写成
+>    单条 `UPDATE`（`GREATEST(COALESCE(vip_expires_at, NOW()), NOW()) + make_interval(...)`），
+>    顺带消除同一用户并发结算丢天数。服务层 `activateOrder` 随之删除。
+> 4. **轮询被下单限流器打死**：订单状态 GET 曾挂 `subscriptionRateLimiter`（10/min），而前端
+>    每 3s 轮询 = 20 req/min，约 27 秒后全 429，连带废掉本 ADR 的查单对账兜底。该 GET 改用
+>    独立限流器（40/min per user）。
+
 ## Pros and Cons of the Options
 
 ### Option A: 官方 alipay-sdk v4
