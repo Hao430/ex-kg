@@ -1,7 +1,8 @@
-import { findUserById, updateVipMembership } from '../repositories/user.repository.js';
+import { findUserById } from '../repositories/user.repository.js';
 import {
   createOrder,
   findOrderByNo,
+  settlePaidOrder,
   updateOrderStatus,
 } from '../repositories/billing.repository.js';
 import { ConflictError, ForbiddenError, NotFoundError } from '../lib/errors.js';
@@ -47,43 +48,6 @@ export function isMockPaymentChannel(): boolean {
 }
 
 /**
- * Activate a paid order: extend VIP membership by order.durationDays
- * (base time = now, or existing expiry for renewal stacking; admin is never downgraded)
- */
-export async function activateOrder(order: OrderRecord): Promise<{ role: 'vip'; vip_expires_at: string; user: UserRecord }> {
-  const addDays = order.duration_days;
-
-  let baseTime = Date.now();
-  const currentUser = await findUserById(order.user_id);
-  if (currentUser?.vip_expires_at && new Date(currentUser.vip_expires_at).getTime() > baseTime) {
-    baseTime = new Date(currentUser.vip_expires_at).getTime();
-  }
-
-  const newExpiresAt = new Date(baseTime + addDays * 24 * 3600 * 1000).toISOString();
-
-  // admin 不降级
-  const newRole = currentUser?.role === 'admin' ? 'admin' : 'vip';
-  const updated = await updateVipMembership({
-    userId: order.user_id,
-    role: newRole,
-    vipExpiresAt: newExpiresAt,
-  });
-  if (!updated) {
-    throw new NotFoundError('用户不存在');
-  }
-
-  await recordAuditLog({
-    userId: order.user_id,
-    action: 'subscribe',
-    targetType: 'order',
-    targetId: order.order_no,
-    details: { planId: order.plan_id, orderNo: order.order_no },
-  });
-
-  return { role: 'vip', vip_expires_at: newExpiresAt, user: updated };
-}
-
-/**
  * Start a subscription: create a pending order and get a (mock) payment URL
  */
 export async function startSubscription(userId: string, plan: 'weekly' | 'monthly'): Promise<{
@@ -115,7 +79,7 @@ export async function startSubscription(userId: string, plan: 'weekly' | 'monthl
  */
 export async function mockPayOrder(userId: string, orderNo: string): Promise<{
   order: OrderRecord;
-  role: 'vip';
+  role: 'vip' | 'admin';
   vip_expires_at: string;
   user: UserRecord;
 }> {
@@ -136,32 +100,39 @@ export async function mockPayOrder(userId: string, orderNo: string): Promise<{
 
   await mockProvider.handleCallback({ orderNo, success: true });
 
-  // 条件更新防并发双激活：仅 pending → paid，竞态失败方抛 409
-  const updated = await updateOrderStatus(orderNo, 'paid', 'pending');
+  // 原子结算：条件更新 pending → paid 与 VIP 叠期同一事务（竞态失败方拿到 null → 409）
+  const updated = await settlePaidOrder(orderNo);
   if (!updated) throw new ConflictError('订单已支付或已关闭', 'ORDER_ALREADY_PAID');
-  if (!updated) {
-    throw new NotFoundError('订单不存在');
-  }
 
-  const activateResult = await activateOrder(updated);
+  const user = await findUserById(updated.user_id);
+  if (!user) throw new NotFoundError('用户不存在');
 
-  return { order: updated, ...activateResult };
+  await recordAuditLog({
+    userId: updated.user_id,
+    action: 'subscribe',
+    targetType: 'order',
+    targetId: updated.order_no,
+    details: { planId: updated.plan_id, orderNo: updated.order_no, source: 'mock_pay' },
+  });
+
+  return {
+    order: updated,
+    role: user.role === 'admin' ? 'admin' : 'vip',
+    vip_expires_at: user.vip_expires_at || '',
+    user,
+  };
 }
 
 /**
- * 支付到账结算（支付宝 notify 与查单兜底共用，ADR-0014）：
- * 条件更新 pending → paid 防并发双激活，成功后叠期激活 VIP。
+ * 支付到账结算（支付宝 notify 与查单兜底共用，ADR-0014）。
  * 幂等语义：订单已是 paid（如 notify 与查单并发到达）返回现有订单，不重复叠期；
  * 订单不存在或非 paid/pending（failed/refunded）返回 null 由调用方决定应答。
+ *
+ * 实现（含事务边界与叠期 SQL）在 `billing.repository.settlePaidOrder` —— 「paid 与叠期
+ * 必须同一事务」是仓库层的事务职责；本函数是服务层的调用面，语义与实现分开记录。
  */
 export async function settleOrderPaid(orderNo: string): Promise<OrderRecord | null> {
-  const updated = await updateOrderStatus(orderNo, 'paid', 'pending');
-  if (updated) {
-    await activateOrder(updated);
-    return updated;
-  }
-  const existing = await findOrderByNo(orderNo);
-  return existing?.status === 'paid' ? existing : null;
+  return settlePaidOrder(orderNo);
 }
 
 /**
