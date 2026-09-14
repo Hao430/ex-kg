@@ -52,6 +52,7 @@
 | :--- | :--- | :--- | :--- | :--- |
 | [0008](./0008-sync-state-machine.md) | 同步状态机 + 乐观锁 | Accepted | 2026-09-09 | `pending/saved/conflict/error` 四态，指数退避重试，冲突不重试；画布保存的冲突面已由 ADR-0017 收窄到节点（2026-09-12 修订） |
 | [0017](./0017-node-level-merge-and-tombstones.md) | 节点级合并与墓碑语义 | Accepted | 2026-09-12 | `protocolVersion:2` 差分协议：客户端只发本次改动，服务端节点级 upsert（"没带 = 不动"），删除即 `deleted_at` 墓碑且稳定胜出；`SAVE_LEGACY_REPLACE_ENABLED` 熔断旧整板路径，墓碑按 `CANVAS_TOMBSTONE_RETENTION_DAYS`（默认 30）回收 |
+| [0021](./0021-server-authoritative-sync.md) | 采用服务端权威同步，本地降级为未确认缓冲 | Accepted | 2026-09-11 | 409 不再「本地胜出」（阶段 1）→ 节点级合并（ADR-0017，前置条件）→ 本地降级为未确认缓冲；长连接只解决「服务端主动推」不解决冲突，明确不做；**无网不可编辑是已接受的产品代价**；2026-09-14 补记——决策当时未写成 ADR，导致排查线上事故时无从查证 |
 
 ## 已废弃 / 取代 (Deprecated / Superseded)
 
@@ -71,6 +72,6 @@
 - **持久化 / 数据**：[0002](./0002-dual-mode-persistence.md) · [0004](./0004-strict-tenant-ownership.md) · [0005](./0005-soft-delete-with-30d-cooldown.md) · [0012](./0012-default-canvas-no-delete.md) · [0013](./0013-frontend-node-id-truncation.md) · [0015](./0015-canvas-library-single-level-folders.md) · [0016](./0016-admin-strict-canvas-tenancy.md) · [0019](./0019-db-role-separation-and-rls.md)
 - **AI 集成**：[0003](./0003-multi-model-failover.md) · [0009](./0009-150-node-subtree-split.md)
 - **业务与安全**：[0007](./0007-independent-rate-limiters.md) · [0010](./0010-scrypt-hardening.md) · [0011](./0011-email-verification-code-first.md) · [0014](./0014-alipay-page-pay.md) · [0020](./0020-same-origin-guard.md)
-- **同步与并发**：[0008](./0008-sync-state-machine.md)
+- **同步与并发**：[0008](./0008-sync-state-machine.md) · [0017](./0017-node-level-merge-and-tombstones.md) · [0021](./0021-server-authoritative-sync.md)
 
 > 索引本身由 ADR 维护者更新；新增 ADR 时把行加到对应主题段，并按编号升序排列。
