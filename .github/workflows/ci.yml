@@ -272,9 +272,24 @@ jobs:
           ssh -i ~/.ssh/deploy_key -p ${{ secrets.DEPLOY_PORT }} \
             ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} 'bash -s' <<'REMOTE'
           set -e
-          PID=$(cat /www/server/nodejs/vhost/pids/ex_kg.pid)
-          kill $PID; for i in $(seq 1 40); do kill -0 $PID 2>/dev/null || break; sleep 0.5; done
-          kill -0 $PID 2>/dev/null && kill -9 $PID
+          # PID 文件**可能不存在**：它只在启动时由面板脚本写出，服务崩了 / 上次启动失败 /
+          # 手动误操作后它就不在——而这正是本步骤最该派上用场的场景（服务已挂，要靠部署拉回来）。
+          # 原写法 `PID=$(cat ...)` 在 set -e 下于此处直接中止：kill 与 start 都没执行，
+          # 第 11 步验收被 skip，表现为「CD 修不好已经挂掉的服务」（实测 2026-09-14）。
+          PID_FILE=/www/server/nodejs/vhost/pids/ex_kg.pid
+          PID=$(cat "$PID_FILE" 2>/dev/null || true)
+          if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+            kill "$PID"; for i in $(seq 1 40); do kill -0 "$PID" 2>/dev/null || break; sleep 0.5; done
+            if kill -0 "$PID" 2>/dev/null; then kill -9 "$PID"; fi
+          else
+            echo "PID 文件缺失或进程已退出（PID='${PID}'），跳过终止"
+          fi
+          # PID 文件丢了但进程还活着（孤儿）时会占着 2998 端口，直接起会 EADDRINUSE——
+          # 按端口兜底清一次。端口为本应用专用，故按端口清理是安全的。
+          if command -v fuser >/dev/null 2>&1 && fuser 2998/tcp >/dev/null 2>&1; then
+            echo "端口 2998 仍被占用，按端口清理孤儿进程"; fuser -k 2998/tcp || true; sleep 1
+          fi
+          rm -f "$PID_FILE"
           su www -s /bin/bash -c "bash /www/server/nodejs/vhost/scripts/ex_kg.sh"
           sleep 4
           NEW_PID=$(cat /www/server/nodejs/vhost/pids/ex_kg.pid)
