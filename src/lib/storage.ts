@@ -341,9 +341,33 @@ function dispatchConflictEvent(
   );
 }
 
+/**
+ * 画板节点/边 id 被**就地重映射**后的通知：内存里的画布（React state / currentNodesRef）
+ * 还攥着旧 id，必须让 UI 重新播种。不通知的话，下一次防抖保存会带着旧 id 打回来，
+ * 再撞一次跨板拦截 → 又重映射一次，变成「重映射—保存」死循环。
+ */
+function dispatchIdsRemappedEvent(boardId: string): void {
+  window.dispatchEvent(
+    new CustomEvent('deepdive:board-ids-remapped', { detail: { boardId } })
+  );
+}
+
 export async function syncBoardToBackend(
   board: StoredBoard,
   opts?: SyncExecOpts
+): Promise<SyncOutcome> {
+  return syncBoardToBackendInner(board, opts, false);
+}
+
+/**
+ * @param idsRemapped 本次调用是否已经是「重映射后再试」的那一次。自愈只允许做一轮：
+ *   重映射产出的是全新 uuidv7，不可能再撞同一块画板；这个守卫防的是「万一还撞」时
+ *   重映射—重试互相递归下去。
+ */
+async function syncBoardToBackendInner(
+  board: StoredBoard,
+  opts: SyncExecOpts | undefined,
+  idsRemapped: boolean
 ): Promise<SyncOutcome> {
   const keepalive = opts?.keepalive === true;
 
@@ -451,6 +475,39 @@ export async function syncBoardToBackend(
     const body = await res.json().catch(() => null) as any;
     const code = typeof body?.code === 'string' ? body.code : 'VALIDATION_ERROR';
     if (!PERMANENT_SAVE_REJECTION_CODES.has(code)) return 'fail';
+
+    // 自愈：跨板撞 id 是**本板自己能救的**——把本板节点/边的 id 全部重映射，重试一次即可。
+    // 画板 id 不变：用户看到的还是同一块板、同一份内容，只是内部标识换了一套。
+    //
+    // 这是给「已经困在本机的存量坏副本」准备的。源头的复制路径已在 `07ecef0` 修好，但那时
+    // 已经产生的副本救不回来——它的内容就带着源画板的节点 id，不重映射就永远传不上去，
+    // 只能等用户换设备/清缓存时丢掉（2026-09-14 线上事故）。
+    //
+    // 只做一轮（idsRemapped 守卫）；页面卸载前的补传不做这个决策，留给下次正常链路
+    //（与 409 分支同一条理由）。
+    if (code === 'NODE_CANVAS_MISMATCH' && !idsRemapped && !keepalive) {
+      const remapped = remapBoardIds(board.nodes, board.edges, { boardId: board.id });
+      const next: StoredBoard = { ...board, nodes: remapped.nodes, edges: remapped.edges };
+      try {
+        persistBoard(next, { dirty: true });
+      } catch (e) {
+        // 落盘失败就不能重试：队列与内存还指着旧 id，硬发只会再撞一次
+        boardScope.reportPersistFailure('id-remap', e);
+        dispatchConflictEvent(
+          board.id,
+          body?.error || '画板内容与另一块画板标识冲突，未能保存到云端',
+          undefined,
+          code
+        );
+        return 'rejected';
+      }
+      // 基线不清理：让差分把旧 id 当成本次删除上行，服务端按 canvas 作用域给它们落墓碑。
+      // 旧 id 属于**别的**画板时那些墓碑无行可更（作用域是本板），不会伤到对方——
+      // 跨板搬节点本就被 WHERE canvas_id = EXCLUDED.canvas_id 挡死。
+      dispatchIdsRemappedEvent(board.id);
+      return syncBoardToBackendInner(next, opts, true);
+    }
+
     // 与 403/404 同一条口径：永久失败不该被静默重试。toast 让用户知道这次没存上，
     // 顶栏转 'error'（文案「同步失败，已停止自动重试」）；本地改动仍在 blob 里，没丢。
     dispatchConflictEvent(board.id, body?.error || '画板内容被服务端拒绝，未能保存到云端', undefined, code);

@@ -293,6 +293,23 @@ function MainApp() {
       }
       showToast(detail?.message || '画板已在其他窗口被修改，请刷新后重试');
     };
+    /**
+     * 服务端以「跨板撞 id」（NODE_CANVAS_MISMATCH）拒收后，storage 层已就地重映射本板
+     * 节点/边的 id（画板 id 不变，用户看到的还是同一块板、同一份内容）。内存里的画布还
+     * 攥着旧 id，必须重新播种——否则下一次防抖保存会带着旧 id 打回来，再撞一次 → 又重
+     * 映射一次，变成「重映射—保存」死循环。
+     */
+    const onIdsRemapped = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { boardId?: string };
+      if (!detail?.boardId || detail.boardId !== currentBoardIdRef.current) return;
+      if (saveTimeoutRef.current !== null) {
+        window.clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+      const reloaded = loadBoard(detail.boardId);
+      if (reloaded) applyLoadedBoardRef.current?.(reloaded);
+      showToast('画板此前与另一块画板标识冲突、存不上去；已自动重新编号并同步到云端');
+    };
     const onRemoteDeleted = (e: Event) => {
       const detail = (e as CustomEvent).detail as { name?: string };
       showToast(`画板「${detail?.name || ''}」已在其他设备被删除`);
@@ -312,10 +329,12 @@ function MainApp() {
       showToast('本地保存失败：浏览器存储空间不足或被禁用，请勿关闭页面');
     };
     window.addEventListener('deepdive:canvas-save-conflict', onConflict);
+    window.addEventListener('deepdive:board-ids-remapped', onIdsRemapped);
     window.addEventListener('deepdive:board-remote-deleted', onRemoteDeleted);
     window.addEventListener('deepdive:local-persist-failed', onPersistFailed);
     return () => {
       window.removeEventListener('deepdive:canvas-save-conflict', onConflict);
+      window.removeEventListener('deepdive:board-ids-remapped', onIdsRemapped);
       window.removeEventListener('deepdive:board-remote-deleted', onRemoteDeleted);
       window.removeEventListener('deepdive:local-persist-failed', onPersistFailed);
       offSync();

@@ -380,19 +380,22 @@ describe('A6 版本冲突收敛（服务端为准）', () => {
     assert.ok(dispatchedEvents[0].detail.conflictCopyId, '收敛与 latest 是否回传无关');
   });
 
-  test('400 NODE_CANVAS_MISMATCH → rejected：确定性拒绝不得转成无限重试，且必须告知用户', async () => {
+  // 用 NODE_PARENT_CYCLE 而非 NODE_CANVAS_MISMATCH：后者现在会先走自愈重映射（见下两例），
+  // 这条路径要验的是「没有自愈手段的结构性拒绝」——它必须 rejected 且告知用户。
+  test('400 NODE_PARENT_CYCLE → rejected：确定性拒绝不得转成无限重试，且必须告知用户', async () => {
     seedDirtyLocal(LOCAL_BASE, [LOCAL_NODE]);
     scriptSave(BOARD_ID, [
-      { status: 400, body: { error: '节点不属于当前画板，已拒绝保存', code: 'NODE_CANVAS_MISMATCH' } },
+      { status: 400, body: { error: '节点层级关系存在循环引用，已拒绝保存', code: 'NODE_PARENT_CYCLE' } },
     ]);
 
     const outcome = await syncBoardToBackend(makeBoard(LOCAL_BASE, [LOCAL_NODE]) as any);
 
     // 'fail' 会被 sync-queue 一路退避到慢速自愈（每 60s 一次、永不放弃）——那正是线上事故的形态
     assert.equal(outcome, 'rejected', '结构性拒绝必须与「可能自己好起来」的失败区分开');
+    assert.equal(savesFor(BOARD_ID).length, 1, '无自愈手段的码不该重试');
     assert.equal(dispatchedEvents.length, 1, '这次没存上必须让用户知道，不能静默');
     assert.equal(dispatchedEvents[0].type, 'deepdive:canvas-save-conflict');
-    assert.equal(dispatchedEvents[0].detail.code, 'NODE_CANVAS_MISMATCH');
+    assert.equal(dispatchedEvents[0].detail.code, 'NODE_PARENT_CYCLE');
     assert.deepEqual(loadBoard(BOARD_ID)?.nodes, [LOCAL_NODE], '本地改动不得被清掉，只是没能上行');
   });
 
@@ -404,6 +407,57 @@ describe('A6 版本冲突收敛（服务端为准）', () => {
 
     assert.equal(outcome, 'fail');
     assert.equal(dispatchedEvents.length, 0, '可恢复的失败不该弹提示');
+  });
+
+  test('400 NODE_CANVAS_MISMATCH → 自愈：重映射本板 id 后重试一次即通过', async () => {
+    seedDirtyLocal(LOCAL_BASE, [LOCAL_NODE]);
+    scriptSave(BOARD_ID, [
+      { status: 400, body: { error: '节点不属于当前画板，已拒绝保存', code: 'NODE_CANVAS_MISMATCH' } },
+      { status: 200, body: { canvas: { updatedAt: SERVER_AHEAD } } },
+    ]);
+
+    const outcome = await syncBoardToBackend(makeBoard(LOCAL_BASE, [LOCAL_NODE]) as any);
+
+    assert.equal(outcome, 'ok', '重映射后重试应当通过——这是给已困在本机的存量坏副本准备的出路');
+    const saves = savesFor(BOARD_ID);
+    assert.equal(saves.length, 2, '只重试一次');
+
+    // 第二次上行的节点 id 已换新
+    const sentIds = (saves[1].body.nodes || []).map((n: any) => n.id);
+    assert.equal(sentIds.length, 1);
+    assert.notEqual(sentIds[0], LOCAL_NODE.id, '重试必须带新 id，否则再撞一次');
+
+    // 本地 blob 同步改写——UI 重新播种读的就是它
+    assertRemappedCopy(loadBoard(BOARD_ID)?.nodes, [LOCAL_NODE]);
+
+    // 必须通知 UI 重新播种：内存里的画布还攥着旧 id，不重播种下次防抖保存会打回来
+    const remapEvents = dispatchedEvents.filter((e) => e.type === 'deepdive:board-ids-remapped');
+    assert.equal(remapEvents.length, 1);
+    assert.equal(remapEvents[0].detail.boardId, BOARD_ID);
+    assert.equal(
+      dispatchedEvents.filter((e) => e.type === 'deepdive:canvas-save-conflict').length,
+      0,
+      '自愈成功不该弹冲突提示吓用户'
+    );
+  });
+
+  test('自愈只做一轮：重映射后仍被拒 → rejected，不递归重映射', async () => {
+    seedDirtyLocal(LOCAL_BASE, [LOCAL_NODE]);
+    scriptSave(BOARD_ID, [
+      { status: 400, body: { code: 'NODE_CANVAS_MISMATCH' } },
+      { status: 400, body: { code: 'NODE_CANVAS_MISMATCH' } },
+    ]);
+
+    const outcome = await syncBoardToBackend(makeBoard(LOCAL_BASE, [LOCAL_NODE]) as any);
+
+    assert.equal(outcome, 'rejected');
+    assert.equal(savesFor(BOARD_ID).length, 2, '只重映射一次；再多就是重映射—重试互相递归');
+    assert.equal(dispatchedEvents.filter((e) => e.type === 'deepdive:board-ids-remapped').length, 1);
+    assert.equal(
+      dispatchedEvents.filter((e) => e.type === 'deepdive:canvas-save-conflict').length,
+      1,
+      '放弃时必须按 rejected 告知用户，不能静默'
+    );
   });
 
   test('keepalive 补传遇 409：不做冲突决策，不建副本、不发额外 GET', async () => {
