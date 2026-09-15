@@ -220,7 +220,10 @@ module.exports = {
       fileName: 'tsconfig.json',
     },
     // 包含与排除（原先误写在顶层；v16 起必须放这里，否则不生效）
-    includeOnly: '^src/|^server/',
+    // `shared/`：前后端共用的产品文案/SEO 元数据（server 与 src 都被禁止互引，
+    // 故只能放这个两边都不是的顶层目录）。纳入 includeOnly 是为了让它也受规则约束，
+    // 否则它是一片无人看管的盲区。
+    includeOnly: '^src/|^server/|^shared/',
     enhancedResolveOptions: {
       exportsFields: ['exports'],
       conditionNames: ['import', 'require', 'node', 'default'],

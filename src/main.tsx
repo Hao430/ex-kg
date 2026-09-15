@@ -64,6 +64,10 @@ if (pathname === '/reset-password') StandalonePage = ResetPasswordPage;
 else if (pathname === '/verify-email') StandalonePage = VerifyEmailPage;
 else if (pathname.startsWith('/share/')) StandalonePage = SharePage;
 
+// 服务端注入的静态回退块（仅供不执行 JS 的爬虫读取，见 server/lib/seo.ts）在 React 接管前
+// 整体移除：留着会同时出现两个 H1 与一份隐藏正文。移除后稳态 DOM 里只有 React 内容。
+document.querySelectorAll('[data-seo-fallback]').forEach((el) => el.remove());
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     {StandalonePage ? <StandalonePage /> : <App />}

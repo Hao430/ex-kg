@@ -36,11 +36,41 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import { trackEvent } from '../../lib/analytics';
 import { SCENARIO_SAMPLE_INDEX, SAMPLE_BOARDS } from '../../lib/sample-boards';
+import {
+  LANDING_FAQS,
+  LANDING_H1,
+  LANDING_HIGHLIGHTS,
+  LANDING_LEAD,
+  LANDING_SCENARIOS,
+  LANDING_TOPICS,
+  type ScenarioIconKey,
+} from '../../../shared/product-content';
 import { SampleBoardViewer } from '../sample/SampleBoardViewer';
 
 interface LandingPageProps {
   onEnterCanvas: (presetTopic?: string) => void;
 }
+
+/**
+ * 场景图标映射：共享内容模块里图标只是字符串键（它不 import 任何前端依赖，
+ * 以免服务端 SEO 注入层被拖进 lucide-react），具体组件在这里映射。
+ */
+const SCENARIO_ICONS: Record<ScenarioIconKey, React.ComponentType<{ className?: string }>> = {
+  book: BookOpen,
+  code: Code2,
+  trend: TrendingUp,
+  workflow: Workflow,
+};
+
+/** bento 条的强调色：类名必须留在 JSX 侧，共享模块只放文字 */
+const HIGHLIGHT_CLASSES = [
+  'text-white',
+  'text-cyan-400',
+  'text-blue-400',
+  'text-indigo-400',
+  'text-emerald-400',
+  'text-amber-400',
+];
 
 export const LandingPage: React.FC<LandingPageProps> = ({
   onEnterCanvas,
@@ -60,55 +90,11 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   const [sampleViewerOpen, setSampleViewerOpen] = useState(false);
   const [sampleIndex, setSampleIndex] = useState(0);
 
-  const scenarios = [
-    {
-      icon: BookOpen,
-      title: '学术科研与深度理论推演',
-      desc: '拆解复杂前沿论文，对抽象定理、数学公式逐步下钻，在同一张画布上构建完整知识体系。',
-      tags: ['arXiv论文精读', '论文公式推导', '多理论交叉对比'],
-      sampleTopic: '什么是无穷？——希尔伯特旅馆与康托尔的集合论',
-    },
-    {
-      icon: Code2,
-      title: '系统架构设计与技术权衡',
-      desc: '推演微服务拆解、分布式事务一致性与高并发容灾方案，在不同分支上权衡架构优劣。',
-      tags: ['分布式容灾', '高并发架构', '性能与一致性权衡'],
-      sampleTopic: '什么是 AI Agent？——从聊天机器人到自主智能体',
-    },
-    {
-      icon: TrendingUp,
-      title: '商业战略分析与投资尽调',
-      desc: '围绕行业大盘、竞争壁垒、供应链与财务模型多线并发深挖，生成结构严密的尽调大纲。',
-      tags: ['产业链拆解', '商业壁垒推演', '研报大纲导出'],
-      sampleTopic: '钻石为什么这么贵？——稀缺、垄断与营销的经济学',
-    },
-    {
-      icon: Workflow,
-      title: '高阶复杂学习与心智模型',
-      desc: '告别碎片化问答，通过“提问 - 批判 - 验证 - 衍生”的螺旋闭环，建立属于你的认知星图。',
-      tags: ['心智模型', '非线性思维', '双轨便签记录'],
-      sampleTopic: '费曼学习法为什么有效？——教是最好的学',
-    },
-  ];
+  // 场景与 FAQ 的文案取自 shared/product-content.ts（与服务端 SEO 注入层同源，
+  // 避免「页面可见内容」与 FAQPage 结构化数据/静态回退块漂移）
+  const scenarios = LANDING_SCENARIOS;
 
-  const faqs = [
-    {
-      q: '为什么需要无限画布，而不是传统的单聊对话框？',
-      a: '传统的聊天机器人采用垂直流式单窗口，当探讨进入第 5 轮提问时，早期的核心假设已被长文顶出屏幕，容易发生上下文漂移或遗忘。枝想采用无限 2D 画布，每一个问题和解答都是可自由展开的思维节点。你可以同时探讨 5 个平行子分支，所有思考脉络一览无余。',
-    },
-    {
-      q: '我的研究数据和画板内容安全吗？',
-      a: '请放心。枝想将您的画布、节点、连线与便签完整保存在您的专属账号中，更换浏览器或设备登录后内容依然如初，数据严格隔离、仅您本人可见。您也可以随时一键导出标准 JSON 备份或 Markdown 研报大纲，成果永远由您带走。',
-    },
-    {
-      q: '“划词追问”功能是如何工作的？',
-      a: '在阅读任何卡片的 AI 解答时，只需用鼠标划选感兴趣的一段文字、专有名词或公式，系统会自动浮出探索胶囊。点击即可自动继承当前卡片的上下文背景，在旁边衍生出一个专属的子议题卡片继续深挖。',
-    },
-    {
-      q: '支持哪些数学公式与代码格式？',
-      a: '完美渲染学术级数学公式：行内公式（$E=mc^2$）与独立块级矩阵积分公式（$$...$$）均可正确排版；代码块支持整洁排版与一键复制，语法高亮能力正在加紧开发中，敬请期待。',
-    },
-  ];
+  const faqs = LANDING_FAQS;
 
   return (
     <div className="min-h-screen bg-[#070a13] text-slate-100 font-sans selection:bg-blue-500/30 selection:text-blue-200 overflow-x-hidden relative">
@@ -227,15 +213,15 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
         {/* Display Title */}
         <h1 className="text-3xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-white leading-[1.18] max-w-5xl mx-auto">
-          告别单线对话的遗忘与局限
+          {LANDING_H1.lead}
           <span className="block mt-2.5 bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-indigo-200 to-cyan-300">
-            在无限画布中，推演你的多维思考宇宙
+            {LANDING_H1.accent}
           </span>
         </h1>
 
         {/* Subtitle */}
         <p className="mt-5 text-sm sm:text-base text-slate-300/90 max-w-3xl mx-auto leading-relaxed font-normal">
-          人类的深度思考从不是一条单行道。枝想将传统垂直对话解构为具备拓扑关联的认知星图。
+          {LANDING_LEAD}
           支持<b>划词深挖、递归分支推演、学术级 LaTeX 公式、便签双轨论证与全自动拓扑排版</b>。
         </p>
 
@@ -262,12 +248,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         {/* Quick Sample Triggers ("一键开题") */}
         <div className="mt-8 flex flex-wrap items-center justify-center gap-2 text-xs text-slate-400 max-w-4xl mx-auto">
           <span className="text-slate-500 shrink-0 font-medium">推荐探索课题:</span>
-          {[
-            '什么是 AI Agent？与聊天机器人有何不同',
-            '特修斯之船：换了所有零件的船还是原船吗',
-            '自由意志存在吗？——决定论与相容论',
-            '缸中之脑：我们如何确知世界是真实的',
-          ].map((topic) => (
+          {LANDING_TOPICS.map((topic) => (
             <button
               key={topic}
               onClick={() => onEnterCanvas(topic)}
@@ -281,30 +262,19 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
         {/* Core Specs Bento Strip */}
         <div className="mt-14 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4 max-w-5xl mx-auto pt-8 border-t border-white/[0.08]">
-          <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/[0.05] flex flex-col items-center justify-center text-center">
-            <span className="text-base sm:text-lg font-bold text-white tracking-tight">2D 无限画布</span>
-            <span className="text-[11px] text-slate-400 mt-0.5">自由平移与空间记忆</span>
-          </div>
-          <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/[0.05] flex flex-col items-center justify-center text-center">
-            <span className="text-base sm:text-lg font-bold text-cyan-400 tracking-tight">数学公式排版</span>
-            <span className="text-[11px] text-slate-400 mt-0.5">LaTeX 行内与块级推导</span>
-          </div>
-          <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/[0.05] flex flex-col items-center justify-center text-center">
-            <span className="text-base sm:text-lg font-bold text-blue-400 tracking-tight">划词递归裂变</span>
-            <span className="text-[11px] text-slate-400 mt-0.5">任意词句瞬时衍生</span>
-          </div>
-          <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/[0.05] flex flex-col items-center justify-center text-center">
-            <span className="text-base sm:text-lg font-bold text-indigo-400 tracking-tight">前沿大模型</span>
-            <span className="text-[11px] text-slate-400 mt-0.5">极速推理与深度推演</span>
-          </div>
-          <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/[0.05] flex flex-col items-center justify-center text-center">
-            <span className="text-base sm:text-lg font-bold text-emerald-400 tracking-tight">实时联网检索</span>
-            <span className="text-[11px] text-slate-400 mt-0.5">权威来源引证溯源</span>
-          </div>
-          <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/[0.05] flex flex-col items-center justify-center text-center">
-            <span className="text-base sm:text-lg font-bold text-amber-400 tracking-tight">深夜护眼模式</span>
-            <span className="text-[11px] text-slate-400 mt-0.5">沉浸式专注研究</span>
-          </div>
+          {LANDING_HIGHLIGHTS.map((item, idx) => (
+            <div
+              key={item.label}
+              className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/[0.05] flex flex-col items-center justify-center text-center"
+            >
+              <span
+                className={`text-base sm:text-lg font-bold tracking-tight ${HIGHLIGHT_CLASSES[idx] ?? 'text-white'}`}
+              >
+                {item.label}
+              </span>
+              <span className="text-[11px] text-slate-400 mt-0.5">{item.sub}</span>
+            </div>
+          ))}
         </div>
       </section>
 
@@ -748,7 +718,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         {/* Tab Selection */}
         <div className="flex flex-wrap items-center justify-center gap-3 mb-10">
           {scenarios.map((sc, idx) => {
-            const Icon = sc.icon;
+            const Icon = SCENARIO_ICONS[sc.icon];
             const isActive = activeScenario === idx;
             return (
               <button

@@ -13,6 +13,7 @@ import { foldersRouter } from './routes/folders.js';
 import { errorHandler } from './middleware/error-handler.js';
 import { sameOriginGuard } from './middleware/same-origin.js';
 import { checkDbStatus } from './core/db-status.js';
+import { buildRobotsTxt, buildSitemapXml, resolveOrigin } from './lib/seo.js';
 
 /**
  * Express 应用工厂：中间件、健康检查与 API 路由挂载。
@@ -84,6 +85,18 @@ export function createApp(): express.Express {
   app.use('/api/quota', quotaRouter);
   app.use('/api/shares', sharesRouter);
   app.use('/api/folders', foldersRouter);
+
+  // SEO 基础文件：`/robots.txt` 与 `/sitemap.xml`。
+  // 动态生成而非塞进 public/ —— 仓库里就不必硬编码生产域名，且 sitemap 的 loc 与
+  // canonical 恒同源（都走 resolveOrigin：APP_URL 优先，未配置才按请求推导）。
+  // 必须挂在 errorHandler 之前，否则这两个端点的异常会绕过统一 JSON 错误处理。
+  app.get('/robots.txt', (req, res) => {
+    res.type('text/plain').send(buildRobotsTxt(resolveOrigin(req)));
+  });
+
+  app.get('/sitemap.xml', (req, res) => {
+    res.set('Content-Type', 'application/xml; charset=utf-8').send(buildSitemapXml(resolveOrigin(req)));
+  });
 
   // Unified error handling (must be after all API routes)
   app.use(errorHandler);
