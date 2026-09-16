@@ -100,13 +100,11 @@ export interface AuthUser {
   locked_until?: string | null;
   last_login_at?: string | null;
   created_at?: string;
-  /** ADR-0022：服务端派生的账号构成标记。微信自动建号的账号是占位邮箱 + 不可满足的口令，
-   *  前端据此把「邮箱」显示为「微信登录」、并隐藏修改密码表单（旧密码未知，表单必然失败） */
-  email_placeholder?: boolean;
+  /** 服务端派生的账号构成标记：账号是否设了口令。注册路径只有「邮箱 + 密码」，
+   *  故恒为 true；保留为服务端字段的消费口，供将来出现无口令账号时降级展示（见
+   *  UserProfileModal 安全页的防御性分支）。2026-09-16 撤销微信登录入口后，
+   *  `email_placeholder` / `wechat_bound` / `wechat_nickname` 已不再被前端消费，故移除。 */
   has_password?: boolean;
-  /** ADR-0023：第三方绑定状态（由 /me 单独查询返回，不在 sign-up/sign-in 的响应里） */
-  wechat_bound?: boolean;
-  wechat_nickname?: string | null;
   canvas_count?: number;
   total_tokens_used?: number;
   /** 服务端权益（Spec B1/B3）：plan 区分体验版/VIP/Admin，vipExpired + 宽限剩余天数供横幅 */

@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { LogIn, UserPlus, Sparkles, Key, Mail, AlertCircle, X, CheckCircle2, ArrowLeft, ShieldCheck, QrCode } from 'lucide-react';
+import { LogIn, UserPlus, Sparkles, Key, Mail, AlertCircle, X, CheckCircle2, ArrowLeft, ShieldCheck } from 'lucide-react';
 
 export const AuthModal: React.FC = () => {
-  const { authModalOpen, authModalMode, closeAuthModal, login, register, sendRegisterCode, openAuthModal, wechatEnabled, wechatError, clearWechatError } = useAuth();
+  const { authModalOpen, authModalMode, closeAuthModal, login, register, sendRegisterCode, openAuthModal } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
@@ -85,7 +85,6 @@ export const AuthModal: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    clearWechatError();
     setSubmitting(true);
     setLockoutMinutes(null);
 
@@ -224,11 +223,11 @@ export const AuthModal: React.FC = () => {
             </>
           ) : (
           <>
-          {(error || wechatError) && (
+          {error && (
             <div className="mb-4 p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 flex items-start gap-2.5 text-xs text-rose-700 dark:text-rose-300">
               <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
               <div>
-                <p className="font-medium">{error || wechatError}</p>
+                <p className="font-medium">{error}</p>
                 {lockoutMinutes && (
                   <p className="mt-1 text-rose-600 dark:text-rose-400">
                     账户触发防爆破机制，请于 {lockoutMinutes} 分钟后再尝试。
@@ -359,29 +358,6 @@ export const AuthModal: React.FC = () => {
               )}
             </button>
           </form>
-
-          {/* ADR-0022：微信扫码登录（整页跳转，不经前端 fetch——回调要拿微信 302 回来的 code）。
-              渠道未配置时整块不渲染，而不是给出一个必然失败的按钮。 */}
-          {wechatEnabled && (
-            <div className="mt-4">
-              <div className="flex items-center gap-3">
-                <span className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />
-                <span className="text-[11px] text-slate-400 dark:text-slate-500">或</span>
-                <span className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />
-              </div>
-              <a
-                href="/api/auth/wechat/authorize"
-                onClick={() => clearWechatError()}
-                className="mt-3 w-full py-2.5 px-4 flex items-center justify-center gap-2 rounded-xl text-sm font-medium text-slate-700 dark:text-slate-200 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-              >
-                <QrCode className="w-4 h-4 text-emerald-600 dark:text-emerald-500" />
-                微信扫码登录
-              </a>
-              <p className="mt-2 text-center text-[11px] text-slate-400 dark:text-slate-500">
-                使用微信扫描二维码即可快速登录
-              </p>
-            </div>
-          )}
 
           {/* Toggle Tab */}
           <div className="mt-4 text-center">
