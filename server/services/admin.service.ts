@@ -11,6 +11,8 @@ import { recordAuditLog, listAuditLogs } from '../repositories/audit.repository.
 import { NotFoundError } from '../lib/errors.js';
 import { DEFAULT_AI_MODEL_CONFIG } from '../core/records.js';
 import type { AiModelConfig, UserRecord } from '../core/records.js';
+import { destroyOAuthIdentity, findOAuthIdentityByUserId } from '../repositories/oauth.repository.js';
+import { WECHAT_PROVIDER } from './wechat.service.js';
 
 export {
   listAdminUsers,
@@ -82,6 +84,52 @@ export async function restoreAccount(
   });
 
   return restored;
+}
+
+/** 运营台可解除的第三方绑定白名单（目前只有微信；加服务商必须同时改这里与前端文案） */
+const UNBINDABLE_PROVIDERS = new Set<string>([WECHAT_PROVIDER]);
+
+/**
+ * ADR-0023：运营台解除某用户的第三方登录绑定——**误绑时的唯一退路**。
+ *
+ * 用户侧刻意不提供自助解绑（单向绑定），但若没有任何解除手段，
+ * 「扫了别人的微信 / 手机号被回收后微信号易主」就会留下一个**永久且无法移除**的登录凭据。
+ * 用户找客服 → 运营台解绑 → 用户重新绑正确的微信。
+ *
+ * 调用方在 admin 路由的 `runWithSystem` 作用域内（跨租户），故这里的仓储调用无需额外作用域处理。
+ */
+export async function unbindOAuthIdentity(data: {
+  actorId: string;
+  targetUserId: string;
+  provider: string;
+  ip?: string;
+  userAgent?: string;
+}): Promise<{ provider: string; nickname: string | null }> {
+  if (!UNBINDABLE_PROVIDERS.has(data.provider)) {
+    throw new NotFoundError('不支持该第三方登录方式');
+  }
+
+  const target = await findUserById(data.targetUserId);
+  if (!target) throw new NotFoundError('用户不存在');
+
+  // 删除前取一次昵称：解绑后审计里还能看出「解掉的是谁」，这是排障的唯一线索
+  const identity = await findOAuthIdentityByUserId(data.targetUserId, data.provider);
+  if (!identity) throw new NotFoundError('该用户未绑定此第三方账号');
+
+  const removed = await destroyOAuthIdentity(data.targetUserId, data.provider);
+  if (removed === 0) throw new NotFoundError('该用户未绑定此第三方账号');
+
+  await recordAuditLog({
+    userId: data.actorId,
+    action: 'admin_oauth_unbind',
+    targetType: 'user',
+    targetId: data.targetUserId,
+    ip: data.ip,
+    userAgent: data.userAgent,
+    details: { provider: data.provider, nickname: identity.nickname ?? null },
+  });
+
+  return { provider: data.provider, nickname: identity.nickname ?? null };
 }
 
 /**

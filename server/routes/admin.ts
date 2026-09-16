@@ -8,6 +8,7 @@ import {
   getUserOrFail,
   restoreAccount,
   adminUpdateUserEmail,
+  unbindOAuthIdentity,
   getMaskedModelConfig,
   resolveConfigForSave,
   saveModelConfigWithAudit,
@@ -20,7 +21,7 @@ import { getAiModelConfig, isModelConfigured } from '../services/ai.service.js';
 import { asyncHandler } from '../lib/async-handler.js';
 import { checkDbStatus } from '../core/db-status.js';
 import { validate } from '../lib/validate.js';
-import { authMiddleware, requireAdmin, adminLogReadRateLimiter } from '../middleware/auth.js';
+import { authMiddleware, requireAdmin, adminLogReadRateLimiter, adminUserWriteRateLimiter } from '../middleware/auth.js';
 import { runWithSystem } from '../core/db-context.js';
 import { GoogleGenAI } from '@google/genai';
 
@@ -187,6 +188,27 @@ adminRouter.put('/users/:id/restore', asyncHandler(async (req: Request, res: Res
     success: true,
     message: '账号已恢复',
     user: restored,
+  });
+}));
+
+/**
+ * DELETE /api/admin/users/:id/oauth/:provider
+ * ADR-0023：解除某用户的第三方登录绑定（当前仅 wechat）。误绑时的**唯一退路**——
+ * 用户侧刻意不提供自助解绑，若运营台也没有，一个扫错的微信就成了永久登录凭据。
+ * 未绑定该第三方 → 404。
+ */
+adminRouter.delete('/users/:id/oauth/:provider', adminUserWriteRateLimiter, asyncHandler(async (req: Request, res: Response) => {
+  const result = await unbindOAuthIdentity({
+    actorId: req.user!.id,
+    targetUserId: req.params.id,
+    provider: req.params.provider,
+    ip: req.ip,
+    userAgent: req.headers['user-agent'],
+  });
+  res.json({
+    success: true,
+    message: '已解除该用户的第三方登录绑定',
+    ...result,
   });
 }));
 

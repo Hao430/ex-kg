@@ -3,6 +3,7 @@ import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 
 import { authRouter } from './routes/auth.js';
+import { wechatRouter } from './routes/wechat.js';
 import { adminRouter } from './routes/admin.js';
 import { canvasesRouter } from './routes/canvases.js';
 import { chatRouter } from './routes/chat.js';
@@ -74,6 +75,9 @@ export function createApp(): express.Express {
 
   // Mount modular sub-routers
   app.use('/api/auth', authRouter);
+  // 微信登录（ADR-0022）：必须在同一守卫之下。authRouter 无 `/wechat/*` 路由，
+  // 未命中即 next() 落到这里；两条挂载共用 `/api/auth` 前缀互不干扰。
+  app.use('/api/auth/wechat', wechatRouter);
   app.use('/api/feedback', (req, res, next) => {
     req.url = '/feedback';
     authRouter(req, res, next);

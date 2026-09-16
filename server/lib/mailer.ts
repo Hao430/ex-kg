@@ -135,11 +135,42 @@ export async function sendPasswordResetEmail(to: string, resetUrl: string): Prom
   }
 }
 
+/**
+ * ADR-0023：发送「绑定邮箱」验证码邮件（6 位数字码，10 分钟内有效）。
+ *
+ * 主题与正文都必须与注册验证码区分开：收件人已经注册过了，收到
+ * 「欢迎加入 枝想，您的注册验证码」是错的提示；测试的 outbox 断言又是按主题
+ * **精确匹配**的，同主题会让绑定用例的选择器产生歧义。
+ */
+export async function sendEmailBindCodeEmail(to: string, code: string): Promise<void> {
+  const subject = '枝想 邮箱绑定验证码';
+  const text = `您正在为 枝想 账号绑定此邮箱。验证码为：${code}（10 分钟内有效）。\n如非本人操作，请忽略此邮件。`;
+  const html = `<p>您正在为 枝想 账号绑定此邮箱。</p><p>验证码为：</p><p style="font-size:24px;letter-spacing:8px;font-weight:bold;">${code}</p><p>验证码 10 分钟内有效。如非本人操作，请忽略此邮件。</p>`;
+
+  try {
+    if (isDryRun()) {
+      outbox.unshift({ to, subject, text, html });
+      if (outbox.length > OUTBOX_LIMIT) outbox.pop();
+      console.log(`[mailer:dry-run] 邮箱绑定验证码邮件（${to}）：${code}`);
+      return;
+    }
+
+    await getTransporter().sendMail({
+      from: process.env.SMTP_USER,
+      to,
+      subject,
+      text,
+      html,
+    });
+  } catch (e) {
+    console.warn('邮箱绑定验证码邮件发送失败（不影响主流程）:', e);
+  }
+}
+
 /** 测试辅助：读取干跑 outbox */
 export function getOutboxForTest(): Array<{ to: string; subject: string; text?: string; html?: string }> {
   return outbox;
 }
-
 /** 测试辅助：清空 outbox */
 export function clearOutboxForTest(): void {
   outbox.length = 0;

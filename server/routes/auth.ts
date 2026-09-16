@@ -5,13 +5,16 @@ import { recordAuditLog } from '../repositories/audit.repository.js';
 import { signUp, signIn, updateProfile, resendVerification, requestPasswordReset, resetPassword, changeOwnPassword, deleteOwnAccount, sendRegisterCode } from '../services/auth.service.js';
 import { markEmailVerifiedByToken } from '../repositories/user.repository.js';
 import { ValidationError } from '../lib/errors.js';
+import { OAUTH_UNSET_PASSWORD_HASH } from '../lib/crypto.js';
+import { isPlaceholderEmail } from '../services/wechat.service.js';
 import { submitFeedback } from '../services/feedback.service.js';
 import { asyncHandler } from '../lib/async-handler.js';
 import { validate } from '../lib/validate.js';
 import { effectiveEntitlements } from '../services/quota.service.js';
 import { setSessionCookie, clearSessionCookie, extractSessionToken } from '../lib/session-cookie.js';
 import { runWithSystem } from '../core/db-context.js';
-import { authMiddleware, loginRateLimiter, signupRateLimiter, resendVerificationRateLimiter, forgotPasswordRateLimiter, sendRegisterCodeRateLimiter } from '../middleware/auth.js';
+import { authMiddleware, loginRateLimiter, signupRateLimiter, resendVerificationRateLimiter, forgotPasswordRateLimiter, sendRegisterCodeRateLimiter, bindEmailSendCodeRateLimiter, bindEmailRateLimiter } from '../middleware/auth.js';
+import { bindEmail, bindEmailSendCode, getWechatBinding } from '../services/account-binding.service.js';
 
 export const authRouter = Router();
 
@@ -58,9 +61,33 @@ const ChangePasswordSchema = z.object({
   newPassword: z.string().min(6, '新密码长度至少为 6 位'),
 });
 
+/** ADR-0023 绑定邮箱：与注册同款的邮箱 + 6 位验证码（**刻意不含密码**） */
+const BindEmailSendCodeSchema = z.object({
+  email: z.string().email('请输入有效的邮箱地址'),
+});
+
+const BindEmailSchema = z.object({
+  email: z.string().email('请输入有效的邮箱地址'),
+  code: z.string().regex(/^\d{6}$/, '请输入 6 位数字验证码'),
+});
+
+/**
+ * ADR-0022：账号构成标记，**由服务端派生而非新增数据库列**。
+ * 纯微信账号的 email 是占位地址（`@wechat.invalid`）、password_hash 是不可满足的哨兵，
+ * 前端据此把「邮箱」改称「微信登录」、并隐藏修改密码表单（旧密码未知，表单必然失败）。
+ * 判据留在服务端，前端不重复实现「什么算占位」。
+ */
+function accountFlavor(user: { email: string; password_hash: string }) {
+  return {
+    email_placeholder: isPlaceholderEmail(user.email),
+    has_password: user.password_hash !== OAUTH_UNSET_PASSWORD_HASH,
+  };
+}
+
 function publicUser(user: {
   id: string;
   email: string;
+  password_hash: string;
   name: string;
   avatar?: string;
   role: string;
@@ -78,6 +105,7 @@ function publicUser(user: {
     role: user.role,
     vip_expires_at: user.vip_expires_at,
     email_verified: user.email_verified,
+    ...accountFlavor(user),
   };
 }
 
@@ -190,9 +218,13 @@ authRouter.delete('/account', authMiddleware, asyncHandler(async (req: Request, 
  * GET /api/auth/me
  * Get current session user profile
  */
-authRouter.get('/me', authMiddleware, (req: Request, res: Response) => {
+authRouter.get('/me', authMiddleware, asyncHandler(async (req: Request, res: Response) => {
   const user = req.user!;
   const entitlements = effectiveEntitlements(user);
+  // ADR-0023：绑定状态只在这里查（不放进 publicUser）——publicUser 是 sign-up/sign-in 的
+  // 纯行格式化器，那些响应不需要也不该承担这次查询。本 handler 已在 authMiddleware 建立的
+  // runWithUser 作用域内，ALS 跨 await 存活，因此按 user_id 查 oauth_identities 天然放行。
+  const wechat = await getWechatBinding(user.id);
   res.json({
     user: {
       id: user.id,
@@ -205,10 +237,13 @@ authRouter.get('/me', authMiddleware, (req: Request, res: Response) => {
       is_active: user.is_active,
       created_at: user.created_at,
       last_login_at: user.last_login_at,
+      ...accountFlavor(user),
+      wechat_bound: wechat.bound,
+      wechat_nickname: wechat.nickname,
       entitlements,
     },
   });
-});
+}));
 
 /**
  * POST /api/auth/profile
@@ -316,6 +351,38 @@ authRouter.post('/change-password', authMiddleware, loginRateLimiter, asyncHandl
   });
   clearSessionCookie(res);
   res.json({ success: true, message: '密码已修改，请使用新密码重新登录' });
+}));
+
+/**
+ * POST /api/auth/bind-email/send-code（登录态，ADR-0023）
+ * 为「微信自动建号的账号」补绑邮箱时发送验证码（6 位，10 分钟，每邮箱 60s 冷却）。
+ * 仅占位邮箱账号可用（真实邮箱账号 → 400 EMAIL_ALREADY_BOUND，即不提供换绑）。
+ */
+authRouter.post('/bind-email/send-code', authMiddleware, bindEmailSendCodeRateLimiter, asyncHandler(async (req: Request, res: Response) => {
+  const { email } = validate(BindEmailSendCodeSchema, req.body);
+  await bindEmailSendCode({ userId: req.user!.id, email });
+  res.json({ success: true, message: '绑定验证码已发送至该邮箱，10 分钟内有效' });
+}));
+
+/**
+ * POST /api/auth/bind-email（登录态，ADR-0023）
+ * 补绑邮箱：只绑邮箱**不设密码**，绑完 email_verified 仍为 true、会话不踢。
+ * 想用邮箱+密码登录的用户，之后走登录页「忘记密码」自助设置（该地址此时已可达）。
+ */
+authRouter.post('/bind-email', authMiddleware, bindEmailRateLimiter, asyncHandler(async (req: Request, res: Response) => {
+  const { email, code } = validate(BindEmailSchema, req.body);
+  const user = await bindEmail({
+    userId: req.user!.id,
+    email,
+    code,
+    ip: req.ip,
+    userAgent: req.headers['user-agent'],
+  });
+  res.json({
+    success: true,
+    message: '邮箱绑定成功，可通过「忘记密码」设置登录密码',
+    user: publicUser(user),
+  });
 }));
 
 /**

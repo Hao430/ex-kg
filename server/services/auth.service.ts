@@ -18,11 +18,42 @@ import {
 } from '../repositories/user.repository.js';
 import { createSession, deleteUserSessions } from '../repositories/session.repository.js';
 import { recordAuditLog } from '../repositories/audit.repository.js';
+import { isPlaceholderEmail } from './wechat.service.js';
 import type { UserRecord } from '../core/records.js';
 
 export interface AuthResult {
   user: UserRecord;
   token: string;
+}
+
+/** 邮箱验证码的生成与有效期口径集中在这里（注册与「补绑邮箱」共用，避免两处漂移） */
+export function generateEmailCode(): string {
+  return crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
+}
+
+export const EMAIL_CODE_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * 消费邮箱验证码，失败即抛 ValidationError。
+ *
+ * 抽出来的理由：注册（`signUp`）与补绑邮箱（`bindEmail`）是两条独立流程，
+ * 但「错码提示文案 + 剩余次数计算」必须完全一致——各写一份迟早会分叉，
+ * 而分叉的表现是同一台设备上两条流程对同一个码给出不同的剩余次数。
+ */
+export async function consumeEmailCodeOrThrow(email: string, code: string): Promise<void> {
+  const consumed = await consumeCode(email, code);
+  if (consumed.result === 'invalid') {
+    throw new ValidationError('验证码错误或已过期，请重新获取', 'INVALID_CODE');
+  }
+  if (consumed.result === 'mismatch') {
+    const remaining = Math.max(0, EMAIL_CODE_MAX_ATTEMPTS - consumed.attempts);
+    throw new ValidationError(
+      remaining > 0
+        ? `验证码错误，还可尝试 ${remaining} 次`
+        : '验证码错误次数过多，请重新获取',
+      'INVALID_CODE'
+    );
+  }
 }
 
 /**
@@ -37,25 +68,18 @@ export async function signUp(data: {
   userAgent?: string;
 }): Promise<AuthResult> {
   const email = data.email.toLowerCase().trim();
+  // ADR-0022：预留域必须拒。否则有人能用 wx_<受害者openid哈希>@wechat.invalid 抢注占位，
+  // 让受害者的微信首登撞 users.email 唯一索引且无身份行可回退（定向拒绝服务）
+  if (isPlaceholderEmail(email)) {
+    throw new ValidationError('该邮箱域名不可用于注册', 'EMAIL_DOMAIN_RESERVED');
+  }
   const existing = await findUserByEmail(email);
   if (existing) {
     throw new ConflictError('该邮箱已被注册，请直接登录', 'EMAIL_EXISTS');
   }
 
   // 验证码先行：无有效验证码不得建号。先查重后消费，避免已注册邮箱借码链路探测
-  const consumed = await consumeCode(email, data.code);
-  if (consumed.result === 'invalid') {
-    throw new ValidationError('验证码错误或已过期，请重新获取', 'INVALID_CODE');
-  }
-  if (consumed.result === 'mismatch') {
-    const remaining = Math.max(0, EMAIL_CODE_MAX_ATTEMPTS - consumed.attempts);
-    throw new ValidationError(
-      remaining > 0
-        ? `验证码错误，还可尝试 ${remaining} 次`
-        : '验证码错误次数过多，请重新获取',
-      'INVALID_CODE'
-    );
-  }
+  await consumeEmailCodeOrThrow(email, data.code);
 
   const passwordHash = await hashPassword(data.password);
   const newUser = await createUser({
@@ -90,6 +114,10 @@ export async function signUp(data: {
  */
 export async function sendRegisterCode(email: string): Promise<void> {
   const normalized = email.toLowerCase().trim();
+  // 与 signUp 同款预留域拦截：不让验证码白白发往一个永不可用、且会抢占微信占位的地址
+  if (isPlaceholderEmail(normalized)) {
+    throw new ValidationError('该邮箱域名不可用于注册', 'EMAIL_DOMAIN_RESERVED');
+  }
   const existing = await findUserByEmail(normalized);
   if (existing) {
     throw new ConflictError('该邮箱已被注册，请直接登录', 'EMAIL_EXISTS');
@@ -100,8 +128,8 @@ export async function sendRegisterCode(email: string): Promise<void> {
     throw new AppError(429, 'CODE_COOLDOWN', '验证码发送过于频繁，请 1 分钟后再试');
   }
 
-  const code = crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  const code = generateEmailCode();
+  const expiresAt = new Date(Date.now() + EMAIL_CODE_TTL_MS).toISOString();
   await upsertCode(normalized, code, expiresAt);
 
   // 发信失败仅 warn，不影响响应（用户可重发，受冷却/限流保护）

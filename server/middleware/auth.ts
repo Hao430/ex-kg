@@ -367,3 +367,102 @@ export const roleBasedRateLimiter = rateLimit({
     });
   },
 });
+
+/**
+ * 微信登录限流器组（ADR-0022）。三个**独立实例**（ADR-0007），互不挤占额度。
+ *
+ * 这一组端点全部**免 auth**（它们就是登录路径本身），所以计数只能按 IP。
+ * 与支付宝 `/notify` 的「免限流」不同：那个是服务器对服务器、验签即鉴权、限流会毁掉
+ * 重试风暴的自愈；而这里是**浏览器驱动**、可被廉价刷、唯一鉴权就是 state cookie，
+ * 因此 per-IP 限流是真实防线而非摆设。
+ */
+
+/** 20 req/min per IP：只做一件事——生成 state 并 302 到微信，防跳转刷量 */
+export const wechatAuthorizeRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => ipKeyGenerator(req.ip || 'anonymous'),
+  message: {
+    error: '微信登录请求过于频繁，请稍后再试',
+    code: 'RATE_LIMIT_EXCEEDED',
+  },
+});
+
+/**
+ * 30 req/min per IP：回调背后是「外呼微信 ×2 + 可能的建号写库」，是真开销。
+ *
+ * `handler` 刻意不用默认的 JSON 响应：本端点是**浏览器顶层导航**的落点，
+ * 用户看到一坨 JSON 429 会以为网站坏了。改成 302 回前端，由前端给一句人话。
+ */
+export const wechatCallbackRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => ipKeyGenerator(req.ip || 'anonymous'),
+  handler: (_req: Request, res: Response) => {
+    res.redirect('/?wechat_error=RATE_LIMITED');
+  },
+});
+
+/** 60 req/min per IP：只回一个布尔值 `{enabled}`，供前端决定是否渲染按钮（兼运维探针） */
+export const wechatStatusRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => ipKeyGenerator(req.ip || 'anonymous'),
+  message: {
+    error: '请求过于频繁，请稍后再试',
+    code: 'RATE_LIMIT_EXCEEDED',
+  },
+});
+
+/**
+ * 补绑邮箱（ADR-0023）的两个限流器。都是 **per-user**，因此必须挂在 `authMiddleware` **之后**
+ * （先例 `resendVerificationRateLimiter`）：同一 NAT 出口的多个用户不该互相挤额度。
+ */
+
+/** 5 req/hour per user：每次都会真发一封信，按邮费口径收紧 */
+export const bindEmailSendCodeRateLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => (req.user ? `user_${req.user.id}` : ipKeyGenerator(req.ip || 'anonymous')),
+  message: {
+    error: '验证码发送过于频繁，请稍后再试',
+    code: 'RATE_LIMIT_EXCEEDED',
+  },
+});
+
+/** 10 req/hour per user：挡住 6 位码的提交刷量（连错 5 次作废是第二道，见 consumeCode） */
+export const bindEmailRateLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => (req.user ? `user_${req.user.id}` : ipKeyGenerator(req.ip || 'anonymous')),
+  message: {
+    error: '操作过于频繁，请稍后再试',
+    code: 'RATE_LIMIT_EXCEEDED',
+  },
+});
+
+/**
+ * 30 req/min per user：运营台的**写**操作（当前唯一消费方是解除第三方绑定）。
+ * 与 `adminLogReadRateLimiter` 分开实例（ADR-0007）——读日志的额度不该被写操作占用，反之亦然。
+ */
+export const adminUserWriteRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => (req.user ? `user_${req.user.id}` : ipKeyGenerator(req.ip || 'anonymous')),
+  message: {
+    error: '操作过于频繁，请稍后再试',
+    code: 'RATE_LIMIT_EXCEEDED',
+  },
+});

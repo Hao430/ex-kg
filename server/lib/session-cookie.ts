@@ -58,3 +58,51 @@ export function extractSessionToken(req: Request): string | null {
   }
   return null;
 }
+
+/**
+ * 微信授权 state 的双提交 cookie（ADR-0022）。
+ *
+ * 微信回调是一个**跨站顶层 GET 导航**（从 `open.weixin.qq.com` 跳回本站），
+ * 而 `same-origin.ts` 的守卫刻意只覆盖 POST/PUT/PATCH/DELETE，GET 不受其保护；
+ * 会话也还没有（此刻用户尚未登录）。因此回调的 CSRF 防护就是这里的双提交：
+ * `/authorize` 生成随机 state 写入本 cookie 并随授权 URL 带给微信，
+ * 微信原样回传，回调比对二者相等才换 code。
+ *
+ * `SameSite=Lax` 是必需的也是充分的——Lax 允许顶层 GET 导航携带 cookie，
+ * 又不会让跨站子请求带上它。`path` 收窄到授权/回调路径，最小化暴露面。
+ */
+export const WECHAT_STATE_COOKIE_NAME = 'wechat_oauth_state';
+
+/** state 有效期 10 分钟：与微信授权 code 的 10 分钟生命对齐（超时的 code 换了也没用） */
+const WECHAT_STATE_MAX_AGE_MS = 10 * 60 * 1000;
+
+const WECHAT_AUTH_PATH = '/api/auth/wechat';
+
+/** 与 `sessionCookieOptions` 同款三条安全属性，只多一个收窄的 path */
+function wechatStateCookieOptions(): CookieOptions {
+  return {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: WECHAT_AUTH_PATH,
+  };
+}
+
+/** 下发一次性 state cookie（`GET /api/auth/wechat/authorize`） */
+export function setWechatStateCookie(res: Response, state: string): void {
+  res.cookie(WECHAT_STATE_COOKIE_NAME, state, {
+    ...wechatStateCookieOptions(),
+    maxAge: WECHAT_STATE_MAX_AGE_MS,
+  });
+}
+
+/** 清除 state cookie。回调**一进入就清**（无论成败）：state 是一次性的 */
+export function clearWechatStateCookie(res: Response): void {
+  res.clearCookie(WECHAT_STATE_COOKIE_NAME, wechatStateCookieOptions());
+}
+
+/** 读取 state cookie（回调校验用；无 cookie 返回 null） */
+export function readWechatStateCookie(req: Request): string | null {
+  const value = req.cookies?.[WECHAT_STATE_COOKIE_NAME];
+  return typeof value === 'string' && value ? value : null;
+}
