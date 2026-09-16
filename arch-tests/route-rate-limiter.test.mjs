@@ -28,8 +28,13 @@ const FILE_ALLOWLIST = new Set([
   // 健康检查等公开读端点
 ]);
 
-/** 路由方法正则 */
-const ROUTE_METHOD_RE = /\b(router|chatRouter|authRouter|adminRouter|canvasesRouter|subscriptionsRouter|quotaRouter|sharesRouter)\.(get|post|put|patch|delete)\s*\(/g;
+/**
+ * 路由方法正则。
+ * ⚠️ 变量名白名单是硬编码的：新增 `server/routes/*.ts` 时**必须把它的 router 变量名加进来**，
+ * 否则该文件匹配不到任何路由（methods.length === 0 → continue）而被静默跳过，
+ * 限流器判据对它等于零覆盖。2026-09-16 加入 wechatRouter（ADR-0022）。
+ */
+const ROUTE_METHOD_RE = /\b(router|chatRouter|authRouter|adminRouter|canvasesRouter|subscriptionsRouter|quotaRouter|sharesRouter|wechatRouter)\.(get|post|put|patch|delete)\s*\(/g;
 
 test('routes 目录下每个路由文件都引用至少一个限流器（ADR-0007）', () => {
   const files = readdirSync(ROUTES_DIR)
