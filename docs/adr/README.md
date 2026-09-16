@@ -47,6 +47,7 @@
 | [0020](./0020-same-origin-guard.md) | 变更方法同源守卫 + 会话 cookie 属性单一事实源 | Accepted | 2026-09-12 | 只对 `POST/PUT/PATCH/DELETE` 的显式来源校验（`Sec-Fetch-Site`/`Origin`/`Referer`），**无 `Origin` 一律放行**（锁定非浏览器客户端契约）；cookie 属性收敛为单一事实源；`urlencoded` 收窄到支付宝通知单端点；两个改状态的 GET 记录为已接受 |
 | [0022](./0022-wechat-web-login.md) | 接入微信开放平台「网站应用」登录 | Accepted | 2026-09-16 | 身份落新表 `oauth_identities`（`unionid` **不作唯一键**，否则堵死跨应用同人收敛）；微信无邮箱无口令 → 确定性占位邮箱 + 不可满足的口令哨兵 + 出生即 `email_verified`；回调是**改状态的 GET**（第三例），CSRF 靠 state 双提交 cookie；限流**不豁免**（与支付宝 `/notify` 相反）；不引入微信 SDK、不落 token |
 | [0023](./0023-account-binding.md) | 账号绑定（微信 ↔ 邮箱，单向） | Accepted | 2026-09-16 | 回调「**有有效会话即绑定**」（顺手堵掉已登录浏览器经书签触发静默换账号）；补绑邮箱只绑邮箱**不设密码**、`email_verified` 保持 TRUE（复用 admin 换绑函数会把全部 chat 403 打挂）；唯一性预检**必须跨租户**（`runWithUser` 下 RLS 会让它恒返回 null）；**新增凭据不踢会话**；用户不解绑但给运营台**解绑逃生舱** |
+| [0024](./0024-outbound-request-guard.md) | 出站请求守卫（管理员可填的服务地址） | Accepted | 2026-09-16 | 管理员填的 `openai_base_url` 此前无任何校验 → 联调端点会把**平台真实密钥**送到任意主机 + SSRF 内网/元数据。恒定拒绝非法协议/内嵌凭据/云元数据；私网与明文 http 默认拒绝、`OUTBOUND_ALLOW_PRIVATE_HOSTS=true` 显式放开；掩码密钥回落**必须同主机**；保存/联调/使用点四处校验；**不判 `NODE_ENV`**（mock-pay 的反面教材）；DNS rebinding 残留已明说 |
 
 ### 同步与并发
 
@@ -73,7 +74,7 @@
 - **部署 / 运维**：[0001](./0001-single-port-fullstack.md) · [0019](./0019-db-role-separation-and-rls.md)
 - **持久化 / 数据**：[0002](./0002-dual-mode-persistence.md) · [0004](./0004-strict-tenant-ownership.md) · [0005](./0005-soft-delete-with-30d-cooldown.md) · [0012](./0012-default-canvas-no-delete.md) · [0013](./0013-frontend-node-id-truncation.md) · [0015](./0015-canvas-library-single-level-folders.md) · [0016](./0016-admin-strict-canvas-tenancy.md) · [0019](./0019-db-role-separation-and-rls.md) · [0022](./0022-wechat-web-login.md) · [0023](./0023-account-binding.md)
 - **AI 集成**：[0003](./0003-multi-model-failover.md) · [0009](./0009-150-node-subtree-split.md)
-- **业务与安全**：[0007](./0007-independent-rate-limiters.md) · [0010](./0010-scrypt-hardening.md) · [0011](./0011-email-verification-code-first.md) · [0014](./0014-alipay-page-pay.md) · [0020](./0020-same-origin-guard.md) · [0022](./0022-wechat-web-login.md) · [0023](./0023-account-binding.md)
+- **业务与安全**：[0007](./0007-independent-rate-limiters.md) · [0010](./0010-scrypt-hardening.md) · [0011](./0011-email-verification-code-first.md) · [0014](./0014-alipay-page-pay.md) · [0020](./0020-same-origin-guard.md) · [0022](./0022-wechat-web-login.md) · [0023](./0023-account-binding.md) · [0024](./0024-outbound-request-guard.md)
 - **同步与并发**：[0008](./0008-sync-state-machine.md) · [0017](./0017-node-level-merge-and-tombstones.md) · [0021](./0021-server-authoritative-sync.md)
 
 > 索引本身由 ADR 维护者更新；新增 ADR 时把行加到对应主题段，并按编号升序排列。

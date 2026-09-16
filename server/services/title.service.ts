@@ -5,7 +5,7 @@
  * - 非关键路径：任何失败静默返回 null，前端保留现有截断标题
  */
 import { GoogleGenAI } from '@google/genai';
-import { getAiModelConfig } from './ai.service.js';
+import { getAiModelConfig, resolveOpenAiEndpoint } from './ai.service.js';
 import type { AiModelConfig } from '../core/records.js';
 
 export interface AutoTitleResult {
@@ -99,9 +99,10 @@ export async function generateAutoTitles(opts: {
   // PATH A：openai 兼容 /responses（非流式，不挂任何工具）
   if (config.provider === 'openai' && config.openai_api_key) {
     const modelName = config.openai_model || 'qwen-plus';
-    const baseUrl = (config.openai_base_url || 'https://api.openai.com/v1').replace(/\/+$/, '');
+    // ADR-0024：出站守卫（与 chat 共用 ai.service 的解析函数，避免两处校验漂移）
+    const endpoint = resolveOpenAiEndpoint(config, '/responses');
     try {
-      const res = await fetch(`${baseUrl}/responses`, {
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.openai_api_key}` },
         body: JSON.stringify({

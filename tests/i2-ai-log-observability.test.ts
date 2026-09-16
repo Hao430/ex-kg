@@ -17,6 +17,10 @@ import { createApp } from '../server/app.js';
 import { getAiRequestLogsForTest } from '../server/repositories/ai.repository.js';
 import { getEventLogsForTest } from '../server/repositories/event-log.repository.js';
 
+// ADR-0024 出站守卫：本套件刻意把模型地址指向回环（`http://127.0.0.1:9/v1`，由 fetch stub 拦截），
+// 守卫默认拒绝回环/内网与明文 http，故显式翻开开关（守卫默认值保持严格，不因测试放宽）。
+process.env.OUTBOUND_ALLOW_PRIVATE_HOSTS = 'true';
+
 let server: http.Server;
 let base = '';
 let adminCookie = '';

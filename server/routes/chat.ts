@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { GoogleGenAI } from '@google/genai';
-import { getAiModelConfig, isModelConfigured, recordAiRequestLog, sumUserTokensSince } from '../services/ai.service.js';
+import { getAiModelConfig, isModelConfigured, recordAiRequestLog, sumUserTokensSince, resolveOpenAiEndpoint } from '../services/ai.service.js';
 import { recordEventLog } from '../repositories/event-log.repository.js';
 import { authMiddleware, validateInputLimits, roleBasedRateLimiter } from '../middleware/auth.js';
 import { chatQuotaMiddleware } from '../middleware/quota.js';
@@ -285,11 +285,12 @@ chatRouter.post(
       // =========================================================================
       if (systemModelConfig.provider === 'openai' && systemModelConfig.openai_api_key) {
         obsProvider = 'openai';
-        const baseUrl = (systemModelConfig.openai_base_url || 'https://api.openai.com/v1').replace(/\/+$/, '');
         const actualModelUsed = systemModelConfig.openai_model || model;
         actualModelName = actualModelUsed || actualModelName;
         const apiKey = systemModelConfig.openai_api_key;
-        const endpoint = `${baseUrl}/responses`;
+        // ADR-0024：存储的服务地址在**使用点**也过一遍出站守卫（保存时的校验管不到
+        // 守卫上线前写进库的老配置，而这条路径会带着平台密钥去请求它）
+        const endpoint = resolveOpenAiEndpoint(systemModelConfig, '/responses');
 
         // Responses API 输入：EasyInputMessage 数组（system 指令走顶层 instructions）
         const responsesInput = messages.map((m: { role: string; content: string }) => ({

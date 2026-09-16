@@ -9,6 +9,7 @@ import {
 import { getAiModelConfig, getSavedAiModelConfig, saveAiModelConfig as repoSaveAiModelConfig } from '../repositories/ai.repository.js';
 import { recordAuditLog, listAuditLogs } from '../repositories/audit.repository.js';
 import { NotFoundError } from '../lib/errors.js';
+import { assertSafeOutboundUrl } from '../lib/outbound-url.js';
 import { DEFAULT_AI_MODEL_CONFIG } from '../core/records.js';
 import type { AiModelConfig, UserRecord } from '../core/records.js';
 import { destroyOAuthIdentity, findOAuthIdentityByUserId } from '../repositories/oauth.repository.js';
@@ -273,6 +274,13 @@ export async function resolveConfigForSave(config: Partial<AiModelConfig>): Prom
 
   if (!newApiKey || newApiKey.includes('••••') || newApiKey.trim() === '') {
     newApiKey = currentConfig.openai_api_key || '';
+  }
+
+  // ADR-0024：**保存即校验**。这个地址会被 chat 与自动标题持久化外呼（并带上平台密钥），
+  // 非法值必须在入库前拦下；只在联调端点校验等于留了一条「直接 PUT 写库」的旁路。
+  const candidateBaseUrl = config.openai_base_url?.trim();
+  if (candidateBaseUrl) {
+    assertSafeOutboundUrl(candidateBaseUrl, { purpose: '模型配置保存' });
   }
 
   return { ...config, openai_api_key: newApiKey };

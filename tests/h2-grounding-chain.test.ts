@@ -16,6 +16,11 @@ import type { AddressInfo } from 'node:net';
 import { createApp } from '../server/app.js';
 import { getAiRequestLogsForTest } from '../server/repositories/ai.repository.js';
 
+// ADR-0024 出站守卫：本套件刻意把模型地址指向回环（`http://127.0.0.1:9/v1`，由 fetch stub 拦截，
+// 不会真的外呼），而守卫默认拒绝回环/内网地址与明文 http。这里显式翻开开关——
+// 让测试自己声明「这是故意的本地地址」，而不是让守卫为测试网开一面（守卫默认值保持严格）。
+process.env.OUTBOUND_ALLOW_PRIVATE_HOSTS = 'true';
+
 let server: http.Server;
 let base = '';
 let adminCookie = '';

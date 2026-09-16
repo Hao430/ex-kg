@@ -23,6 +23,8 @@ import { checkDbStatus } from '../core/db-status.js';
 import { validate } from '../lib/validate.js';
 import { authMiddleware, requireAdmin, adminLogReadRateLimiter, adminUserWriteRateLimiter } from '../middleware/auth.js';
 import { runWithSystem } from '../core/db-context.js';
+import { assertSafeOutboundUrl } from '../lib/outbound-url.js';
+import { AppError } from '../lib/errors.js';
 import { GoogleGenAI } from '@google/genai';
 
 export const adminRouter = Router();
@@ -156,7 +158,12 @@ const UserStatusSchema = z.object({
   is_active: z.boolean(),
 });
 
-adminRouter.put('/users/:id/status', asyncHandler(async (req: Request, res: Response) => {
+/**
+ * ⚠️ 运营台**写接口**统一挂 `adminUserWriteRateLimiter`（安全审查 L5）。
+ * 此前只有日志读与解绑带限流器，写接口一个都没有——管理员会话被拿走或被前端循环误触发时
+ * 没有任何刹车。按 admin 用户维度计数（30/min），不是按 IP。
+ */
+adminRouter.put('/users/:id/status', adminUserWriteRateLimiter, asyncHandler(async (req: Request, res: Response) => {
   const { is_active } = validate(UserStatusSchema, req.body, 'INVALID_STATUS');
   const targetUser = await getUserOrFail(req.params.id);
 
@@ -182,7 +189,7 @@ adminRouter.put('/users/:id/status', asyncHandler(async (req: Request, res: Resp
  * PUT /api/admin/users/:id/restore
  * Spec F4：恢复已注销账号（30 天冷却期内）。未注销/不存在 → 404。
  */
-adminRouter.put('/users/:id/restore', asyncHandler(async (req: Request, res: Response) => {
+adminRouter.put('/users/:id/restore', adminUserWriteRateLimiter, asyncHandler(async (req: Request, res: Response) => {
   const restored = await restoreAccount(req.user!.id, req.params.id);
   res.json({
     success: true,
@@ -220,7 +227,7 @@ const GrantVipSchema = z.object({
   days: z.number().int().min(0, '天数不能为负数'),
 });
 
-adminRouter.post('/users/:id/vip', asyncHandler(async (req: Request, res: Response) => {
+adminRouter.post('/users/:id/vip', adminUserWriteRateLimiter, asyncHandler(async (req: Request, res: Response) => {
   const { days } = validate(GrantVipSchema, req.body, 'INVALID_VIP_DAYS');
   const targetUser = await getUserOrFail(req.params.id);
 
@@ -258,7 +265,7 @@ const UserEmailSchema = z.object({
   email: z.string().email('请输入有效的邮箱地址'),
 });
 
-adminRouter.put('/users/:id/email', asyncHandler(async (req: Request, res: Response) => {
+adminRouter.put('/users/:id/email', adminUserWriteRateLimiter, asyncHandler(async (req: Request, res: Response) => {
   const { email } = validate(UserEmailSchema, req.body, 'INVALID_EMAIL');
   const targetUser = await getUserOrFail(req.params.id);
 
@@ -305,7 +312,7 @@ const ModelConfigSchema = z.object({
   force_web_search: z.boolean().optional(), // Spec I：强制联网开关（默认 true，存量配置由 DEFAULT 合并补全）
 });
 
-adminRouter.put('/model-config', asyncHandler(async (req: Request, res: Response) => {
+adminRouter.put('/model-config', adminUserWriteRateLimiter, asyncHandler(async (req: Request, res: Response) => {
   const data = validate(ModelConfigSchema, req.body, 'INVALID_CONFIG');
   const resolved = await resolveConfigForSave(data);
 
@@ -330,16 +337,31 @@ adminRouter.put('/model-config', asyncHandler(async (req: Request, res: Response
  * POST /api/admin/model-config/test
  * Test AI model connectivity in OpenAI or Gemini format
  */
-adminRouter.post('/model-config/test', async (req: Request, res: Response) => {
+adminRouter.post('/model-config/test', adminUserWriteRateLimiter, async (req: Request, res: Response) => {
   const startTime = Date.now();
   try {
     const { provider, openai_base_url, openai_api_key, openai_model, gemini_model } = req.body;
     const currentConfig = await getAiModelConfig();
 
     if (provider === 'openai') {
-      const baseUrl = (openai_base_url || currentConfig.openai_base_url || 'https://api.openai.com/v1').replace(/\/+$/, '');
+      // ADR-0024：地址来自请求体，必须先过出站守卫（协议/私网/元数据/内嵌凭据）
+      const baseUrl = (openai_base_url || currentConfig.openai_base_url || 'https://api.openai.com/v1')
+        .replace(/\/+$/, '');
+      assertSafeOutboundUrl(baseUrl, { purpose: '模型配置联调' });
+
       let apiKey = openai_api_key;
       if (!apiKey || apiKey.includes('••••')) {
+        // ⚠️ 安全审查 H2：回落成**已保存的真实密钥**时，目标主机必须与已保存的一致。
+        // 否则「填一个新地址 + 不填 Key」就是一条把平台密钥送到任意主机的通道——
+        // 掩码回落是为了「不重填 Key 也能测同一台」，不是「测任意一台都不用给 Key」。
+        const savedBaseUrl = (currentConfig.openai_base_url || '').replace(/\/+$/, '');
+        if (baseUrl !== savedBaseUrl) {
+          res.status(400).json({
+            error: '更换服务地址时必须重新填写 API Key（不会把已保存的密钥发往新地址）',
+            code: 'API_KEY_REQUIRED_FOR_NEW_HOST',
+          });
+          return;
+        }
         apiKey = currentConfig.openai_api_key;
       }
 
@@ -426,6 +448,18 @@ adminRouter.post('/model-config/test', async (req: Request, res: Response) => {
     }
   } catch (error: any) {
     const latencyMs = Date.now() - startTime;
+    // AppError（出站守卫的 400 OUTBOUND_URL_REJECTED、缺 Key 等）必须保留原始状态码与 code：
+    // 否则「地址非法」会被这层兜底统一改写成 500，运营台只看到一句「测试连接超时或失败」，
+    // 排障方向直接指反。与 chat 路由对 AppError 的处理同款。
+    if (error instanceof AppError) {
+      res.status(error.status).json({
+        success: false,
+        error: error.message,
+        code: error.code,
+        latencyMs,
+      });
+      return;
+    }
     console.error('Admin test model connection error:', error);
     res.status(500).json({
       success: false,
