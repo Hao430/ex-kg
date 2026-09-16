@@ -69,6 +69,9 @@ const NOTE_ANIMATED_EDGE_STYLE: React.CSSProperties = {
 const AI_EDGE_MARKER: Edge['markerEnd'] = { type: MarkerType.ArrowClosed, color: AI_EDGE_COLOR };
 const NOTE_EDGE_MARKER: Edge['markerEnd'] = { type: MarkerType.ArrowClosed, color: NOTE_EDGE_COLOR };
 
+/** 节点搜索命中高亮：加在 React Flow 节点包装器上的临时类（nodeHash 白名单不含 className，不标脏） */
+const SEARCH_HIT_CLASS = 'node-search-hit';
+
 
 interface DeepDiveCanvasProps {
   initialNodes?: Node[];
@@ -78,6 +81,8 @@ interface DeepDiveCanvasProps {
   triggerFitViewRef?: React.MutableRefObject<(() => void) | null>;
   triggerAddRootRef?: React.MutableRefObject<(() => void) | null>;
   triggerAddNoteRef?: React.MutableRefObject<(() => void) | null>;
+  /** 节点搜索结果跳转：镜头平移至目标节点并临时高亮（Topbar 搜索浮层触发） */
+  triggerFocusNodeRef?: React.MutableRefObject<((nodeId: string) => void) | null>;
   theme?: 'light' | 'dark';
   defaultModel?: string;
   defaultEnableWebSearch?: boolean;
@@ -101,6 +106,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
   triggerFitViewRef,
   triggerAddRootRef,
   triggerAddNoteRef,
+  triggerFocusNodeRef,
   theme = 'light',
   defaultModel = '',
   defaultEnableWebSearch = true,
@@ -132,6 +138,46 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
   const edgesRef = useRef(edges);
   nodesRef.current = nodes;
   edgesRef.current = edges;
+
+  // 节点搜索高亮：临时 className（nodeHash 白名单不含 className → 不标脏、不触发上传；
+  // 也不用 selected——浮层关闭后焦点离开搜索框，误按 Backspace/Delete 会静默删掉刚选中的节点）
+  const searchHitTimerRef = useRef<number | null>(null);
+  const clearSearchHit = useCallback(() => {
+    searchHitTimerRef.current = null;
+    if (!nodesRef.current.some((n) => n.className === SEARCH_HIT_CLASS)) return;
+    const next = nodesRef.current.map((n) =>
+      n.className === SEARCH_HIT_CLASS ? { ...n, className: undefined } : n
+    );
+    nodesRef.current = next;
+    setNodes(next);
+  }, [setNodes]);
+  // 卸载清理（exposure useEffect deps 多、会频繁重建，不能把清理挂在它身上）
+  useEffect(() => () => {
+    if (searchHitTimerRef.current !== null) clearTimeout(searchHitTimerRef.current);
+  }, []);
+  const focusSearchHit = useCallback((nodeId: string) => {
+    if (!nodesRef.current.some((n) => n.id === nodeId)) return; // 节点已被他端删除 → 静默
+    const next = nodesRef.current.map((n) => {
+      if (n.id === nodeId) return { ...n, className: SEARCH_HIT_CLASS };
+      if (n.className === SEARCH_HIT_CLASS) return { ...n, className: undefined };
+      return n;
+    });
+    nodesRef.current = next;
+    setNodes(next);
+    if (searchHitTimerRef.current !== null) clearTimeout(searchHitTimerRef.current);
+    searchHitTimerRef.current = window.setTimeout(clearSearchHit, 2500);
+    // 虚拟化下节点进入视口才挂载：先提交 className，再镜头飞行（沿用下方 setTimeout 时序先例）
+    window.setTimeout(() => {
+      const target = nodesRef.current.find((n) => n.id === nodeId);
+      if (target) {
+        reactFlowInstance.setCenter(
+          target.position.x + 220,
+          target.position.y + 180,
+          { zoom: 0.9, duration: 600 }
+        );
+      }
+    }, 60);
+  }, [reactFlowInstance, setNodes, clearSearchHit]);
 
   // Spec J2：服务端配额单一事实源（GET /api/quota，口径「排除 suggested 占位」与后端拦截完全一致）。
   // null = 余量未知（VIP/Admin 不受限、查询失败或未同步）——此时前端不做本地拦截，由服务端 chat 403 兜底。
@@ -1198,6 +1244,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
         reactFlowInstance.fitView({ padding: 0.2, duration: 500 });
     if (triggerAddRootRef) triggerAddRootRef.current = handleAddRootNode;
     if (triggerAddNoteRef) triggerAddNoteRef.current = handleAddNoteNode;
+    if (triggerFocusNodeRef) triggerFocusNodeRef.current = focusSearchHit;
     if (triggerExportPngRef) {
       triggerExportPngRef.current = async (title: string) => {
         setExportFullRender(true);
@@ -1222,7 +1269,9 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
     triggerFitViewRef,
     triggerAddRootRef,
     triggerAddNoteRef,
+    triggerFocusNodeRef,
     triggerExportPngRef,
+    focusSearchHit,
   ]);
 
   // Text selection handler: detect selection inside chat card to pop up "钻入兔子洞" capsule

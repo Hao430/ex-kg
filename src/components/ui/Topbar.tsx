@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   Sparkles,
   FolderOpen,
@@ -40,6 +40,9 @@ import {
   Share2,
   Star,
   Archive,
+  Search,
+  X,
+  Loader2,
 } from 'lucide-react';
 import { DeepDiveBoardMeta } from '../../types';
 import type { FolderMeta } from '../../lib/folder-store';
@@ -48,6 +51,22 @@ import { SHARED_BOARD_IDS } from '../../lib/board-scope';
 import { useAuth } from '../../context/AuthContext';
 import { useQuotaView } from '../../hooks/useBoards';
 import { Tooltip } from './Tooltip';
+
+/**
+ * GET /api/canvases/:id/search 的结果项（仓储 searchNodes 双模统一的 camelCase 形状）。
+ * 只读展示，不回写画板。
+ */
+interface NodeSearchResult {
+  id: string;
+  canvasId: string;
+  title: string;
+  question: string;
+  answer: string;
+  noteContent: string;
+  depth: number;
+  model: string;
+  type: string;
+}
 
 interface TopbarProps {
   boardName: string;
@@ -63,6 +82,8 @@ interface TopbarProps {
   onAddNoteNode: () => void;
   onAutoLayout: () => void;
   onFitView: () => void;
+  /** 节点搜索结果跳转：聚焦并高亮该节点（画布内检索，Spec O1） */
+  onSearchResultClick?: (nodeId: string) => void;
   onExportJson: () => void;
   /** Spec M1：导入已导出的 JSON 备份为新画板 */
   onImportJson: (file: File) => void;
@@ -99,6 +120,7 @@ export const Topbar: React.FC<TopbarProps> = ({
   onAddNoteNode,
   onAutoLayout,
   onFitView,
+  onSearchResultClick,
   onExportJson,
   onImportJson,
   onExportMarkdown,
@@ -122,14 +144,129 @@ export const Topbar: React.FC<TopbarProps> = ({
   const [showCanvasMoreMenu, setShowCanvasMoreMenu] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
 
+  // 节点搜索浮层（画板内检索）：防抖 + AbortController，空 q 不发请求
+  const [showSearchMenu, setShowSearchMenu] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<NodeSearchResult[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchActiveIdx, setSearchActiveIdx] = useState(0);
+  const searchMenuRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchResultsRef = useRef<HTMLDivElement>(null);
+  const searchAbortRef = useRef<AbortController | null>(null);
+  const searchTimerRef = useRef<number | null>(null);
+
+  /** 关闭搜索浮层：同时取消未完成的防抖/在途请求，避免关闭后 setState（卸载后警告） */
+  const closeSearchMenu = useCallback(() => {
+    setShowSearchMenu(false);
+    setSearchQuery('');
+    setSearchResults([]);
+    setSearchActiveIdx(0);
+    setSearchLoading(false);
+    if (searchTimerRef.current !== null) {
+      clearTimeout(searchTimerRef.current);
+      searchTimerRef.current = null;
+    }
+    searchAbortRef.current?.abort();
+    searchAbortRef.current = null;
+  }, []);
+
+  const runNodeSearch = useCallback(
+    async (q: string, boardId: string) => {
+      searchAbortRef.current?.abort();
+      const ctrl = new AbortController();
+      searchAbortRef.current = ctrl;
+      try {
+        const res = await fetch(
+          `/api/canvases/${encodeURIComponent(boardId)}/search?q=${encodeURIComponent(q)}`,
+          { credentials: 'include', signal: ctrl.signal }
+        );
+        if (!res.ok) throw new Error(`search ${res.status}`);
+        const body = await res.json().catch(() => null);
+        if (ctrl.signal.aborted) return;
+        setSearchResults(Array.isArray(body?.results) ? body.results : []);
+        setSearchActiveIdx(0);
+      } catch (e) {
+        if ((e as Error)?.name === 'AbortError') return;
+        if (ctrl.signal.aborted) return;
+        setSearchResults([]);
+        setSearchActiveIdx(0);
+      } finally {
+        if (searchAbortRef.current === ctrl) {
+          searchAbortRef.current = null;
+          setSearchLoading(false);
+        }
+      }
+    },
+    []
+  );
+
+  const handleSearchInput = useCallback(
+    (value: string) => {
+      setSearchQuery(value);
+      if (searchTimerRef.current !== null) {
+        clearTimeout(searchTimerRef.current);
+        searchTimerRef.current = null;
+      }
+      const trimmed = value.trim();
+      if (!trimmed) {
+        // 空 q 语义 = 空结果：不发请求（与后端「空 q 早退」口径一致）
+        searchAbortRef.current?.abort();
+        searchAbortRef.current = null;
+        setSearchResults([]);
+        setSearchActiveIdx(0);
+        setSearchLoading(false);
+        return;
+      }
+      setSearchLoading(true);
+      searchTimerRef.current = window.setTimeout(() => void runNodeSearch(trimmed, currentBoardId), 300);
+    },
+    [currentBoardId, runNodeSearch]
+  );
+
+  const handleSearchKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSearchActiveIdx((i) => {
+          if (!searchResults.length) return 0;
+          const dir = e.key === 'ArrowDown' ? 1 : -1;
+          return (i + dir + searchResults.length) % searchResults.length;
+        });
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const hit = searchResults[searchActiveIdx];
+        if (hit) {
+          closeSearchMenu();
+          onSearchResultClick?.(hit.id);
+        }
+      }
+    },
+    [searchResults, searchActiveIdx, closeSearchMenu, onSearchResultClick]
+  );
+
+  // 键盘上下选时让 active 项保持可见（列表最多 30 条，max-h-72 约可见 7 条）
+  useEffect(() => {
+    if (!showSearchMenu) return;
+    searchResultsRef.current?.querySelector('[data-active="true"]')?.scrollIntoView({ block: 'nearest' });
+  }, [searchActiveIdx, showSearchMenu]);
+
+  const handlePickSearchResult = useCallback(
+    (nodeId: string) => {
+      closeSearchMenu();
+      onSearchResultClick?.(nodeId);
+    },
+    [closeSearchMenu, onSearchResultClick]
+  );
+
   const boardMenuRef = useRef<HTMLDivElement>(null);
   const canvasMoreMenuRef = useRef<HTMLDivElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
 
-  // 点击空白地方自动收起：画布列表卡片、更多操作卡片、个人中心卡片
+  // 点击空白地方自动收起：画布列表卡片、更多操作卡片、个人中心卡片、节点搜索浮层
   useEffect(() => {
-    if (!showBoardMenu && !showCanvasMoreMenu && !showUserMenu) return;
+    if (!showBoardMenu && !showCanvasMoreMenu && !showUserMenu && !showSearchMenu) return;
 
     const handleClickOutside = (event: MouseEvent | PointerEvent) => {
       const target = event.target as HTMLElement | null;
@@ -144,6 +281,9 @@ export const Topbar: React.FC<TopbarProps> = ({
       if (showUserMenu && userMenuRef.current && !userMenuRef.current.contains(target)) {
         setShowUserMenu(false);
       }
+      if (showSearchMenu && searchMenuRef.current && !searchMenuRef.current.contains(target)) {
+        closeSearchMenu();
+      }
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -151,6 +291,7 @@ export const Topbar: React.FC<TopbarProps> = ({
         setShowBoardMenu(false);
         setShowCanvasMoreMenu(false);
         setShowUserMenu(false);
+        closeSearchMenu();
       }
     };
 
@@ -160,7 +301,7 @@ export const Topbar: React.FC<TopbarProps> = ({
       document.removeEventListener('pointerdown', handleClickOutside, true);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [showBoardMenu, showCanvasMoreMenu, showUserMenu]);
+  }, [showBoardMenu, showCanvasMoreMenu, showUserMenu, showSearchMenu, closeSearchMenu]);
 
   const {
     user,
@@ -529,6 +670,106 @@ export const Topbar: React.FC<TopbarProps> = ({
         </Tooltip>
 
         <div className="h-4 w-[1px] bg-slate-200 dark:bg-slate-800 mx-1 hidden sm:block" />
+
+        {/* Node Search: 画板内节点检索（GET /api/canvases/:id/search，严格属主制） */}
+        <div ref={searchMenuRef} className="relative">
+          <Tooltip content="搜索当前画板内的节点" side="bottom">
+            <button
+              id="topbar-node-search-btn"
+              onClick={() => {
+                if (showSearchMenu) {
+                  closeSearchMenu();
+                  return;
+                }
+                setShowSearchMenu(true);
+                setTimeout(() => searchInputRef.current?.focus(), 0);
+              }}
+              className="p-1.5 hover:bg-white dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl transition-colors cursor-pointer flex items-center"
+            >
+              <Search className="w-3.5 h-3.5" />
+            </button>
+          </Tooltip>
+
+          {showSearchMenu && (
+            <div className="absolute top-full right-0 mt-2 w-80 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-[0_16px_40px_rgba(0,0,0,0.12)] dark:shadow-[0_20px_50px_rgba(0,0,0,0.6)] z-50 animate-in fade-in zoom-in-95 overflow-hidden">
+              <div className="relative p-2 border-b border-slate-100 dark:border-slate-800">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => handleSearchInput(e.target.value)}
+                  onKeyDown={handleSearchKeyDown}
+                  placeholder="搜索节点内容…"
+                  maxLength={100}
+                  className="w-full pl-8 pr-8 py-1.5 text-xs bg-slate-100/70 dark:bg-slate-800/60 border border-slate-200/50 dark:border-slate-700/50 rounded-xl outline-none focus:border-indigo-400 dark:focus:border-indigo-500/60 text-slate-850 dark:text-slate-100 placeholder:text-slate-400 transition-colors"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => {
+                      handleSearchInput('');
+                      searchInputRef.current?.focus();
+                    }}
+                    aria-label="清空搜索"
+                    className="absolute right-5 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 cursor-pointer"
+                  >
+                    {searchLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5" />}
+                  </button>
+                )}
+              </div>
+
+              <div ref={searchResultsRef} className="max-h-72 overflow-y-auto p-1.5">
+                {!searchQuery.trim() ? (
+                  <div className="px-3 py-6 text-center text-xs text-slate-400 dark:text-slate-500">
+                    输入关键词，检索本画板的思考节点与便签
+                  </div>
+                ) : searchResults.length === 0 ? (
+                  <div className="px-3 py-6 text-center text-xs text-slate-400 dark:text-slate-500">
+                    {searchLoading ? '正在搜索…' : '未找到匹配的节点'}
+                  </div>
+                ) : (
+                  searchResults.map((r, idx) => {
+                    const isNote = r.type === 'note';
+                    const excerpt = (isNote ? r.noteContent : r.answer || r.question) || '';
+                    return (
+                      <button
+                        key={r.id}
+                        data-active={idx === searchActiveIdx}
+                        onMouseEnter={() => setSearchActiveIdx(idx)}
+                        onClick={() => handlePickSearchResult(r.id)}
+                        className={`w-full text-left px-2.5 py-2 rounded-xl transition-colors cursor-pointer ${
+                          idx === searchActiveIdx
+                            ? 'bg-indigo-50 dark:bg-indigo-950/40'
+                            : 'hover:bg-slate-50 dark:hover:bg-slate-800/60'
+                        }`}
+                      >
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span
+                            className={`shrink-0 px-1.5 py-0.5 rounded-md text-[9px] font-bold ${
+                              isNote
+                                ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
+                                : 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-300'
+                            }`}
+                          >
+                            {isNote ? '便签' : '主题'}
+                          </span>
+                          <span className="text-xs font-medium text-slate-800 dark:text-slate-100 truncate">
+                            {r.title || '（无标题）'}
+                          </span>
+                        </div>
+                        {excerpt && (
+                          <div className="mt-0.5 text-[11px] leading-snug text-slate-500 dark:text-slate-400 line-clamp-2">
+                            {excerpt}
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Auto Layout */}
         <Tooltip content="按思维树关系自动规整排版 (Zero-Drag)" shortcut="Alt+L" side="bottom">

@@ -184,3 +184,24 @@ code, kbd, samp, pre {
 .dark .katex {
   color: #f1f5f9;
 }
+
+/* Node search hit highlight (transient className on the React Flow node wrapper).
+   Never persisted: nodeHash allowlist (board-ops.ts) excludes className, so applying
+   it never marks the board dirty or triggers an upload. Timing pairs with the 2.5s
+   auto-clear in DeepDiveCanvas (2 × 1.2s pulses). */
+@keyframes node-search-hit-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.55), 0 0 24px rgba(99, 102, 241, 0.45);
+  }
+  60% {
+    box-shadow: 0 0 0 10px rgba(99, 102, 241, 0), 0 0 24px rgba(99, 102, 241, 0.45);
+  }
+  100% {
+    box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.25), 0 0 24px rgba(99, 102, 241, 0.35);
+  }
+}
+
+.node-search-hit {
+  animation: node-search-hit-pulse 1.2s ease-out 2;
+  border-radius: 16px;
+}

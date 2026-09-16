@@ -1279,30 +1279,71 @@ export async function countCanvasNodes(canvasId: string): Promise<number> {
 }
 
 /**
+ * ILIKE 模式转义：把用户输入中的 `\` `%` `_` 转成字面量，配合 SQL 的 `ESCAPE '\'`。
+ * 不转义时用户输入的 `%` 会当通配符（命中全部节点），且与内存分支 `includes()` 的
+ * 字面量语义分叉——同一个 query 在 PG 与内存下返回不同结果集。
+ */
+function escapeLikePattern(input: string): string {
+  return input.replace(/[\\%_]/g, '\\$&');
+}
+
+/**
  * 节点检索（严格属主制）：userId 必填，只返回本人画布的节点。
  * 2026-09-11 安全修复：此前 userId 可选，省略即走 `$n::uuid IS NULL` 放行分支退化为全站检索，
  * 属跨租户读取的潜在旁路；现收敛为必填，SQL 不再保留 NULL 放行分支（ADR-0016 口径）。
+ *
+ * 2026-09-16 双模对齐（此前仅有 `.length` 断言，形状分叉一直未被发现，前端接入前必须收敛）：
+ * - 返回形状统一为 camelCase：`{id, canvasId, title, question, answer, noteContent, depth, model, type}`。
+ *   PG 侧用**带双引号**别名（不带引号会被 PG 折成小写）；**不返回 `created_at`**——内存节点没有
+ *   该字段，返回它必然分叉。
+ * - `title` 与写入侧同一条规则（对齐 `buildNodeRow` 的 `d.title || d.question || 类型名`），
+ *   此前 PG 直接 `n.question as title`，把真实 title 列丢掉了。
+ * - 过滤 `status = 'suggested'`：口径与 `countCanvasNodes` 完全一致。灵感占位是 AI 回答附带的
+ *   「下一步可以问什么」候选，尚未提问；且前端「灵感」开关仅视图级隐藏，搜出被隐藏的节点会让
+ *   用户「点进去什么都没有」。
+ * - `noteContent` 取 note 全文（写入侧 `noteText = content || noteContent || note` 存进 note 列，
+ *   `content` 列只是它的前缀子集），故 WHERE 只搜 `note` 列即可，无需再搜 `content`。
+ * - 排序 `depth → pos_y → pos_x → id`：`depth` 是双模都可得的「离根最近」相关性代理，
+ *   后两者给出稳定空间序，`id` 兜底全序。**不用 `created_at`**（内存侧不存在，等于再造分叉）。
  */
 export async function searchNodes(queryText: string, userId: string, canvasId?: string): Promise<any[]> {
+  const needle = queryText.trim();
+  // 空查询 = 空结果。**必须在 getDb() 之前早退**：否则「配了库走 PG 分支、没配库落内存分支」
+  // 会给出两种语义（内存分支的 includes('') 恒真 → 返回前 30 个全部节点），
+  // 表现为生产返 [] 而 dev/test 返 30 条的环境分叉。
+  if (!needle) return [];
+
   const db = getDb();
-  if (db && queryText.trim()) {
+  if (db) {
     try {
+      const pattern = `%${escapeLikePattern(needle)}%`;
+      // ESCAPE '\'：standard_conforming_strings 默认 on，故 SQL 里写 '\' 即单个反斜杠（JS 里需写 '\\'）
       const sql = canvasId
-        ? `SELECT n.id, n.canvas_id, n.question as title, n.question, n.answer, n.note as note_content, n.depth, n.model_used as model, n.created_at
+        ? `SELECT n.id, n.canvas_id AS "canvasId",
+                  COALESCE(NULLIF(n.title, ''), n.question) AS title,
+                  n.question, n.answer, n.note AS "noteContent",
+                  n.depth, n.model_used AS model, n.type
            FROM nodes n
            JOIN canvases c ON c.id = n.canvas_id
-           WHERE n.canvas_id = $1 AND c.deleted_at IS NULL AND c.user_id = $2 AND n.deleted_at IS NULL
-             AND (n.question ILIKE $3 OR n.answer ILIKE $3 OR n.note ILIKE $3)
+           WHERE n.canvas_id = $1 AND c.deleted_at IS NULL AND c.user_id = $2
+             AND n.deleted_at IS NULL AND n.status <> 'suggested'
+             AND (n.title ILIKE $3 ESCAPE '\\' OR n.question ILIKE $3 ESCAPE '\\'
+                  OR n.answer ILIKE $3 ESCAPE '\\' OR n.note ILIKE $3 ESCAPE '\\')
+           ORDER BY n.depth ASC, n.pos_y ASC, n.pos_x ASC, n.id ASC
            LIMIT 30`
-        : `SELECT n.id, n.canvas_id, n.question as title, n.question, n.answer, n.note as note_content, n.depth, n.model_used as model, n.created_at
+        : `SELECT n.id, n.canvas_id AS "canvasId",
+                  COALESCE(NULLIF(n.title, ''), n.question) AS title,
+                  n.question, n.answer, n.note AS "noteContent",
+                  n.depth, n.model_used AS model, n.type
            FROM nodes n
            JOIN canvases c ON c.id = n.canvas_id
-           WHERE c.deleted_at IS NULL AND c.user_id = $1 AND n.deleted_at IS NULL
-             AND (n.question ILIKE $2 OR n.answer ILIKE $2 OR n.note ILIKE $2)
+           WHERE c.deleted_at IS NULL AND c.user_id = $1
+             AND n.deleted_at IS NULL AND n.status <> 'suggested'
+             AND (n.title ILIKE $2 ESCAPE '\\' OR n.question ILIKE $2 ESCAPE '\\'
+                  OR n.answer ILIKE $2 ESCAPE '\\' OR n.note ILIKE $2 ESCAPE '\\')
+           ORDER BY n.depth ASC, n.pos_y ASC, n.pos_x ASC, n.id ASC
            LIMIT 30`;
-      const params = canvasId
-        ? [canvasId, userId, `%${queryText.trim()}%`]
-        : [userId, `%${queryText.trim()}%`];
+      const params = canvasId ? [canvasId, userId, pattern] : [userId, pattern];
       const res = await db.query(sql, params);
       return res.rows;
     } catch (e) {
@@ -1311,8 +1352,9 @@ export async function searchNodes(queryText: string, userId: string, canvasId?: 
     }
   }
 
-  const q = queryText.toLowerCase();
-  const results: any[] = [];
+  const q = needle.toLowerCase();
+  // 收集命中后再排序：排序键（depth/position）不属于返回形状，故用中间结构承载
+  const hits: Array<{ payload: any; depth: number; y: number; x: number; id: string }> = [];
   for (const canvas of inMemoryStore.canvases.values()) {
     if (canvas.deleted_at) continue;
     if (canvasId && canvas.id !== canvasId) continue;
@@ -1320,26 +1362,45 @@ export async function searchNodes(queryText: string, userId: string, canvasId?: 
     for (const node of canvas.nodes || []) {
       if (node?.deleted_at) continue; // 墓碑行不参与检索（与 PG 分支 n.deleted_at IS NULL 同口径）
       const d = node.data || {};
-      // 与 PG 分支的 note 字段对齐：兼容 note 与 noteContent 两种来源
-      const note = d.note ?? d.noteContent ?? '';
+      const nodeType = node.type || 'chat';
+      const answer = typeof d.answer === 'string' ? d.answer : '';
+      // status 在内存节点里位于 `data.status`（本文件 countCanvasNodes 上方有同类警告注释），
+      // 缺省回退与归一化处同一条规则：`d.status || (answer ? 'idle' : 'suggested')`
+      const status = d.status || (answer ? 'idle' : 'suggested');
+      if (status === 'suggested') continue;
+
+      // note 口径对齐写入侧 noteText = content || noteContent || note
+      const note = d.content || d.noteContent || d.note || '';
+      // title 口径对齐写入侧 buildNodeRow: d.title || d.question || (便签 | 思考节点)
+      const title = d.title || d.question || (nodeType === 'note' ? '便签' : '思考节点');
       if (
-        (d.title && d.title.toLowerCase().includes(q)) ||
-        (d.question && d.question.toLowerCase().includes(q)) ||
-        (d.answer && d.answer.toLowerCase().includes(q)) ||
-        (note && note.toLowerCase().includes(q))
+        !title.toLowerCase().includes(q) &&
+        !answer.toLowerCase().includes(q) &&
+        !note.toLowerCase().includes(q)
       ) {
-        results.push({
+        continue;
+      }
+      hits.push({
+        payload: {
           id: node.id,
           canvasId: canvas.id,
-          title: d.title || d.question,
-          question: d.question,
-          answer: d.answer,
+          title,
+          question: typeof d.question === 'string' ? d.question : '',
+          answer,
           noteContent: note,
-          depth: d.depth,
-          model: d.model,
-        });
-      }
+          depth: typeof d.depth === 'number' ? d.depth : 0,
+          model: typeof d.model === 'string' ? d.model : '',
+          type: nodeType,
+        },
+        depth: typeof d.depth === 'number' ? d.depth : 0,
+        y: node.position?.y ?? 0,
+        x: node.position?.x ?? 0,
+        id: String(node.id),
+      });
     }
   }
-  return results.slice(0, 30);
+  // 内存分支必须显式同序排序：Map 插入序与 PG 的 ORDER BY 不等价，否则双模顺序分叉。
+  // id 兜底用码元序（仅在同 depth/pos 的极少数并列时生效）。
+  hits.sort((a, b) => a.depth - b.depth || a.y - b.y || a.x - b.x || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return hits.slice(0, 30).map((h) => h.payload);
 }

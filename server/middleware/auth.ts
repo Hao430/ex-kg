@@ -104,6 +104,23 @@ export const folderActionRateLimiter = rateLimit({
 });
 
 /**
+ * Rate limiter for canvas node search: 60 req/min per user。
+ * 独立实例、绝不与其他端点共桶（#0089 教训：共桶会把高频轮询/搜索打死）。
+ * 60 次的理由：前端 300ms 防抖 + 非空才发，一个多字词约 10 次请求，留重试与多设备余量。
+ */
+export const canvasSearchRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => (req.user ? `user_${req.user.id}` : ipKeyGenerator(req.ip || 'anonymous')),
+  message: {
+    error: '搜索过于频繁，请稍后再试',
+    code: 'RATE_LIMIT_EXCEEDED',
+  },
+});
+
+/**
  * Rate limiter for auto-title generation: 20 req/min per user（自动命名非关键路径，防滥用刷 LLM）
  */
 export const autoTitleRateLimiter = rateLimit({

@@ -169,6 +169,8 @@ function MainApp() {
   const triggerFitViewRef = useRef<(() => void) | null>(null);
   const triggerAddRootRef = useRef<(() => void) | null>(null);
   const triggerAddNoteRef = useRef<(() => void) | null>(null);
+  /** 节点搜索结果跳转：Topbar 搜索浮层点击结果 → 画布聚焦并高亮该节点 */
+  const triggerFocusNodeRef = useRef<((nodeId: string) => void) | null>(null);
   const triggerExportPngRef = useRef<
     ((title: string) => Promise<{ ok: boolean; error?: string }>) | null
   >(null);
@@ -1135,6 +1137,7 @@ function MainApp() {
           showToast('已自动按思维树重新规整排版');
         }}
         onFitView={() => triggerFitViewRef.current?.()}
+        onSearchResultClick={(nodeId) => triggerFocusNodeRef.current?.(nodeId)}
         onExportJson={handleExportJson}
         onImportJson={handleImportJson}
         onExportMarkdown={handleExportMarkdown}
@@ -1164,6 +1167,7 @@ function MainApp() {
             triggerFitViewRef={triggerFitViewRef}
             triggerAddRootRef={triggerAddRootRef}
             triggerAddNoteRef={triggerAddNoteRef}
+            triggerFocusNodeRef={triggerFocusNodeRef}
             theme={theme}
             canvasId={currentBoardId}
             boardNeedsAutoName={isDefaultBoardName(boardName)}

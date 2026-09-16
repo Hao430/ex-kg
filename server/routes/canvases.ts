@@ -10,7 +10,12 @@ import {
   assertCanvasAttributableByUser,
 } from '../services/canvas.service.js';
 import { asyncHandler } from '../lib/async-handler.js';
-import { authMiddleware, shareActionRateLimiter, autoTitleRateLimiter } from '../middleware/auth.js';
+import {
+  authMiddleware,
+  shareActionRateLimiter,
+  autoTitleRateLimiter,
+  canvasSearchRateLimiter,
+} from '../middleware/auth.js';
 import { validate } from '../lib/validate.js';
 import { resolveRequestOrigin } from '../lib/origin.js';
 import { createShareForCanvas, revokeShareForCanvas } from '../services/share.service.js';
@@ -242,10 +247,17 @@ canvasesRouter.delete('/:id/share', shareActionRateLimiter, asyncHandler(async (
 /**
  * GET /api/canvases/:id/search
  * Search nodes inside canvas
+ *
+ * query 校验：`q` 只限长度（trim 后空串合法——语义是「空 q = 空结果」，由仓储层早退返回，
+ * 前端清空输入框不应得到 400）；**不设 min(1)**。
  */
-canvasesRouter.get('/:id/search', asyncHandler(async (req: Request, res: Response) => {
+const SearchQuerySchema = z.object({
+  q: z.string().trim().max(100).default(''),
+});
+
+canvasesRouter.get('/:id/search', canvasSearchRateLimiter, asyncHandler(async (req: Request, res: Response) => {
   const user = req.user!;
-  const query = typeof req.query.q === 'string' ? req.query.q : '';
-  const results = await searchUserNodes(query, user.id, req.params.id);
+  const { q } = validate(SearchQuerySchema, req.query);
+  const results = await searchUserNodes(q, user.id, req.params.id);
   res.json({ results });
 }));
