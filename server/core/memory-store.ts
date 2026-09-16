@@ -22,6 +22,13 @@ export const inMemoryStore = {
   shares: new Map<string, import('./records.js').ShareRecord>(),
   /** Spec L1：单层画板分组（id 为 key） */
   folders: new Map<string, import('./records.js').FolderRecord>(),
+  /**
+   * ADR-0022：第三方登录身份绑定（`${provider}:${openid}` 为 key，与 PG 的
+   * `(provider, openid)` 唯一索引对齐）。`user_id` 上的清理靠
+   * `deleteOAuthIdentitiesForUser`——PG 是 FK `ON DELETE CASCADE`，内存需显式清，
+   * 两路必须对齐（先例见 cleanupDeletedUsers 的 purgeUserDataMemory）。
+   */
+  oauthIdentities: new Map<string, import('./records.js').OAuthIdentityRecord>(),
 };
 
 /** 审计日志内存上限：最新在前，超出裁剪最旧记录 */

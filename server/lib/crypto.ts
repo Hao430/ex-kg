@@ -17,6 +17,22 @@ const LEGACY_p = 1;
 // N=2^16,r=8 需要约 64MB；maxmem 设 128MB 留余量
 const MAXMEM = 128 * 1024 * 1024;
 
+/**
+ * ADR-0022：第三方登录（微信）自动建号时的口令占位哨兵。
+ *
+ * 微信不返回邮箱也不返回口令，而 `users.password_hash` 是 NOT NULL，故必须填一个
+ * **永不可满足**的值。选哨兵而非「随机密钥的哈希」：`parseAndVerify` 在
+ * `rest.split(':')` 之后立刻 `if (!salt || !key) return resolve(false)`，
+ * 本常量**不含冒号** → 在调用 `derive()` 之前就返回 false。于是
+ *   - 零 scrypt 开销（随机密钥哈希每次建号要烧 64MB / ≥200ms）；
+ *   - 库里不留真凭据形状的哈希（随机密钥从不落库，安全性完全等价）。
+ *
+ * ⚠️ `needsRehash(本常量) === true`（无 `scrypt$` 版本头）。这是无害的：`signIn`
+ * 只在 **verifyPassword 通过之后** 才走透明升级（`auth.service.ts` 的 needsRehash 分支），
+ * 而本哨兵永远无法通过校验。**不要**新增任何「跳过校验直接 rehash」的路径。
+ */
+export const OAUTH_UNSET_PASSWORD_HASH = '!wechat-oauth-no-password!';
+
 function derive(password: string, salt: string, keylen: number, N: number, r: number, p: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     crypto.scrypt(password, salt, keylen, { N, r, p, maxmem: MAXMEM }, (err, derivedKey) => {

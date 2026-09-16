@@ -22,6 +22,7 @@ export const RLS_DIRECT_USER_TABLES = [
   'notifications',
   'user_audit_logs',
   'event_logs',
+  'oauth_identities',
 ] as const;
 
 /** 账号表本身：`id = app.user_id` */
@@ -499,6 +500,32 @@ export async function initDbSchema(): Promise<boolean> {
         details JSONB DEFAULT '{}'::jsonb,
         created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
       );
+    `);
+
+    // 7.14 OAuth Identities (第三方登录身份绑定；ADR-0022 微信网站应用登录)
+    // 身份键是 (provider, openid)：openid 是「应用维度」的唯一标识。unionid 是
+    // 「开放平台主体维度」的标识，用于认出「同一个人」——**它绝不能是唯一的**：
+    // 同一个人的小程序 openid 与网站应用 openid 是两行，两行 unionid 相同。
+    // 因此 unionid 只建普通索引，供「同人收敛」查询用。
+    // 无 deleted_at：身份是凭据映射而非用户数据，随 users 硬删级联（对齐 sessions 惯例）。
+    // 注销（软删）时**不动**本表，F4 语义由「JOIN users 后判 deleted_at」保证（与 findSession 同构）。
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS oauth_identities (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        provider VARCHAR(32) NOT NULL,
+        openid VARCHAR(128) NOT NULL,
+        unionid VARCHAR(128),
+        nickname VARCHAR(100),
+        avatar_url TEXT,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_oauth_identities_provider_openid
+        ON oauth_identities(provider, openid);
+      CREATE INDEX IF NOT EXISTS idx_oauth_identities_provider_unionid
+        ON oauth_identities(provider, unionid) WHERE unionid IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_oauth_identities_user ON oauth_identities(user_id);
     `);
 
     // 8. Indices

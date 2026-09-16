@@ -472,8 +472,16 @@ export async function deleteAccount(userId: string): Promise<boolean> {
  * 内存模式级联：删除某用户的画板、相关分享，并把其画板的 AI 日志 canvas_id 置空
  * （对齐 PG 外键 ON DELETE CASCADE / ai_request_logs.canvas_id ON DELETE SET NULL）。
  * 2026-09-10 修复：原内存分支仅删会话，注销用户画板永久残留并被管理端统计计入。
+ * ADR-0022 补充：第三方身份绑定（oauth_identities）同样随硬删清理——PG 侧是 FK
+ * `ON DELETE CASCADE`，内存侧必须显式删，否则「同一个人再次微信登录」在两种模式下
+ * 表现分叉（内存模式会走 rebind、PG 模式走全新插入）。注意这一句必须在下面
+ * 「无画板则提前返回」之前：没有画板的用户也要清掉身份行。
  */
 function purgeUserDataMemory(userId: string): void {
+  for (const [key, identity] of inMemoryStore.oauthIdentities.entries()) {
+    if (identity.user_id === userId) inMemoryStore.oauthIdentities.delete(key);
+  }
+
   const removedCanvasIds = new Set<string>();
   for (const [canvasId, canvas] of inMemoryStore.canvases.entries()) {
     if (canvas.user_id === userId) {
@@ -611,6 +619,68 @@ export async function updateUserEmail(
   user.email_verified = false;
   user.verify_token = verifyToken;
   user.verify_expires_at = verifyExpiresAt;
+  user.updated_at = new Date().toISOString();
+  return user;
+}
+
+/** 内存分支的唯一约束模拟：与 PG 的 23505 同款抛出，使两路的失败语义一致（ADR-0023 绑定邮箱） */
+function throwEmailDuplicate(): never {
+  const err: any = new Error('duplicate key value violates unique constraint "idx_users_email"');
+  err.code = '23505';
+  throw err;
+}
+
+/**
+ * ADR-0023：把**已验证过所有权**的邮箱绑到账号上（第三方登录自动建号的「补绑邮箱」）。
+ *
+ * 与 `updateUserEmail` 的分工必须分清，两者不可互换：
+ * - 本函数用于「用户已经用 6 位验证码证明了邮箱归自己所有」，因此
+ *   `email_verified = TRUE` 并**清掉** verify_token（不需要二次验证链接）；
+ * - `updateUserEmail` 是 admin 换绑语义，它会置 `email_verified = FALSE` 并写一个验证令牌
+ *   —— 「绑完邮箱后所有 chat 请求被 403 EMAIL_NOT_VERIFIED 打挂」就是这么来的
+ *   （`middleware/quota.ts` 对未验证邮箱一律拦截）。
+ *
+ * PG 唯一索引冲突（23505，partial index `WHERE deleted_at IS NULL`）向上抛给 service 转 409，
+ * 它是「并发双请求」的最终兜底。双模。用户不存在/已注销返回 null。
+ */
+export async function bindVerifiedEmail(userId: string, email: string): Promise<UserRecord | null> {
+  const normalizedEmail = email.toLowerCase().trim();
+  const db = getDb();
+  if (db) {
+    try {
+      const res = await db.query(
+        `UPDATE users
+         SET email = $1,
+             email_verified = TRUE,
+             verify_token = NULL,
+             verify_expires_at = NULL,
+             updated_at = NOW()
+         WHERE id = $2 AND deleted_at IS NULL
+         RETURNING *`,
+        [normalizedEmail, userId]
+      );
+      if (res.rows.length > 0) return mapRowToUser(res.rows[0]);
+      return null;
+    } catch (e: any) {
+      // 邮箱唯一冲突向上抛，由 service 转 409
+      if (e?.code === '23505') throw e;
+      handlePgError(e);
+      console.warn('PG bindVerifiedEmail failed, fallback to memory:', e);
+    }
+  }
+
+  const user = inMemoryStore.users.get(userId);
+  if (!user || user.deleted_at) return null;
+  // 内存分支没有 partial unique index，必须显式复刻「仅约束未注销用户」的语义，
+  // 否则两模在「目标邮箱已被他人占用」时行为分叉（PG 409 / 内存悄悄改成功）
+  for (const u of inMemoryStore.users.values()) {
+    if (u.id === userId || u.deleted_at) continue;
+    if (u.email.toLowerCase() === normalizedEmail) throwEmailDuplicate();
+  }
+  user.email = normalizedEmail;
+  user.email_verified = true;
+  user.verify_token = null;
+  user.verify_expires_at = null;
   user.updated_at = new Date().toISOString();
   return user;
 }

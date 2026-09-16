@@ -185,6 +185,26 @@ export interface EmailCodeRecord {
   updated_at: string;
 }
 
+/**
+ * ADR-0022：第三方登录身份绑定（oauth_identities 双模映射）。
+ *
+ * `openid` 是应用维度唯一标识（身份键）；`unionid` 是开放平台主体维度唯一标识，
+ * 存下来是为了将来接小程序/公众号时能认出「同一个人」，**不作为查找主键**。
+ * `nickname`/`avatar_url` 是首次授权时的快照（刻意不保存 refresh_token，
+ * 所以昵称头像不会随微信侧变化自动刷新）。
+ */
+export interface OAuthIdentityRecord {
+  id: string;
+  user_id: string;
+  provider: string;
+  openid: string;
+  unionid?: string | null;
+  nickname?: string | null;
+  avatar_url?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface DbStatus {
   connected: boolean;
   type: 'postgresql' | 'in-memory-fallback';
