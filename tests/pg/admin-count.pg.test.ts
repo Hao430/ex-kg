@@ -147,4 +147,28 @@ describe('P0 PG admin 每用户画布数排除软删', () => {
     ).json()) as any;
     assert.equal(ov.overview.totalCanvases, before, 'overview 应与 db/status 同口径');
   });
+
+  /**
+   * 安全审查 H1：`ADMIN_USER_COLUMNS` 是显式列清单，**只在 PG 分支生效**
+   * （内存分支用同一个裁剪函数，但字段来源不同）。这里在真库上跑一遍，
+   * 一是证明列名拼写正确（写错会抛 SQL 错误 → `handlePgError` 之后静默落内存，
+   * 只有真库能发现），二是证明凭据列确实没被投影出来。
+   */
+  t('真库：用户列表行不含凭据列，且 SQL 列投影拼写正确（未静默落内存）', async () => {
+    const url = new URL(`${base}/api/admin/users`);
+    url.searchParams.set('search', EMAIL);
+    url.searchParams.set('limit', '10');
+    const res = await fetch(url, { headers: { cookie: adminCookie } });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as any;
+    const row = body.users.find((u: any) => u.email === EMAIL);
+    assert.ok(row, '应能在 admin 列表找到目标用户');
+
+    for (const key of ['password_hash', 'verify_token', 'verify_expires_at', 'reset_token', 'reset_expires_at']) {
+      assert.equal(key in row, false, `PG 分支的用户行不得包含 ${key}（H1）`);
+    }
+    assert.match(row.id, /^[0-9a-f-]{36}$/i, 'id 应正常返回（列名拼写正确则不会是 undefined）');
+    assert.equal(typeof row.canvas_count, 'number');
+    assert.equal(typeof row.created_at, 'string', 'PG 的 Date 应被归一化成 ISO 串（与内存分支同形）');
+  });
 });

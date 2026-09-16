@@ -1,7 +1,74 @@
 import { getDb } from '../core/db.js';
 import { inMemoryStore } from '../core/memory-store.js';
-import type { UserRecord } from '../core/records.js';
 import { handlePgError } from '../core/db-guard.js';
+
+/**
+ * 运营台用户列表的**显式列投影**（安全审查 H1）。
+ *
+ * 原实现是 `SELECT u.*` + `{ ...r }`，把 `password_hash`、`verify_token`、`reset_token`
+ * 连同它们在 `users` 表里的**存活值**一起回吐给前端。运营台 UI 只消费
+ * id / email / name / role / is_active / vip_expires_at / canvas_count
+ * （见 `src/components/admin/AdminDashboardModal.tsx`），前端全仓 0 处引用这三个字段——
+ * 即纯粹的过度暴露：列表响应会进浏览器缓存、反向代理日志与客服截图，而
+ * `reset_token` 是**明文入库**的一次性凭据（`user.repository.ts` 直写原值，1h 内可直接换号），
+ * `password_hash` 可离线撞库。
+ *
+ * 因此改为白名单列，并且**两个分支共用同一个裁剪函数**：内存分支原先也 `{ ...u }` 直吐
+ * `UserRecord`，若只改 PG 分支，就会变成「PG 已脱敏、内存仍泄漏」的分叉——这类分叉在本项目
+ * 只能被内存模式复现，恰恰是测试最难发现的一类。
+ */
+const ADMIN_USER_COLUMNS = `u.id, u.email, u.name, u.avatar, u.role, u.vip_expires_at,
+  u.email_verified, u.is_active, u.failed_attempts, u.locked_until,
+  u.last_login_at, u.created_at, u.updated_at, u.deleted_at`;
+
+export interface AdminUserView {
+  id: string;
+  email: string;
+  name: string;
+  avatar: string | null;
+  role: 'user' | 'vip' | 'admin';
+  vip_expires_at: string | null;
+  email_verified: boolean;
+  is_active: boolean;
+  failed_attempts: number;
+  locked_until: string | null;
+  last_login_at: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  canvas_count: number;
+  total_tokens_used: number;
+}
+
+/** 时间戳归一化：PG 返回 Date，内存分支已是 ISO 串，两路必须同形 */
+function toIsoOrNull(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  return value instanceof Date ? value.toISOString() : String(value);
+}
+
+function toAdminUserView(
+  row: Record<string, any>,
+  stats: { canvas_count: number; total_tokens_used: number }
+): AdminUserView {
+  return {
+    id: row.id,
+    email: row.email,
+    name: row.name,
+    avatar: row.avatar ?? null,
+    role: row.role,
+    vip_expires_at: toIsoOrNull(row.vip_expires_at),
+    email_verified: row.email_verified ?? false,
+    is_active: row.is_active,
+    failed_attempts: row.failed_attempts ?? 0,
+    locked_until: toIsoOrNull(row.locked_until),
+    last_login_at: toIsoOrNull(row.last_login_at),
+    created_at: toIsoOrNull(row.created_at) ?? '',
+    updated_at: toIsoOrNull(row.updated_at) ?? '',
+    deleted_at: toIsoOrNull(row.deleted_at),
+    canvas_count: stats.canvas_count,
+    total_tokens_used: stats.total_tokens_used,
+  };
+}
 
 export async function listAdminUsers(params: {
   page?: number;
@@ -9,7 +76,7 @@ export async function listAdminUsers(params: {
   search?: string;
   role?: string;
   status?: string;
-}): Promise<{ users: (UserRecord & { canvas_count: number; total_tokens_used: number })[]; total: number }> {
+}): Promise<{ users: AdminUserView[]; total: number }> {
   const page = Math.max(1, params.page || 1);
   const limit = Math.min(100, Math.max(1, params.limit || 10));
   const offset = (page - 1) * limit;
@@ -41,7 +108,7 @@ export async function listAdminUsers(params: {
       const total = parseInt(countRes.rows[0].total, 10);
 
       const listRes = await db.query(
-        `SELECT u.*,
+        `SELECT ${ADMIN_USER_COLUMNS},
                 COALESCE((SELECT COUNT(*) FROM canvases c WHERE c.user_id = u.id AND c.deleted_at IS NULL), 0)::int as canvas_count,
                 COALESCE((SELECT SUM(total_tokens) FROM ai_request_logs al WHERE al.user_id = u.id AND al.status = 'success'), 0)::int as total_tokens_used
          FROM users u
@@ -52,7 +119,10 @@ export async function listAdminUsers(params: {
       );
 
       return {
-        users: listRes.rows.map((r) => ({ ...r })),
+        users: listRes.rows.map((r) => toAdminUserView(r, {
+          canvas_count: r.canvas_count,
+          total_tokens_used: r.total_tokens_used,
+        })),
         total,
       };
     } catch (e) {
@@ -84,11 +154,9 @@ export async function listAdminUsers(params: {
       .filter((l) => l.user_id === u.id && l.status === 'success')
       .reduce((sum, l) => sum + l.total_tokens, 0);
 
-    return {
-      ...u,
-      canvas_count: canvasCount,
-      total_tokens_used: totalTokens,
-    };
+    // 必须与 PG 分支走同一个裁剪函数（H1）：内存记录是**活对象引用**，
+    // `{ ...u }` 会把 password_hash / reset_token 一并带出去，且在内存模式下无处拦。
+    return toAdminUserView(u, { canvas_count: canvasCount, total_tokens_used: totalTokens });
   });
 
   return { users: paginated, total };

@@ -110,6 +110,9 @@ export async function closePools(): Promise<void> {
  * 2. 配了 `DATABASE_URL` 就必须显式配 `DATABASE_SYSTEM_URL`——否则 system 池会**回落**
  *    到 app 角色，会话查询等跨租户路径会被 RLS 静默拦成零行，表现为「所有人登录失效」。
  *    响亮拒绝启动，好过带着静默错误对外服务。
+ * 3. 生产**必须**配 `DATABASE_URL`（安全审查 M2）——部署手册已写明「缺则降级内存（生产禁止）」，
+ *    但此前只有文档约束：漏配时会带着内存模式对外服务，而内存模式只有源码里的演示种子账号
+ *    （口令是公开常量），等于把管理员口令交给任何读过源码的人。此为硬约束的落地。
  *
  * 返回错误信息数组（空 = 通过）；由 `server.ts` 决定打印并退出，
  * 便于本函数被测试直接调用而不牵连进程退出。
@@ -118,6 +121,12 @@ export function checkRuntimeDbRoleInvariants(): string[] {
   if (process.env.NODE_ENV !== 'production') return [];
 
   const problems: string[] = [];
+  if (!process.env.DATABASE_URL) {
+    problems.push(
+      '生产环境未配置 DATABASE_URL：服务会落入内存模式，而内存模式只有演示种子数据' +
+        '（口令为源码常量），且所有数据重启即失。生产必须配置数据库连接串（安全审查 M2）。'
+    );
+  }
   if (process.env.DATABASE_ADMIN_URL) {
     problems.push(
       '检测到运行期进程持有 DATABASE_ADMIN_URL（owner/DDL 凭据）。迁移必须在部署期独立步骤执行，' +

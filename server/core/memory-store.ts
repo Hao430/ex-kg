@@ -65,16 +65,51 @@ export function trimEventLogs(): void {
 }
 
 /**
+ * 演示种子账号的固定 id（安全审查 M2）。
+ *
+ * 三个账号的口令（`Admin123456!` 等）是**写在源码里的常量 = 公开凭据**。因此这份清单
+ * 既是「播种清单」也是「清除清单」——`dropDefaultSeedUsers()` 按同一组 id 删除，
+ * 用常量而非重复字面量，避免两处漂移（漂移的后果是漏删一个公开口令的管理员）。
+ */
+const SEED_ADMIN_ID = '00000000-0000-0000-0000-000000000001';
+const SEED_USER_ID = '00000000-0000-0000-0000-000000000002';
+const SEED_VIP_ID = '00000000-0000-0000-0000-000000000003';
+
+export const DEFAULT_SEED_USER_IDS: readonly string[] = [SEED_ADMIN_ID, SEED_USER_ID, SEED_VIP_ID];
+
+/**
+ * 清除演示种子账号，返回删除条数（安全审查 M2）。
+ *
+ * 为什么单独一个函数、而不是只在播种处加 `if (production) return`：
+ * 播种发生在**模块导入期**，早于 `server.ts` 的 `dotenv.config()`（本仓已踩三次的时序坑）。
+ * 若 `NODE_ENV` 只写在 `.env` 里，导入期看到的 `process.env.NODE_ENV` 是 undefined，
+ * 判定必然落空。所以 `server.ts` 必须在 dotenv 之后再清一次——那种配置下
+ * `process.env` 已经就绪，清除是确定性的。
+ */
+export function dropDefaultSeedUsers(): number {
+  let removed = 0;
+  for (const id of DEFAULT_SEED_USER_IDS) {
+    if (inMemoryStore.users.delete(id)) removed += 1;
+  }
+  return removed;
+}
+
+/**
  * Seed default users in inMemoryStore
  */
 async function seedDefaultUsers() {
+  // 生产环境不播种演示账号：口令为源码常量，任何对外服务的内存模式都不该带着它跑
+  // （未配 DATABASE_URL 的生产部署会被 checkRuntimeDbRoleInvariants 拒绝启动，
+  //   这里是不依赖该断言的第二道；server.ts 在 dotenv 之后还会兜底清一次）
+  if (process.env.NODE_ENV === 'production') return;
+
   if (inMemoryStore.users.size === 0) {
     const adminHash = await hashPassword('Admin123456!');
     const userHash = await hashPassword('User123456!');
     const vipHash = await hashPassword('Vip123456!');
 
     const adminUser: UserRecord = {
-      id: '00000000-0000-0000-0000-000000000001',
+      id: SEED_ADMIN_ID,
       email: 'admin@deepdive.ai',
       password_hash: adminHash,
       name: '系统管理员',
@@ -89,7 +124,7 @@ async function seedDefaultUsers() {
     };
 
     const normalUser: UserRecord = {
-      id: '00000000-0000-0000-0000-000000000002',
+      id: SEED_USER_ID,
       email: 'user@deepdive.ai',
       password_hash: userHash,
       name: '探索先锋',
@@ -104,7 +139,7 @@ async function seedDefaultUsers() {
     };
 
     const vipUser: UserRecord = {
-      id: '00000000-0000-0000-0000-000000000003',
+      id: SEED_VIP_ID,
       email: 'vip@deepdive.ai',
       password_hash: vipHash,
       name: '高级智囊',

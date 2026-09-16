@@ -6,11 +6,26 @@ import { createServer as createViteServer } from 'vite';
 
 import { initDbSchema } from './server/core/schema.js';
 import { checkRuntimeDbRoleInvariants } from './server/core/pool.js';
+import { dropDefaultSeedUsers } from './server/core/memory-store.js';
 import { startLogCleanupJob } from './server/jobs/log-cleanup.js';
 import { createApp } from './server/app.js';
 import { injectSeo, resolveOrigin, routeForPath, type SeoRoute } from './server/lib/seo.js';
 
 dotenv.config();
+
+// 安全审查 M2：生产进程不得残留演示种子账号（`admin@deepdive.ai` 等，口令是源码常量）。
+// 播种在 memory-store 的模块导入期执行，**早于**上一行的 dotenv.config()——这是本仓已踩三次
+// 的时序坑。若 NODE_ENV 只写在 .env 里（而非由进程管理器显式给出），导入期读到的
+// process.env.NODE_ENV 是 undefined，`if (production) return` 判定必然落空、种子已经建好。
+// 此处 process.env 已就绪，清除是确定性的。
+if (process.env.NODE_ENV === 'production') {
+  const removedSeedUsers = dropDefaultSeedUsers();
+  if (removedSeedUsers > 0) {
+    console.error(
+      `❌ 已清除 ${removedSeedUsers} 个演示种子账号：生产环境不得存在公开口令账号（安全审查 M2）`
+    );
+  }
+}
 
 // 数据库角色不变量（ADR-0019）：owner 凭据不得出现在运行期进程；生产必须显式配
 // DATABASE_SYSTEM_URL。响亮拒绝启动，好过带着静默错误（跨租户路径被 RLS 拦成零行）对外服务。
