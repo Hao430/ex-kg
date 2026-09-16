@@ -193,6 +193,26 @@ export const forgotPasswordRateLimiter = rateLimit({
 });
 
 /**
+ * 重置密码限流（安全审查 L1）。
+ *
+ * 这是**唯一没有独立限流器的匿名端点**（登录/注册/找回密码都有）：令牌虽是 32 字节随机
+ * hex、不可枚举，但每次请求都跑一遍 scrypt（ADR-0010 刻意调到单次 ≥200ms）——
+ * 不限流就是一个廉价的 CPU 放大面。按 IP 独立计数，不与 forgot-password 共桶
+ * （ADR-0007：一个端点被刷不该拖垮另一个）。
+ */
+export const resetPasswordRateLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => ipKeyGenerator(req.ip || 'anonymous'),
+  message: {
+    error: '重置密码请求过于频繁，请稍后重试',
+    code: 'RATE_LIMIT_EXCEEDED',
+  },
+});
+
+/**
  * Rate limiter for 订单状态轮询（GET /api/subscriptions/orders/:orderNo）：40 req/min per user。
  *
  * 必须与 subscriptionRateLimiter（10/min）**分开实例**：前端 RechargeModal 每 3s 轮一次

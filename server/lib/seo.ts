@@ -26,6 +26,7 @@ import {
   SEO_ROUTES,
   type SeoRouteKey,
 } from '../../shared/product-content.js';
+import { escapeHtml } from './html.js';
 
 export type SeoRoute = SeoRouteKey;
 
@@ -37,15 +38,6 @@ export const SEO_BODY_MARKER = { start: '<!--seo:body-->', end: '<!--/seo:body--
 export interface OriginRequest {
   protocol: string;
   get(name: string): string | undefined;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }
 
 function escapeXml(value: string): string {

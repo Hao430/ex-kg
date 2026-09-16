@@ -10,10 +10,11 @@ import { isPlaceholderEmail } from '../services/wechat.service.js';
 import { submitFeedback } from '../services/feedback.service.js';
 import { asyncHandler } from '../lib/async-handler.js';
 import { validate } from '../lib/validate.js';
+import { resolveRequestOrigin } from '../lib/origin.js';
 import { effectiveEntitlements } from '../services/quota.service.js';
 import { setSessionCookie, clearSessionCookie, extractSessionToken } from '../lib/session-cookie.js';
 import { runWithSystem } from '../core/db-context.js';
-import { authMiddleware, loginRateLimiter, signupRateLimiter, resendVerificationRateLimiter, forgotPasswordRateLimiter, sendRegisterCodeRateLimiter, bindEmailSendCodeRateLimiter, bindEmailRateLimiter } from '../middleware/auth.js';
+import { authMiddleware, loginRateLimiter, signupRateLimiter, resendVerificationRateLimiter, forgotPasswordRateLimiter, resetPasswordRateLimiter, sendRegisterCodeRateLimiter, bindEmailSendCodeRateLimiter, bindEmailRateLimiter } from '../middleware/auth.js';
 import { bindEmail, bindEmailSendCode, getWechatBinding } from '../services/account-binding.service.js';
 
 export const authRouter = Router();
@@ -126,6 +127,11 @@ authRouter.post('/send-register-code', sendRegisterCodeRateLimiter, asyncHandler
 /**
  * POST /api/auth/sign-up
  * Register a new user & auto session cookie（需先通过 send-register-code 获取验证码）
+ *
+ * 会话令牌**只经 httpOnly cookie 下发**，不进响应体（安全审查 M1）。
+ * 曾把 `token` 一并放进 JSON：浏览器端从不读它，却把 httpOnly 的保证拆掉——
+ * 响应日志、反向代理缓存与任何一处 XSS 都能捞到一枚可复用的 Bearer 凭据。
+ * `/api/auth/sign-in` 同理。
  */
 authRouter.post('/sign-up', signupRateLimiter, asyncHandler(async (req: Request, res: Response) => {
   const { email, password, code, name } = validate(SignUpSchema, req.body);
@@ -147,7 +153,6 @@ authRouter.post('/sign-up', signupRateLimiter, asyncHandler(async (req: Request,
     success: true,
     message: '注册成功，欢迎加入 枝想！',
     user: publicUser(user),
-    token,
   });
 }));
 
@@ -176,7 +181,6 @@ authRouter.post('/sign-in', loginRateLimiter, asyncHandler(async (req: Request, 
       ...publicUser(user),
       vip_expires_at: user.vip_expires_at,
     },
-    token,
   });
 }));
 
@@ -311,7 +315,11 @@ authRouter.post('/resend-verification', authMiddleware, resendVerificationRateLi
  */
 authRouter.post('/forgot-password', forgotPasswordRateLimiter, asyncHandler(async (req: Request, res: Response) => {
   const { email } = validate(ForgotPasswordSchema, req.body);
-  const origin = `${req.protocol}://${req.get('host')}`;
+  // Host 头是请求方可控的：直接拼 `${req.protocol}://${req.get('host')}` 会让攻击者
+  // 用伪造 Host + 受害者邮箱触发一封「重置链接指向攻击者域名」的邮件（重置投毒，
+  // 令牌明文入库、点击即换号）。resolveRequestOrigin 先取 APP_URL，未配置才用经
+  // 字符白名单校验的 Host，两者都不可信时抛 500（安全审查 M3）。
+  const origin = resolveRequestOrigin(req);
   await runWithSystem('auth: forgot-password 按 email 发重置链接（账号建立前无租户）', () =>
     requestPasswordReset(email, origin)
   );
@@ -321,8 +329,9 @@ authRouter.post('/forgot-password', forgotPasswordRateLimiter, asyncHandler(asyn
 /**
  * POST /api/auth/reset-password（公开）
  * Spec F1：凭令牌重置密码，成功后踢下线全部会话。
+ * 限流（安全审查 L1）：令牌不可枚举，但成功路径要跑 scrypt，匿名不限流即 CPU 放大面。
  */
-authRouter.post('/reset-password', asyncHandler(async (req: Request, res: Response) => {
+authRouter.post('/reset-password', resetPasswordRateLimiter, asyncHandler(async (req: Request, res: Response) => {
   const { token, password } = validate(ResetPasswordSchema, req.body);
   await runWithSystem('auth: reset-password 按令牌重置并踢下线（无登录态）', () =>
     resetPassword({

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { authMiddleware, publicShareReadLimiter, mySharesReadRateLimiter } from '../middleware/auth.js';
 import { asyncHandler } from '../lib/async-handler.js';
 import { validate } from '../lib/validate.js';
+import { resolveRequestOrigin } from '../lib/origin.js';
 import { getShareView, listMyShares } from '../services/share.service.js';
 import { runWithSystem } from '../core/db-context.js';
 
@@ -18,7 +19,7 @@ sharesRouter.get(
   authMiddleware,
   mySharesReadRateLimiter,
   asyncHandler(async (req: Request, res: Response) => {
-    const appUrl = process.env.APP_URL || `${req.protocol}://${req.get('host') || 'localhost'}`;
+    const appUrl = resolveRequestOrigin(req);
     const result = await listMyShares(req.user!, appUrl);
     res.json(result);
   })

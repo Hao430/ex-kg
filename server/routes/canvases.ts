@@ -12,6 +12,7 @@ import {
 import { asyncHandler } from '../lib/async-handler.js';
 import { authMiddleware, shareActionRateLimiter, autoTitleRateLimiter } from '../middleware/auth.js';
 import { validate } from '../lib/validate.js';
+import { resolveRequestOrigin } from '../lib/origin.js';
 import { createShareForCanvas, revokeShareForCanvas } from '../services/share.service.js';
 import { generateAutoTitles } from '../services/title.service.js';
 import { recordAiRequestLog } from '../services/ai.service.js';
@@ -222,7 +223,8 @@ canvasesRouter.patch('/:id/meta', asyncHandler(async (req: Request, res: Respons
  */
 canvasesRouter.post('/:id/share', shareActionRateLimiter, asyncHandler(async (req: Request, res: Response) => {
   const user = req.user!;
-  const appUrl = process.env.APP_URL || `${req.protocol}://${req.get('host') || 'localhost'}`;
+  // 分享链接是**发给别人的**：Host 头可控 → 链接会指向攻击者域名。统一走走查来源（M3）。
+  const appUrl = resolveRequestOrigin(req);
   const result = await createShareForCanvas(user, req.params.id, appUrl);
   res.json(result);
 }));

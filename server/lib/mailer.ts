@@ -1,4 +1,5 @@
 import nodemailer, { type Transporter } from 'nodemailer';
+import { escapeHtml } from './html.js';
 
 /**
  * Spec D3：验证邮件发送器。
@@ -52,11 +53,17 @@ function isDryRun(): boolean {
 
 /**
  * 发送邮箱验证邮件。发信失败仅 console.warn，不向上抛（不阻塞注册/重发主流程）。
+ *
+ * ⚠️ 所有插进 HTML 模板的值必须经 `escapeHtml`（安全审查 M3）：正文里的链接由
+ * `APP_URL`/Host 推导而来，历史上是未转义直接插值的——伪造 Host 即可撕开 HTML
+ * （`href="${url}"` 里的引号会被提前闭合）。转义是最后一道，不是唯一一道：
+ * 来源侧另由 `server/lib/origin.ts` 的字符白名单拦一次。
  */
 export async function sendVerificationEmail(to: string, verifyUrl: string): Promise<void> {
   const subject = '枝想 邮箱验证';
   const text = `欢迎加入 枝想！请点击以下链接完成邮箱验证（24 小时内有效）：\n${verifyUrl}`;
-  const html = `<p>欢迎加入 枝想！</p><p>请点击以下链接完成邮箱验证（24 小时内有效）：</p><p><a href="${verifyUrl}">${verifyUrl}</a></p>`;
+  const safeUrl = escapeHtml(verifyUrl);
+  const html = `<p>欢迎加入 枝想！</p><p>请点击以下链接完成邮箱验证（24 小时内有效）：</p><p><a href="${safeUrl}">${safeUrl}</a></p>`;
 
   try {
     if (isDryRun()) {
@@ -85,7 +92,7 @@ export async function sendVerificationEmail(to: string, verifyUrl: string): Prom
 export async function sendVerificationCodeEmail(to: string, code: string): Promise<void> {
   const subject = '枝想 注册验证码';
   const text = `欢迎加入 枝想！您的注册验证码为：${code}（10 分钟内有效）。\n如非本人操作，请忽略此邮件。`;
-  const html = `<p>欢迎加入 枝想！</p><p>您的注册验证码为：</p><p style="font-size:24px;letter-spacing:8px;font-weight:bold;">${code}</p><p>验证码 10 分钟内有效。如非本人操作，请忽略此邮件。</p>`;
+  const html = `<p>欢迎加入 枝想！</p><p>您的注册验证码为：</p><p style="font-size:24px;letter-spacing:8px;font-weight:bold;">${escapeHtml(code)}</p><p>验证码 10 分钟内有效。如非本人操作，请忽略此邮件。</p>`;
 
   try {
     if (isDryRun()) {
@@ -113,7 +120,8 @@ export async function sendVerificationCodeEmail(to: string, code: string): Promi
 export async function sendPasswordResetEmail(to: string, resetUrl: string): Promise<void> {
   const subject = '枝想 重置密码';
   const text = `您正在重置 枝想 账号密码。请点击以下链接设置新密码（1 小时内有效）：\n${resetUrl}\n\n如非本人操作，请忽略此邮件。`;
-  const html = `<p>您正在重置 枝想 账号密码。</p><p>请点击以下链接设置新密码（1 小时内有效）：</p><p><a href="${resetUrl}">${resetUrl}</a></p><p>如非本人操作，请忽略此邮件。</p>`;
+  const safeUrl = escapeHtml(resetUrl);
+  const html = `<p>您正在重置 枝想 账号密码。</p><p>请点击以下链接设置新密码（1 小时内有效）：</p><p><a href="${safeUrl}">${safeUrl}</a></p><p>如非本人操作，请忽略此邮件。</p>`;
 
   try {
     if (isDryRun()) {
@@ -145,7 +153,7 @@ export async function sendPasswordResetEmail(to: string, resetUrl: string): Prom
 export async function sendEmailBindCodeEmail(to: string, code: string): Promise<void> {
   const subject = '枝想 邮箱绑定验证码';
   const text = `您正在为 枝想 账号绑定此邮箱。验证码为：${code}（10 分钟内有效）。\n如非本人操作，请忽略此邮件。`;
-  const html = `<p>您正在为 枝想 账号绑定此邮箱。</p><p>验证码为：</p><p style="font-size:24px;letter-spacing:8px;font-weight:bold;">${code}</p><p>验证码 10 分钟内有效。如非本人操作，请忽略此邮件。</p>`;
+  const html = `<p>您正在为 枝想 账号绑定此邮箱。</p><p>验证码为：</p><p style="font-size:24px;letter-spacing:8px;font-weight:bold;">${escapeHtml(code)}</p><p>验证码 10 分钟内有效。如非本人操作，请忽略此邮件。</p>`;
 
   try {
     if (isDryRun()) {
