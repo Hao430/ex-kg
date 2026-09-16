@@ -368,7 +368,16 @@ describe('ADR-0022 微信网站应用登录', () => {
     const long = await loginViaWechat();
     assert.ok(long.user.name.length <= 50, `昵称应截断到 50，实际 ${long.user.name.length}`);
     assert.doesNotMatch(long.user.name, /[\u0000-\u001F\u200B-\u200F]/, '不得残留控制/零宽字符');
-    assert.ok(!long.user.name.includes('\uFFFD'), '不得把 emoji 代理对切成半个字符');
+    // ⚠️ 不能断言「不含 U+FFFD」—— 若按 UTF-16 切断代理对，产出的是**孤立代理项**
+    // （U+D83D 之类）而不是 U+FFFD，那条断言永远为真、等于没写。真正的判据是
+    // 「每个码点都是完整标量」：按码点切（Array.from）时不会出现长度为 1 的代理项。
+    const trimmed: string = long.user.name;
+    assert.ok(
+      Array.from(trimmed).every(
+        (c) => !(c.length === 1 && c.charCodeAt(0) >= 0xd800 && c.charCodeAt(0) <= 0xdfff)
+      ),
+      `昵称里出现了孤立代理项（半个 emoji）：${JSON.stringify(trimmed)}`
+    );
 
     useFreshWechatIdentity('nick-empty');
     wxUserinfoReply = { openid: 'OPENID-nick-empty', nickname: '   \u0000\u200B  ' };
