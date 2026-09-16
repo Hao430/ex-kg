@@ -29,9 +29,40 @@ export function createApp(): express.Express {
   app.set('trust proxy', 'loopback, linklocal, uniquelocal');
 
   // Security headers with Helmet (per Spec 1.2)
+  //
+  // CSP（安全审查 M5）：**与「服务 dist 产物」同生共死**——判据与 server.ts 里选择
+  // 「Vite 中间件 vs 静态产物」的那一个完全一致（`NODE_ENV !== 'production'` 走 Vite）。
+  // 这样不会出现「跑着 Vite 开发服务器却套上严格 CSP（HMR 的内联脚本与 websocket 直接被
+  // 打死）」或「服务 dist 产物却没有 CSP」的错位；测试进程不渲染 HTML，判据落在 false 侧。
+  //
+  // 指令按本站真实的外呼面收敛（不是照抄默认值）：
+  // - script：只允许同源。index.html 里那段 ResizeObserver 兜底已外置为
+  //   /resize-observer-guard.js（否则这里就得开 'unsafe-inline'，等于白开）；
+  // - style：'unsafe-inline' 必需——React 内联样式、Tailwind 与 KaTeX 都往里写；
+  // - font / style 之外的 Google Fonts 两个域：index.html 直接 <link> 了字体；
+  // - img：放 https 与 data:/blob:——用户头像是任意外链，画布导出走 data URL；
+  // - connect：只允许同源。AI 上游是**服务端**去调的，浏览器不该也不需要直连；
+  // - frame-ancestors 'none'：本站从不被嵌框。
+  const cspEnabled = process.env.NODE_ENV === 'production';
   app.use(
     helmet({
-      contentSecurityPolicy: false, // Allow inline styles/scripts for Vite & Math rendering
+      contentSecurityPolicy: cspEnabled
+        ? {
+            useDefaults: false,
+            directives: {
+              'default-src': ["'self'"],
+              'script-src': ["'self'"],
+              'style-src': ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+              'font-src': ["'self'", 'data:', 'https://fonts.gstatic.com'],
+              'img-src': ["'self'", 'data:', 'blob:', 'https:'],
+              'connect-src': ["'self'"],
+              'object-src': ["'none'"],
+              'base-uri': ["'self'"],
+              'form-action': ["'self'"],
+              'frame-ancestors': ["'none'"],
+            },
+          }
+        : false,
       crossOriginEmbedderPolicy: false,
     })
   );
@@ -48,10 +79,11 @@ export function createApp(): express.Express {
   app.use(sameOriginGuard);
 
   // Health check
+  // 安全审查 L3：不再回吐 `hasApiKey`——这是匿名端点，而「服务端配了哪家 AI 密钥」
+  // 属于部署内部信息（旧前端/测试/文档均无消费方，删除无兼容影响）。
   app.get('/api/health', (_req, res) => {
     res.json({
       status: 'ok',
-      hasApiKey: Boolean(process.env.GEMINI_API_KEY),
       timestamp: new Date().toISOString(),
     });
   });
@@ -69,7 +101,15 @@ export function createApp(): express.Express {
         res.json(status);
       }
     } catch (error: any) {
-      res.status(500).json({ error: error?.message || 'Failed to check database status' });
+      // 安全审查 L4：这是**匿名**端点，异常分支不得把底层错误原文吐出去
+      // （PG 连接的报错里会带内网主机、端口、库名与角色名）。开发/测试保留原文便于排障。
+      console.error('[db-status] 探活失败：', error?.message || error);
+      res.status(500).json({
+        error:
+          process.env.NODE_ENV === 'production'
+            ? '数据库状态检查失败'
+            : error?.message || 'Failed to check database status',
+      });
     }
   });
 
