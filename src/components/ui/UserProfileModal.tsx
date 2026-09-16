@@ -25,6 +25,8 @@ import {
   Clock,
   Shield,
   BadgeCheck,
+  QrCode,
+  AlertCircle,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { copyTextToClipboard } from '../../lib/clipboard.js';
@@ -58,6 +60,11 @@ export const UserProfileModal: React.FC = () => {
     openRechargeModal,
     openMySharesModal,
     logout,
+    wechatEnabled,
+    bindNotice,
+    clearBindNotice,
+    sendBindEmailCode,
+    bindEmail,
   } = useAuth();
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('profile');
@@ -68,6 +75,15 @@ export const UserProfileModal: React.FC = () => {
   const [deleting, setDeleting] = useState(false);
   const [statusMsg, setStatusMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  // ADR-0023：补绑邮箱子表单（就地展开，不另开弹窗）
+  const [bindEmailOpen, setBindEmailOpen] = useState(false);
+  const [bindEmailValue, setBindEmailValue] = useState('');
+  const [bindCode, setBindCode] = useState('');
+  const [bindCodeSending, setBindCodeSending] = useState(false);
+  const [bindCooldown, setBindCooldown] = useState(0);
+  const [bindSubmitting, setBindSubmitting] = useState(false);
+  const [bindMsg, setBindMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // 修改密码
   const [oldPassword, setOldPassword] = useState('');
@@ -86,7 +102,53 @@ export const UserProfileModal: React.FC = () => {
     }
   }, [user, userProfileModalOpen]);
 
+  // 绑定邮箱失败时的 60s 重发倒计时
+  useEffect(() => {
+    if (bindCooldown <= 0) return;
+    const t = setTimeout(() => setBindCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [bindCooldown]);
+
   if (!userProfileModalOpen || !user) return null;
+
+  const handleBindEmailSendCode = async () => {
+    setBindMsg(null);
+    if (!bindEmailValue || !bindEmailValue.includes('@')) {
+      setBindMsg({ type: 'error', text: '请先填写有效的邮箱地址' });
+      return;
+    }
+    setBindCodeSending(true);
+    try {
+      const res = await sendBindEmailCode(bindEmailValue.trim());
+      if (res.success) {
+        setBindCooldown(60);
+        setBindMsg({ type: 'success', text: res.message || '验证码已发送' });
+      } else {
+        setBindMsg({ type: 'error', text: res.error || '发送失败，请稍后重试' });
+      }
+    } finally {
+      setBindCodeSending(false);
+    }
+  };
+
+  const handleBindEmailSubmit = async () => {
+    setBindMsg(null);
+    setBindSubmitting(true);
+    try {
+      const res = await bindEmail(bindEmailValue.trim(), bindCode);
+      if (res.success) {
+        // 绑定成功后 email_placeholder 变 false，绑定入口自身会消失
+        setBindMsg({ type: 'success', text: res.message || '邮箱绑定成功' });
+        setBindEmailOpen(false);
+        setBindEmailValue('');
+        setBindCode('');
+      } else {
+        setBindMsg({ type: 'error', text: res.error || '绑定失败，请稍后重试' });
+      }
+    } finally {
+      setBindSubmitting(false);
+    }
+  };
 
   const handleCopy = async (text: string, fieldName: string) => {
     const success = await copyTextToClipboard(text);
@@ -328,7 +390,7 @@ export const UserProfileModal: React.FC = () => {
                 <div className="flex items-center gap-2 mt-1 text-xs text-slate-500 dark:text-slate-400">
                   <span className="flex items-center gap-1 font-mono">
                     <Mail className="w-3.5 h-3.5 text-slate-400" />
-                    {user.email}
+                    {user.email_placeholder ? '微信登录（未设邮箱）' : user.email}
                   </span>
                   <span className="text-slate-300 dark:text-slate-700">·</span>
                   <span className="flex items-center gap-1">
@@ -513,9 +575,17 @@ export const UserProfileModal: React.FC = () => {
                 <div className="p-4 rounded-xl bg-slate-50/70 dark:bg-slate-900/50 border border-slate-200/80 dark:border-slate-800/80 space-y-2.5">
                   <div className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2 flex items-center justify-between">
                     <span>账号标识与绑定</span>
-                    <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 font-normal">
-                      <BadgeCheck className="w-3.5 h-3.5" /> 邮箱安全保护已激活
-                    </span>
+                    {user.email_placeholder ? (
+                      <span className="inline-flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400 font-normal">
+                        <AlertCircle className="w-3.5 h-3.5" />
+                        邮箱待绑定
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 font-normal">
+                        <BadgeCheck className="w-3.5 h-3.5" />
+                        邮箱安全保护已激活
+                      </span>
+                    )}
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
@@ -550,6 +620,137 @@ export const UserProfileModal: React.FC = () => {
                           : '标准体验版'}
                       </span>
                     </div>
+                  </div>
+
+                  {/* ADR-0023：账号绑定（单向、不可自助解除）。邮箱与微信各一行。
+                      注意本卡片位于资料表单内部，所有按钮必须 type="button"，否则会提交表单。 */}
+                  <div className="space-y-2 pt-0.5">
+                    {/* 邮箱 */}
+                    <div className="p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 text-xs">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0 flex items-center gap-2">
+                          <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          <span className="text-slate-500 dark:text-slate-400 shrink-0">邮箱</span>
+                          <span
+                            className={`truncate font-medium ${
+                              user.email_placeholder
+                                ? 'text-amber-600 dark:text-amber-400'
+                                : 'text-slate-700 dark:text-slate-300'
+                            }`}
+                          >
+                            {user.email_placeholder ? '未绑定' : user.email}
+                          </span>
+                        </div>
+                        {user.email_placeholder && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setBindEmailOpen((v) => !v);
+                              setBindMsg(null);
+                            }}
+                            className="shrink-0 px-2.5 py-1 text-[11px] font-medium rounded-lg text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800/60 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-colors"
+                          >
+                            {bindEmailOpen ? '收起' : '绑定邮箱'}
+                          </button>
+                        )}
+                      </div>
+
+                      {user.email_placeholder && bindEmailOpen && (
+                        <div className="mt-2.5 space-y-2">
+                          <input
+                            type="email"
+                            value={bindEmailValue}
+                            onChange={(e) => setBindEmailValue(e.target.value)}
+                            placeholder="name@example.com"
+                            className="w-full px-2.5 py-1.5 text-xs bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800 dark:text-slate-100 placeholder-slate-400"
+                          />
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              maxLength={6}
+                              value={bindCode}
+                              onChange={(e) => setBindCode(e.target.value.replace(/\D/g, ''))}
+                              placeholder="6 位验证码"
+                              autoComplete="one-time-code"
+                              className="flex-1 min-w-0 px-2.5 py-1.5 text-xs tracking-widest bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800 dark:text-slate-100 placeholder-slate-400"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => void handleBindEmailSendCode()}
+                              disabled={bindCooldown > 0 || bindCodeSending}
+                              className="shrink-0 px-2.5 py-1.5 text-[11px] font-medium rounded-lg text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800/60 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-colors disabled:opacity-50"
+                            >
+                              {bindCodeSending
+                                ? '发送中…'
+                                : bindCooldown > 0
+                                ? `${bindCooldown}s 后重发`
+                                : '发送验证码'}
+                            </button>
+                          </div>
+                          {bindMsg && (
+                            <p
+                              className={`text-[11px] ${
+                                bindMsg.type === 'success'
+                                  ? 'text-emerald-600 dark:text-emerald-400'
+                                  : 'text-rose-600 dark:text-rose-400'
+                              }`}
+                            >
+                              {bindMsg.text}
+                            </p>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => void handleBindEmailSubmit()}
+                            disabled={bindSubmitting || !bindEmailValue || bindCode.length !== 6}
+                            className="w-full py-1.5 text-[11px] font-medium rounded-lg text-white bg-indigo-600 hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                          >
+                            {bindSubmitting ? '绑定中…' : '确认绑定'}
+                          </button>
+                        </div>
+                      )}
+
+                      {user.email_placeholder && (
+                        <p className="mt-1.5 text-[11px] text-slate-400 dark:text-slate-500 leading-relaxed">
+                          绑定邮箱后，可在登录页通过「忘记密码」设置登录密码，从此也能用邮箱登录。
+                        </p>
+                      )}
+                    </div>
+
+                    {/* 微信 */}
+                    {wechatEnabled && (
+                      <div className="p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 text-xs">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0 flex items-center gap-2">
+                            <QrCode className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                            <span className="text-slate-500 dark:text-slate-400 shrink-0">微信</span>
+                            <span
+                              className={`truncate font-medium ${
+                                user.wechat_bound
+                                  ? 'text-slate-700 dark:text-slate-300'
+                                  : 'text-amber-600 dark:text-amber-400'
+                              }`}
+                            >
+                              {user.wechat_bound ? user.wechat_nickname || '已绑定' : '未绑定'}
+                            </span>
+                          </div>
+                          {!user.wechat_bound && (
+                            <a
+                              href="/api/auth/wechat/authorize"
+                              onClick={() => clearBindNotice()}
+                              className="shrink-0 px-2.5 py-1 text-[11px] font-medium rounded-lg text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800/60 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-colors"
+                            >
+                              绑定微信
+                            </a>
+                          )}
+                        </div>
+                        {!user.wechat_bound && (
+                          <p className="mt-1.5 text-[11px] text-slate-400 dark:text-slate-500 leading-relaxed">
+                            绑定后可用微信扫码登录本账号。绑定为一次性操作，如需解除请联系客服。
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               </form>
@@ -740,7 +941,19 @@ export const UserProfileModal: React.FC = () => {
             {/* TAB 3: 安全与账号 */}
             {activeTab === 'security' && (
               <div className="space-y-6">
-                {/* 修改密码表单 */}
+                {/* ADR-0022：纯微信账号没有可用口令（服务端填的是不可满足的哨兵），
+                    修改密码表单对它必然失败——换成说明卡，别给一个点了就报错的表单 */}
+                {user.has_password === false ? (
+                  <div className="p-4 rounded-xl bg-slate-50/70 dark:bg-slate-900/50 border border-slate-200/80 dark:border-slate-800/80 flex items-start gap-3 text-xs">
+                    <Shield className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+                    <div className="space-y-1 text-slate-600 dark:text-slate-400 text-[11px] leading-relaxed">
+                      <span className="font-semibold text-slate-800 dark:text-slate-200 block">
+                        本账号通过微信登录
+                      </span>
+                      <p>账号未设置独立密码，登录凭据由微信提供，无需也无法在此修改密码。</p>
+                    </div>
+                  </div>
+                ) : (
                 <div className="p-5 rounded-xl bg-slate-50/70 dark:bg-slate-900/50 border border-slate-200/80 dark:border-slate-800/80 space-y-4">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
@@ -832,6 +1045,7 @@ export const UserProfileModal: React.FC = () => {
                     </button>
                   </div>
                 </div>
+                )}
 
                 {/* 会话安全与合规保护说明 */}
                 <div className="p-4 rounded-xl bg-slate-50/70 dark:bg-slate-900/50 border border-slate-200/80 dark:border-slate-800/80 flex items-start gap-3 text-xs">

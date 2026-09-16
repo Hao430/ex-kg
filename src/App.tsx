@@ -49,6 +49,7 @@ import { AuthModal } from './components/auth/AuthModal';
 import { RechargeModal } from './components/ui/RechargeModal';
 import { AdminDashboardModal } from './components/admin/AdminDashboardModal';
 import { UserProfileModal } from './components/ui/UserProfileModal';
+import { AccountBindingNudge } from './components/ui/AccountBindingNudge';
 import { MySharesModal } from './components/ui/MySharesModal';
 import { FeedbackModal } from './components/ui/FeedbackModal';
 import { BoardLibraryModal } from './components/ui/BoardLibraryModal';
@@ -1215,6 +1216,7 @@ function MainApp() {
       )}
 
       {/* Floating Status Toast */}
+      <AccountBindingNudge />
       {toastMessage && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900/90 text-white px-4 py-2 rounded-full text-xs font-medium shadow-2xl backdrop-blur-md border border-slate-700/80 animate-in fade-in slide-in-from-bottom-2 duration-200">
           {toastMessage}
