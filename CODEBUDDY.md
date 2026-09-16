@@ -24,7 +24,7 @@ docker compose -f docker-compose.pg-smoke.yml up -d postgres && \
 #     npx tsx --test --test-concurrency=1 'tests/pg/*.test.ts'
 ```
 
-**测试框架是 node:test（`tsx --test`），不是 vitest**——用 vitest 跑会全部报「No test suite found」。默认套件（`tests/*.test.ts`）只跑 memory 模式且 **glob 不含 `tests/pg/`**；PG 真库覆盖在 `tests/pg/*.test.ts`（`PG_SMOKE=1` 门控，连不上即红不 skip），**6 个文件共用同一个库、各自在 `before()` 里跑迁移，故用 `--test-concurrency=1` 串行**。
+**测试框架是 node:test（`tsx --test`），不是 vitest**——用 vitest 跑会全部报「No test suite found」。默认套件（`tests/*.test.ts`）只跑 memory 模式且 **glob 不含 `tests/pg/`**；PG 真库覆盖在 `tests/pg/*.test.ts`（`PG_SMOKE=1` 门控，连不上即红不 skip），**9 个文件共用同一个库、各自在 `before()` 里跑迁移，故用 `--test-concurrency=1` 串行**（不写成文件清单，免得每次加文件都要改这一行）。
 
 ## 架构大图
 
