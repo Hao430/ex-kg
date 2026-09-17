@@ -7,14 +7,14 @@ import { markEmailVerifiedByToken } from '../repositories/user.repository.js';
 import { ValidationError } from '../lib/errors.js';
 import { OAUTH_UNSET_PASSWORD_HASH } from '../lib/crypto.js';
 import { isPlaceholderEmail } from '../services/wechat.service.js';
-import { submitFeedback } from '../services/feedback.service.js';
+import { submitFeedback, listMyFeedbacks } from '../services/feedback.service.js';
 import { asyncHandler } from '../lib/async-handler.js';
 import { validate } from '../lib/validate.js';
 import { resolveRequestOrigin } from '../lib/origin.js';
 import { effectiveEntitlements } from '../services/quota.service.js';
 import { setSessionCookie, clearSessionCookie, extractSessionToken } from '../lib/session-cookie.js';
 import { runWithSystem } from '../core/db-context.js';
-import { authMiddleware, loginRateLimiter, signupRateLimiter, resendVerificationRateLimiter, forgotPasswordRateLimiter, resetPasswordRateLimiter, sendRegisterCodeRateLimiter, bindEmailSendCodeRateLimiter, bindEmailRateLimiter } from '../middleware/auth.js';
+import { authMiddleware, loginRateLimiter, signupRateLimiter, resendVerificationRateLimiter, forgotPasswordRateLimiter, resetPasswordRateLimiter, sendRegisterCodeRateLimiter, bindEmailSendCodeRateLimiter, bindEmailRateLimiter, feedbackSubmitRateLimiter, feedbackMineReadRateLimiter } from '../middleware/auth.js';
 import { bindEmail, bindEmailSendCode, getWechatBinding } from '../services/account-binding.service.js';
 
 export const authRouter = Router();
@@ -42,7 +42,9 @@ const UpdateProfileSchema = z.object({
 });
 
 const FeedbackSchema = z.object({
-  type: z.enum(['suggestion', 'bug', 'other']),
+  // Spec P1：必须与前端 FeedbackType（src/types.ts）一致。此前漏了 'ux'，
+  // 导致 FeedbackModal 的「体验优化」选项**必然 400**（用户只看到笼统提交失败）。
+  type: z.enum(['suggestion', 'bug', 'ux', 'other']),
   rating: z.number().int().min(1).max(5).optional(),
   content: z.string().min(1, '请填写反馈内容').max(2000),
   contactInfo: z.string().max(255).optional(),
@@ -398,7 +400,7 @@ authRouter.post('/bind-email', authMiddleware, bindEmailRateLimiter, asyncHandle
  * POST /api/auth/feedback
  * Submit user feedback & suggestion
  */
-authRouter.post('/feedback', asyncHandler(async (req: Request, res: Response) => {
+authRouter.post('/feedback', feedbackSubmitRateLimiter, asyncHandler(async (req: Request, res: Response) => {
   const { type, rating, content, contactInfo } = validate(FeedbackSchema, req.body);
 
   // Optional user attachment via session token
@@ -414,6 +416,20 @@ authRouter.post('/feedback', asyncHandler(async (req: Request, res: Response) =>
     message: '感谢您的宝贵建议！我们已收到您的反馈并会认真评估。',
     feedbackId: fb.id,
   });
+}));
+
+/**
+ * GET /api/auth/feedback（/api/feedback 别名同样可达）
+ * 「我的反馈」（Spec P1）：必须登录，只回本人工单。
+ *
+ * 匿名提交的工单 user_id 为 NULL，**任何人**都查不到——匿名反馈的回执通道只有提交时
+ * 自填的 contact_info，这是产品语义不是缺陷。
+ * authMiddleware 已建立 runWithUser 作用域，PG 侧 RLS 谓词（user_id = app.user_id）
+ * 天然只回本人行；内存分支由仓储显式过滤。仓储**不得**自行升级作用域。
+ */
+authRouter.get('/feedback', authMiddleware, feedbackMineReadRateLimiter, asyncHandler(async (req: Request, res: Response) => {
+  const feedbacks = await listMyFeedbacks(req.user!.id);
+  res.json({ success: true, feedbacks });
 }));
 
 /**

@@ -17,11 +17,12 @@ import {
   listAiRequestLogs,
   listEventLogs,
 } from '../services/admin.service.js';
+import { listFeedbacksForAdmin, updateFeedbackStatus } from '../services/feedback.service.js';
 import { getAiModelConfig, isModelConfigured } from '../services/ai.service.js';
 import { asyncHandler } from '../lib/async-handler.js';
 import { checkDbStatus } from '../core/db-status.js';
 import { validate } from '../lib/validate.js';
-import { authMiddleware, requireAdmin, adminLogReadRateLimiter, adminUserWriteRateLimiter } from '../middleware/auth.js';
+import { authMiddleware, requireAdmin, adminLogReadRateLimiter, adminUserWriteRateLimiter, adminFeedbackReadRateLimiter } from '../middleware/auth.js';
 import { runWithSystem } from '../core/db-context.js';
 import { assertSafeOutboundUrl } from '../lib/outbound-url.js';
 import { AppError } from '../lib/errors.js';
@@ -148,6 +149,68 @@ adminRouter.get('/orders', asyncHandler(async (req: Request, res: Response) => {
     page,
     limit,
   });
+}));
+
+/**
+ * GET /api/admin/feedbacks
+ * 运营台工单列表（Spec P1）：状态/类型过滤 + 分页 + 状态角标计数。
+ * 跨租户读——adminRouter 已在 requireAdmin 之后整台切 system 作用域（ADR-0019）。
+ */
+const AdminFeedbackListSchema = z.object({
+  status: z.enum(['pending', 'processing', 'resolved', 'rejected']).optional(),
+  type: z.enum(['suggestion', 'bug', 'ux', 'other']).optional(),
+  page: z.coerce.number().int().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+});
+
+adminRouter.get('/feedbacks', adminFeedbackReadRateLimiter, asyncHandler(async (req: Request, res: Response) => {
+  // 'all'（前端默认视图）归一为不过滤，沿用 orders 端点惯例
+  const rawStatus = typeof req.query.status === 'string' && req.query.status !== 'all' ? req.query.status : undefined;
+  const rawType = typeof req.query.type === 'string' && req.query.type !== 'all' ? req.query.type : undefined;
+
+  const { status, type, page, limit } = validate(AdminFeedbackListSchema, {
+    status: rawStatus,
+    type: rawType,
+    page: req.query.page,
+    limit: req.query.limit,
+  });
+
+  const result = await listFeedbacksForAdmin({ status, type, page, limit });
+  res.json({
+    success: true,
+    ...result,
+    page: page ?? 1,
+    limit: limit ?? 20,
+  });
+}));
+
+/**
+ * PUT /api/admin/feedbacks/:id
+ * 工单状态流转 + 回复（Spec P1）。流转合法性与「已解决必须带回复」在 service 层校验；
+ * 首次进入终态时落 resolved_by/resolved_at（此后修订回复不改）。
+ */
+const AdminFeedbackUpdateSchema = z.object({
+  status: z.enum(['pending', 'processing', 'resolved', 'rejected']),
+  admin_reply: z.string().max(2000).optional(),
+});
+
+const FeedbackIdParamSchema = z.object({
+  // 先校验 uuid：否则畸形 id 会在 PG 触发 22P02，语义应是 400 而不是 500/404
+  id: z.string().uuid('无效的工单 ID'),
+});
+
+adminRouter.put('/feedbacks/:id', adminUserWriteRateLimiter, asyncHandler(async (req: Request, res: Response) => {
+  const { id } = validate(FeedbackIdParamSchema, req.params);
+  const { status, admin_reply } = validate(AdminFeedbackUpdateSchema, req.body);
+
+  const updated = await updateFeedbackStatus({
+    id,
+    status,
+    adminReply: admin_reply,
+    adminUserId: req.user!.id,
+  });
+
+  res.json({ success: true, feedback: updated });
 }));
 
 /**

@@ -29,13 +29,19 @@ export interface UserRecord {
 
 export interface FeedbackRecord {
   id: string;
-  user_id?: string;
-  user_email?: string;
+  user_id?: string | null;
+  user_email?: string | null;
   type: string;
   rating: number;
   content: string;
   contact_info?: string;
+  /** Spec P1：工单状态机 pending → processing → resolved | rejected（终态不可逆） */
+  status: string;
+  admin_reply: string;
+  resolved_by: string | null;
+  resolved_at: string | null;
   created_at: string;
+  updated_at: string;
 }
 
 export interface SessionRecord {

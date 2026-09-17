@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { AuthUser, FeedbackPayload } from '../types';
+import { AuthUser, FeedbackPayload, MyFeedback } from '../types';
 import { trackEvent } from '../lib/analytics';
 
 interface AuthContextType {
@@ -14,6 +14,8 @@ interface AuthContextType {
   changePassword: (oldPassword: string, newPassword: string) => Promise<{ success: boolean; error?: string }>;
   resendVerification: () => Promise<{ success: boolean; message?: string; error?: string }>;
   submitFeedback: (data: FeedbackPayload) => Promise<{ success: boolean; message?: string; error?: string }>;
+  /** Spec P1：我的反馈（需登录；匿名提交的工单不在其中，服务端也无从归属） */
+  listMyFeedbacks: () => Promise<{ success: boolean; feedbacks?: MyFeedback[]; error?: string }>;
   // Modals state
   authModalOpen: boolean;
   authModalMode: 'signin' | 'signup';
@@ -247,6 +249,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const listMyFeedbacks = async () => {
+    try {
+      const res = await fetch('/api/feedback', { credentials: 'include' });
+      const data = await res.json();
+      if (!res.ok) {
+        return { success: false, error: data.error || '获取反馈记录失败' };
+      }
+      return { success: true, feedbacks: (data.feedbacks || []) as MyFeedback[] };
+    } catch (e: any) {
+      return { success: false, error: e?.message || '网络连接异常' };
+    }
+  };
+
   const logout = async () => {
     try {
       await fetch('/api/auth/sign-out', {
@@ -324,6 +339,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         changePassword,
         resendVerification,
         submitFeedback,
+        listMyFeedbacks,
         authModalOpen,
         authModalMode,
         openAuthModal,

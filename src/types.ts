@@ -126,6 +126,23 @@ export interface FeedbackPayload {
   contactInfo?: string;
 }
 
+/**
+ * 我的反馈（Spec P1 用户自查视图，9 键白名单）。
+ * 服务端刻意不回 resolved_by（内部操作者）、contact_info/user_email/user_id，
+ * 前端不要据此推断后端字段。
+ */
+export interface MyFeedback {
+  id: string;
+  type: FeedbackType;
+  rating: number;
+  content: string;
+  status: 'pending' | 'processing' | 'resolved' | 'rejected';
+  admin_reply: string;
+  resolved_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export type SubscriptionPlanId = 'weekly' | 'monthly';
 
 export interface SubscriptionPlan {

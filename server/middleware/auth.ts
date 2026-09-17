@@ -503,3 +503,57 @@ export const adminUserWriteRateLimiter = rateLimit({
     code: 'RATE_LIMIT_EXCEEDED',
   },
 });
+
+/**
+ * 5 req/h per IP：反馈提交（Spec P1）。
+ *
+ * 此前 POST /api/feedback **无任何限流**——它是匿名可写端点（token 可选），
+ * 等于给了一个不限速的入库口子。档位对齐 signup/forgot 的 5/h：正常用户一次会话至多
+ * 一两条反馈，5 足够；被刷时 429 引导走客服渠道。
+ * 独立实例，不与任何既有桶共用。
+ */
+export const feedbackSubmitRateLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => ipKeyGenerator(req.ip || 'anonymous'),
+  message: {
+    error: '反馈提交过于频繁，请稍后再试',
+    code: 'RATE_LIMIT_EXCEEDED',
+  },
+});
+
+/**
+ * 30 req/min per user：用户自查「我的反馈」（Spec P1）。
+ * 按用户维度计数（同 mySharesReadRateLimiter / orderStatusReadRateLimiter 惯例），
+ * 独立实例——反馈读额度不该与任何其它端点共桶（ADR-0007 / #0089）。
+ */
+export const feedbackMineReadRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => (req.user ? `user_${req.user.id}` : ipKeyGenerator(req.ip || 'anonymous')),
+  message: {
+    error: '反馈查询过于频繁，请稍后再试',
+    code: 'RATE_LIMIT_EXCEEDED',
+  },
+});
+
+/**
+ * 60 req/min per user：运营台工单列表读（Spec P1）。
+ * 与 `adminLogReadRateLimiter`（日志读）分开实例——两类流量不共桶，
+ * 否则翻工单会把日志查询的额度吃光。
+ */
+export const adminFeedbackReadRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => (req.user ? `user_${req.user.id}` : ipKeyGenerator(req.ip || 'anonymous')),
+  message: {
+    error: '工单查询过于频繁，请稍后再试',
+    code: 'RATE_LIMIT_EXCEEDED',
+  },
+});
