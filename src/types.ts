@@ -67,6 +67,12 @@ export interface DeepDiveBoardMeta {
   /** Spec L1：单层分组归属（null/undefined = 未分组） */
   folderId?: string | null;
   /**
+   * Spec Q1：本画板是否保留「探索灵感」占位节点（画板级属性，服务端唯一真源）。
+   * 关闭 = 清理本板占位且本板不再生成；写入走 PATCH /api/canvases/:id/meta，
+   * 客户端**不得**用 localStorage 之类的本地偏好自行裁决（本仓云优先口径，#0082）。
+   */
+  suggestionsEnabled?: boolean;
+  /**
    * ADR-0018：服务端判定的「共享」标记（仅列表接口回传，见 `CanvasRecord.isShared`）。
    * legacy 模式下旧的全局共享默认板为 true → 不给收藏/归档/分组入口；private 模式下恒为
    * false（它就是认领者自己的普通画板）。**客户端不得再按公开 id 集合自行判断**——

@@ -53,7 +53,7 @@ export async function listCanvases(userId: string): Promise<CanvasRecord[]> {
       const res = await db.query(
         `SELECT
           c.id, c.user_id, c.title, c.description, c.viewport_x, c.viewport_y, c.viewport_zoom,
-          c.default_model, c.is_favorite, c.is_archived, c.folder_id, c.created_at, c.updated_at,
+          c.default_model, c.is_favorite, c.is_archived, c.suggestions_enabled, c.folder_id, c.created_at, c.updated_at,
           COUNT(DISTINCT n.id)::int as node_count,
           COUNT(DISTINCT e.id)::int as edge_count
         FROM canvases c
@@ -75,6 +75,8 @@ export async function listCanvases(userId: string): Promise<CanvasRecord[]> {
         enableWebSearch: true,
         isFavorite: r.is_favorite ?? false,
         isArchived: r.is_archived ?? false,
+        // Spec Q1：默认 true（列 DEFAULT TRUE；`?? true` 兼容未迁移的旧行/旧库）
+        suggestionsEnabled: r.suggestions_enabled ?? true,
         folderId: r.folder_id ?? null,
         createdAt: r.created_at,
         updatedAt: r.updated_at,
@@ -98,6 +100,7 @@ export async function listCanvases(userId: string): Promise<CanvasRecord[]> {
       ...c,
       isFavorite: c.isFavorite ?? false,
       isArchived: c.isArchived ?? false,
+      suggestionsEnabled: c.suggestionsEnabled ?? true,
       folderId: c.folderId ?? null,
       // 计数排除墓碑（与 PG 分支的 LEFT JOIN ... AND deleted_at IS NULL 同口径）
       nodeCount: (c.nodes || []).filter((n: any) => !n?.deleted_at).length,
@@ -215,6 +218,7 @@ export async function getCanvas(canvasId: string, userId: string): Promise<Canva
         enableWebSearch: true,
         isFavorite: c.is_favorite ?? false,
         isArchived: c.is_archived ?? false,
+        suggestionsEnabled: c.suggestions_enabled ?? true,
         folderId: c.folder_id ?? null,
         createdAt: c.created_at,
         updatedAt: c.updated_at,
@@ -238,6 +242,7 @@ export async function getCanvas(canvasId: string, userId: string): Promise<Canva
     ...canvas,
     isFavorite: canvas.isFavorite ?? false,
     isArchived: canvas.isArchived ?? false,
+    suggestionsEnabled: canvas.suggestionsEnabled ?? true,
     folderId: canvas.folderId ?? null,
     // 与 PG 分支同口径：墓碑行不回吐（内存分支的 deleted_at 由合并写入路径落，见 saveCanvas）
     nodes: (canvas.nodes || [])
@@ -1050,6 +1055,8 @@ export interface CanvasMetaPatch {
   title?: string;
   isFavorite?: boolean;
   isArchived?: boolean;
+  /** Spec Q1：本画板是否保留探索灵感占位（画板级属性，服务端为唯一真源） */
+  suggestionsEnabled?: boolean;
   /** null = 移出分组；字符串 = 挂到该分组（须属于画板属主） */
   folderId?: string | null;
 }
@@ -1145,11 +1152,12 @@ export async function updateCanvasMeta(
              title = COALESCE($2, title),
              is_favorite = COALESCE($3, is_favorite),
              is_archived = COALESCE($4, is_archived),
+             suggestions_enabled = COALESCE($7, suggestions_enabled),
              folder_id = CASE WHEN $5::boolean THEN $6::varchar ELSE folder_id END,
              updated_at = NOW()
            WHERE id = $1 AND deleted_at IS NULL
            RETURNING id, user_id, title, description, viewport_x, viewport_y, viewport_zoom,
-                     default_model, is_favorite, is_archived, folder_id, created_at, updated_at`,
+                     default_model, is_favorite, is_archived, suggestions_enabled, folder_id, created_at, updated_at`,
           [
             canvasId,
             patch.title ?? null,
@@ -1157,6 +1165,7 @@ export async function updateCanvasMeta(
             patch.isArchived ?? null,
             hasFolderPatch,
             patch.folderId ?? null,
+            patch.suggestionsEnabled ?? null,
           ]
         );
         if (res.rowCount === 0) {
@@ -1174,6 +1183,7 @@ export async function updateCanvasMeta(
           enableWebSearch: true,
           isFavorite: r.is_favorite ?? false,
           isArchived: r.is_archived ?? false,
+          suggestionsEnabled: r.suggestions_enabled ?? true,
           folderId: r.folder_id ?? null,
           createdAt: new Date(r.created_at).toISOString(),
           updatedAt: new Date(r.updated_at).toISOString(),
@@ -1203,12 +1213,14 @@ export async function updateCanvasMeta(
   if (patch.title !== undefined) canvas.title = patch.title;
   if (patch.isFavorite !== undefined) canvas.isFavorite = patch.isFavorite;
   if (patch.isArchived !== undefined) canvas.isArchived = patch.isArchived;
+  if (patch.suggestionsEnabled !== undefined) canvas.suggestionsEnabled = patch.suggestionsEnabled;
   if (patch.folderId !== undefined) canvas.folderId = patch.folderId;
   canvas.updatedAt = new Date().toISOString();
   return {
     ...canvas,
     isFavorite: canvas.isFavorite ?? false,
     isArchived: canvas.isArchived ?? false,
+    suggestionsEnabled: canvas.suggestionsEnabled ?? true,
     folderId: canvas.folderId ?? null,
   };
 }

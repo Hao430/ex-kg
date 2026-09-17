@@ -63,6 +63,8 @@ const UpdateCanvasMetaSchema = z
     title: z.string().min(1, '画板名不能为空').max(255, '画板名过长').optional(),
     isFavorite: z.boolean().optional(),
     isArchived: z.boolean().optional(),
+    /** Spec Q1：画板级「保留探索灵感占位」开关（服务端唯一真源，客户端不得本地裁决） */
+    suggestionsEnabled: z.boolean().optional(),
     /** null = 移出分组；字符串 = 移入该分组（服务端校验归属） */
     folderId: z.string().max(64).nullable().optional(),
   })
@@ -71,6 +73,7 @@ const UpdateCanvasMetaSchema = z
       v.title !== undefined ||
       v.isFavorite !== undefined ||
       v.isArchived !== undefined ||
+      v.suggestionsEnabled !== undefined ||
       v.folderId !== undefined,
     { message: '至少提供一个可更新字段' }
   );

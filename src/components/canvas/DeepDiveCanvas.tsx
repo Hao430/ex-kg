@@ -32,7 +32,7 @@ import { buildAncestorContext } from '../../lib/context';
 import { onSyncState } from '../../lib/sync-queue';
 import { saveBoard, StoredBoard, deduplicateNodes, deduplicateEdges } from '../../lib/storage';
 import { canCreate, markPendingCreate } from '../../lib/quota-store';
-import { extractSuggestions, getFallbackSuggestions } from '../../lib/suggestions';
+import { extractSuggestions, getFallbackSuggestions, collectSuggestedLeafIds } from '../../lib/suggestions';
 import { NodeActionsContext, NodeActionsContextValue } from '../../context/NodeActionsContext';
 import { useAuth } from '../../context/AuthContext';
 import { useRenderMonitor } from '../../hooks/useRenderMonitor';
@@ -94,8 +94,17 @@ interface DeepDiveCanvasProps {
   triggerExportPngRef?: React.MutableRefObject<
     ((title: string) => Promise<{ ok: boolean; error?: string }>) | null
   >;
-  /** 探索灵感节点（status='suggested'）显示开关：仅视图级隐藏，数据层与配额口径不受影响 */
-  showSuggestions?: boolean;
+  /**
+   * Spec Q1：画板级「保留探索灵感」开关（status='suggested' 的占位节点）。
+   * 关闭不是单纯隐藏——关闭会清理本板占位，之后本板也不再生成（见 `spawnSuggestedNodes`
+   * 的闸门与 `requestDisableSuggestionsRef` 命令桥）。历史语义是全局视图隐藏，
+   * 因布局不吃 ReactFlow 的 `hidden` 而留下空缝，故废弃。
+   */
+  suggestionsEnabled?: boolean;
+  /** Spec Q1：画布已完成「关闭并清理」后回调 App 落偏好（cleanedCount 供 toast 文案） */
+  onSuggestionsDisabled?: (cleanedCount: number) => void;
+  /** Spec Q1：关闭方向的命令桥——需先确认+清理（可能有副作用），故不由 App 直接改偏好 */
+  requestDisableSuggestionsRef?: React.MutableRefObject<(() => void) | null>;
 }
 
 export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
@@ -113,7 +122,9 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
   canvasId,
   boardNeedsAutoName = false,
   triggerExportPngRef,
-  showSuggestions = true,
+  suggestionsEnabled = true,
+  onSuggestionsDisabled,
+  requestDisableSuggestionsRef,
 }) => {
   const [nodes, setNodes, onNodesChange] = useNodesState(
     initialNodes || []
@@ -314,6 +325,8 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
   // Automatically spawn suggested question nodes connected to parent
   const spawnSuggestedNodes = useCallback(
     (parentNodeId: string, suggestions: string[], parentDepth: number, currentBaseNodes?: Node[]) => {
+      // Spec Q1 生成闸门：本画板关闭灵感后不再产生新占位——否则「关闭即清理」刚清完又长出来
+      if (!suggestionsEnabled) return;
       if (!suggestions || suggestions.length === 0) return;
 
       const newNodes: Node[] = [];
@@ -365,7 +378,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       setNodes(nodesRef.current);
       setEdges(edgesRef.current);
     },
-    [defaultModel, defaultEnableWebSearch, setNodes, setEdges]
+    [defaultModel, defaultEnableWebSearch, setNodes, setEdges, suggestionsEnabled]
   );
 
   // 自动命名（只命名一次）：节点生成成功后独立调用 LLM 命名端点。
@@ -1390,17 +1403,19 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
 
   const isLargeCanvas = nodes.length >= 150;
 
-  // 探索灵感节点视图级隐藏：对 suggested 节点及其连线注入 ReactFlow hidden 字段，
-  // 仅影响渲染（含 MiniMap），nodes/edges state 保持数据真源不被污染——
-  // 保存、配额计数（排除 suggested，与后端同口径）与再次开启后的位置均不受影响
+  // Spec Q1 例外态兜底隐藏：本板已关闭灵感、但仍存在占位时先隐藏渲染。
+  // 正常路径下不会走到这里（关闭=清理，清理后本板无占位）；出现即说明占位来自
+  // 他端生成或旧的全局偏好继承，画布顶部会同时给出「清理」入口（见下方提示条）。
+  // ⚠️ 隐藏**不解决布局**（dagre 不吃 ReactFlow 的 hidden），所以它只是过渡态，
+  // 真正的解法是清理——这正是本 Spec 要修的问题。
   const hiddenSuggestedIds = useMemo(() => {
-    if (showSuggestions) return null;
+    if (suggestionsEnabled) return null;
     return new Set(
       nodes
         .filter((n) => (n.data as unknown as ChatNodeData)?.status === 'suggested')
         .map((n) => n.id)
     );
-  }, [nodes, showSuggestions]);
+  }, [nodes, suggestionsEnabled]);
 
   const displayNodes = useMemo(() => {
     if (!hiddenSuggestedIds) return nodes;
@@ -1418,12 +1433,75 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
     );
   }, [edges, hiddenSuggestedIds]);
 
+  // Spec Q1：可清理的占位（只含未激活的叶子，见 collectSuggestedLeafIds 的守卫）
+  const cleanupCandidateIds = useMemo(
+    () => collectSuggestedLeafIds(nodes as unknown as { id: string; data?: Record<string, unknown> }[]),
+    [nodes]
+  );
+
+  /** 确认框：非空即显示；记录待清理数量（确认时按 id 集合执行） */
+  const [suggestionCleanupCount, setSuggestionCleanupCount] = useState(0);
+  const pendingSuggestionIdsRef = useRef<string[]>([]);
+
+  const runSuggestionCleanup = useCallback(() => {
+    const ids = collectSuggestedLeafIds(
+      nodesRef.current as unknown as { id: string; data?: Record<string, unknown> }[]
+    );
+    if (ids.length === 0) {
+      onSuggestionsDisabled?.(0);
+      return;
+    }
+    pendingSuggestionIdsRef.current = ids;
+    setSuggestionCleanupCount(ids.length);
+  }, [onSuggestionsDisabled]);
+
+  const confirmSuggestionCleanup = useCallback(() => {
+    const ids = pendingSuggestionIdsRef.current;
+    pendingSuggestionIdsRef.current = [];
+    setSuggestionCleanupCount(0);
+    if (ids.length > 0) {
+      executeDeleteNodeIds(ids);
+      // 只删节点不重排，剩余节点沿用旧坐标 → 空缝还在；必须重排收拢（applyLayout 是手动调用型）
+      setTimeout(() => applyLayout(), 50);
+    }
+    onSuggestionsDisabled?.(ids.length);
+  }, [executeDeleteNodeIds, applyLayout, onSuggestionsDisabled]);
+
+  // Spec Q1 命令桥：App 的「关」方向不直接改偏好，先经这里收集→确认→清理；
+  // 用户取消则什么都不做（偏好保持开启）。取消路径在 `setSuggestionCleanupCount(0)` 的
+  // 取消按钮里，不调用 onSuggestionsDisabled。
+  useEffect(() => {
+    if (!requestDisableSuggestionsRef) return;
+    requestDisableSuggestionsRef.current = runSuggestionCleanup;
+    return () => {
+      requestDisableSuggestionsRef.current = null;
+    };
+  }, [requestDisableSuggestionsRef, runSuggestionCleanup]);
+
   const handlePaneClick = useCallback(() => {
     setSelectionPayload(null);
   }, []);
 
   return (
     <div className="w-full h-full relative">
+      {/* Spec Q1 例外态：本板已关闭灵感但仍有占位（他端生成 / 旧全局偏好继承而来）。
+          不静默删除——删除不可恢复；给一个显式入口，走同一确认流程。 */}
+      {!suggestionsEnabled && cleanupCandidateIds.length > 0 && (
+        <div className="absolute top-4 left-4 z-40 max-w-sm px-3.5 py-2.5 rounded-2xl bg-white/95 dark:bg-slate-900/95 border border-indigo-200 dark:border-indigo-800/70 shadow-lg backdrop-blur-md flex items-center gap-2.5">
+          <Sparkles className="w-4 h-4 text-indigo-500 dark:text-indigo-400 shrink-0" />
+          <span className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+            本画板还有 {cleanupCandidateIds.length} 个灵感节点（灵感已关闭）
+          </span>
+          <button
+            type="button"
+            onClick={runSuggestionCleanup}
+            className="ml-auto shrink-0 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition-colors"
+          >
+            清理
+          </button>
+        </div>
+      )}
+
       {/* Large Canvas Mind Branch Performance Optimization Banner */}
       {isLargeCanvas && !dismissLargeCanvasBanner && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 max-w-xl w-[92%] px-4 py-3 rounded-2xl bg-amber-50 dark:bg-amber-950/80 border border-amber-300 dark:border-amber-700/60 shadow-xl backdrop-blur-md animate-in fade-in slide-in-from-top-4 flex items-center justify-between gap-3 text-amber-900 dark:text-amber-200">
@@ -1575,6 +1653,53 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 <span>确认一并删除 ({deleteConfirmTarget.allTargetIds.length})</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Spec Q1：关闭灵感的确认框（删除不可恢复，故确认后才执行） */}
+      {suggestionCleanupCount > 0 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-500 dark:bg-indigo-500/20 shrink-0">
+                <Sparkles className="w-5 h-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                  关闭灵感并清理本画板的灵感节点？
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+                  将删除本画板上的{' '}
+                  <span className="font-semibold text-indigo-600 dark:text-indigo-400">
+                    {suggestionCleanupCount}
+                  </span>{' '}
+                  个灵感节点，删除后
+                  <strong className="text-slate-700 dark:text-slate-300">不可恢复</strong>
+                  ；之后本画板的新回答也不会再生成灵感节点。已展开的探索内容不受影响。
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  pendingSuggestionIdsRef.current = [];
+                  setSuggestionCleanupCount(0);
+                }}
+                className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={confirmSuggestionCleanup}
+                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white text-xs font-semibold shadow-sm transition-colors flex items-center gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>清理并关闭 ({suggestionCleanupCount})</span>
               </button>
             </div>
           </div>

@@ -121,6 +121,12 @@ export interface CanvasRecord {
   /** Spec L1 / ADR-0015：画板库管理偏好（列已存在，读取统一 COALESCE 归一为布尔） */
   isFavorite?: boolean;
   isArchived?: boolean;
+  /**
+   * Spec Q1：本画板是否保留「探索灵感」占位节点（关闭 = 清理占位且本板不再生成）。
+   * 画板级属性（列 `canvases.suggestions_enabled`，默认 true），经 PATCH /meta 写入，
+   * 客户端**不得**用本地偏好裁决——服务端为唯一真源。
+   */
+  suggestionsEnabled?: boolean;
   /** Spec L1：单层分组归属（null = 未分组；分组删除时置 null） */
   folderId?: string | null;
   /**

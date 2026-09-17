@@ -1,6 +1,6 @@
 -- ==============================================================================
 -- 枝想 Arborize 企业级生产数据库全量建表与索引脚本 (PostgreSQL 14+)
--- 架构版本: v3.1.0-production (注册验证码先行重设计)
+-- 架构版本: v3.2.0-production (画板级灵感开关：canvases.suggestions_enabled)
 -- 表总数: 20 张 (其中 8 张为一期预留空壳，二期激活；算力点数体系已废弃移除)
 -- 支持特性: 强制登录多租户、多轮推演画布、服务端配额校验、订阅订单 (Mock 支付)、
 --          邮箱验证与找回密码、注销软删除 30 天冷却、全链路审计与 GIN 全文检索
@@ -117,6 +117,10 @@ CREATE TABLE IF NOT EXISTS canvases (
   viewport_zoom DOUBLE PRECISION DEFAULT 1.0 NOT NULL,
   is_favorite BOOLEAN DEFAULT FALSE NOT NULL,
   is_archived BOOLEAN DEFAULT FALSE NOT NULL,
+  -- Spec Q1：本画板是否保留「探索灵感」占位节点（关闭 = 清理本板占位且本板不再生成）。
+  -- 画板级属性而非个人偏好，故与 is_favorite/is_archived 同处 canvases 行上，
+  -- 由 PATCH /api/canvases/:id/meta 读写（服务端唯一真源，客户端不得本地裁决）。
+  suggestions_enabled BOOLEAN DEFAULT TRUE NOT NULL,
   view_count INT DEFAULT 0 NOT NULL,
   export_count INT DEFAULT 0 NOT NULL,
   deleted_at TIMESTAMPTZ, -- 软删除，支持回收站30天恢复
@@ -261,6 +265,10 @@ CREATE TABLE IF NOT EXISTS folders (
 
 ALTER TABLE canvases
   ADD COLUMN IF NOT EXISTS folder_id VARCHAR(64) REFERENCES folders(id) ON DELETE SET NULL;
+
+-- 存量库增量迁移（与 server/core/schema.ts 的 ALTER 段同源；旧行取默认 TRUE ⇒ 行为不变）
+ALTER TABLE canvases
+  ADD COLUMN IF NOT EXISTS suggestions_enabled BOOLEAN DEFAULT TRUE;
 
 -- ==============================================================================
 -- 模块三：订阅订单体系 (Billing & Orders)

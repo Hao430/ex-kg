@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { ReactFlowProvider, Node, Edge } from '@xyflow/react';
 import { Topbar } from './components/ui/Topbar';
 import { DeepDiveCanvas } from './components/canvas/DeepDiveCanvas';
@@ -141,20 +141,30 @@ function MainApp() {
     } catch (e) {}
   }, [theme]);
 
-  // 探索灵感节点显示开关（默认展示）：localStorage 记忆偏好，视图级隐藏不影响画板数据
-  const [showSuggestions, setShowSuggestions] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem('deepdive_suggestions_visible') !== '0';
-    } catch (e) {
-      return true;
-    }
-  });
+  // Spec Q1：探索灵感开关是**画板级**属性，**服务端唯一真源**（`canvases.suggestions_enabled`
+  // 经 PATCH /api/canvases/:id/meta 读写，与 isFavorite/isArchived/folderId 同一条 meta 通道）。
+  // 本地列表只是绘制缓存/待确认投影（#0082 云优先口径），不得另立本地偏好裁决——
+  // 否则同一块板在两台设备上会各记各的，正是本项目明令避免的本地/服务端分叉。
+  const currentBoardMeta = useMemo(
+    () => boards.find((b) => b.id === currentBoardId),
+    [boards, currentBoardId]
+  );
+  const suggestionsEnabled = currentBoardMeta?.suggestionsEnabled ?? true;
+  /** 共享默认画板（legacy）不支持画板级个性化设置：服务端 PATCH 会 403，故前置禁用开关 */
+  const currentBoardIsShared = currentBoardMeta?.isShared === true;
+  /** Spec Q1：关闭方向的命令桥（需先确认+清理，可能有副作用），由画布侧赋值 */
+  const requestDisableSuggestionsRef = useRef<(() => void) | null>(null);
 
-  useEffect(() => {
-    try {
-      localStorage.setItem('deepdive_suggestions_visible', showSuggestions ? '1' : '0');
-    } catch (e) {}
-  }, [showSuggestions]);
+  /** 画布确认清理完成后回调：经 meta 通道落服务端 + 提示（cleanedCount 为实际清理数） */
+  const handleSuggestionsDisabled = useCallback(
+    (cleanedCount: number) => {
+      if (!currentBoardId) return;
+      updateBoardMetaLocally(currentBoardId, { suggestionsEnabled: false });
+      showToast(cleanedCount > 0 ? `已清理 ${cleanedCount} 个灵感节点` : '已关闭探索灵感');
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [currentBoardId]
+  );
 
   const toggleTheme = useCallback(() => {
     setTheme((prev) => {
@@ -224,14 +234,22 @@ function MainApp() {
     }, 2500);
   };
 
+  /**
+   * Spec Q1：灵感开关分方向处理。
+   * 开方向无副作用，直接经 meta 通道置 true；关方向有副作用（清理占位、不可恢复），
+   * 交给画布先确认再执行——用户取消则开关保持开启，零改动。
+   * 共享默认画板（legacy）服务端 PATCH 会 403，开关在前端即禁用（见 Topbar）。
+   */
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const toggleSuggestions = useCallback(() => {
-    setShowSuggestions((prev) => {
-      const next = !prev;
-      showToast(next ? '已展示探索灵感节点' : '已隐藏探索灵感节点，画板内容不受影响');
-      return next;
-    });
-  }, []);
+    if (!currentBoardId || currentBoardIsShared) return;
+    if (!suggestionsEnabled) {
+      updateBoardMetaLocally(currentBoardId, { suggestionsEnabled: true });
+      showToast('已开启探索灵感：本画板之后的新回答会附带灵感节点');
+      return;
+    }
+    requestDisableSuggestionsRef.current?.();
+  }, [suggestionsEnabled, currentBoardId, currentBoardIsShared]);
 
   // 保存冲突提示（Spec A4 乐观锁）+ 同步状态订阅（Spec A5，仅指示当前画板）
   const [syncState, setSyncState] = useState<'idle' | 'saved' | 'pending' | 'error' | 'conflict'>('idle');
@@ -1151,7 +1169,8 @@ function MainApp() {
         syncState={syncState}
         onToggleTheme={toggleTheme}
         nodeCount={nodeCount}
-        showSuggestions={showSuggestions}
+        suggestionsEnabled={suggestionsEnabled}
+        suggestionsToggleDisabled={currentBoardIsShared}
         onToggleSuggestions={toggleSuggestions}
       />
 
@@ -1172,7 +1191,9 @@ function MainApp() {
             canvasId={currentBoardId}
             boardNeedsAutoName={isDefaultBoardName(boardName)}
             triggerExportPngRef={triggerExportPngRef}
-            showSuggestions={showSuggestions}
+            suggestionsEnabled={suggestionsEnabled}
+            onSuggestionsDisabled={handleSuggestionsDisabled}
+            requestDisableSuggestionsRef={requestDisableSuggestionsRef}
           />
         </ReactFlowProvider>
         {/* Spec K5（D1）：空态新手 4 步 checklist（全完成/手动关闭后不再显示） */}

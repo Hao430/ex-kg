@@ -40,3 +40,25 @@ export function getFallbackSuggestions(topic: string): string[] {
   const start = h % angles.length;
   return [0, 1, 2].map((i) => angles[(start + i) % angles.length]);
 }
+
+/** 结构化入参：只依赖 id/data.parentId/data.status，便于脱离 React Flow 单测 */
+type NodeLike = { id: string; data?: Record<string, unknown> };
+
+/**
+ * Spec Q1：关闭灵感时「哪些节点可清理」——只挑**未激活的占位叶子**。
+ *
+ * - `status === 'suggested'`：点击占位会立刻置为 `generating`（`DeepDiveCanvas` 的
+ *   `generateNodeAnswer` 首行），所以按此过滤天然排除进行中的回答；
+ * - 且**无子节点**：占位本不该有子节点，真出现说明状态异常，跳过并保留——
+ *   宁可留下占位也不误删用户内容（删除走墓碑，不可恢复）。
+ */
+export function collectSuggestedLeafIds(nodes: NodeLike[]): string[] {
+  const parentIds = new Set<string>();
+  for (const n of nodes) {
+    const pid = n?.data?.parentId;
+    if (typeof pid === 'string') parentIds.add(pid);
+  }
+  return nodes
+    .filter((n) => n?.data?.status === 'suggested' && !parentIds.has(n.id))
+    .map((n) => n.id);
+}

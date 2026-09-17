@@ -102,8 +102,17 @@ interface TopbarProps {
   nodeCount?: number;
   /** 服务端同步状态指示（Spec A5） */
   syncState?: 'idle' | 'saved' | 'pending' | 'error' | 'conflict';
-  /** 探索灵感节点显示开关（默认展示；仅视图级隐藏，画板数据不受影响） */
-  showSuggestions?: boolean;
+  /**
+   * Spec Q1：本画板是否保留探索灵感节点（画板级状态，跟着画板走）。
+   * 关闭是**有副作用**的：会清理本板占位且之后不再生成（确认框在画布侧），
+   * 不再是原先的「仅隐藏视图」。
+   */
+  suggestionsEnabled?: boolean;
+  /**
+   * 共享默认画板（legacy）不支持画板级设置——服务端 `updateCanvasMeta` 对它直接 403，
+   * 故开关前置禁用（而不是让用户点完再吃一个错误）。
+   */
+  suggestionsToggleDisabled?: boolean;
   onToggleSuggestions?: () => void;
 }
 
@@ -134,7 +143,8 @@ export const Topbar: React.FC<TopbarProps> = ({
   onToggleTheme,
   nodeCount,
   syncState = 'idle',
-  showSuggestions = true,
+  suggestionsEnabled = true,
+  suggestionsToggleDisabled = false,
   onToggleSuggestions,
 }) => {
   const [isEditingName, setIsEditingName] = useState(false);
@@ -574,13 +584,16 @@ export const Topbar: React.FC<TopbarProps> = ({
           </Tooltip>
         )}
 
-        {/* 探索灵感节点显示开关：滑动切换仅隐藏视图，节点仍随画板保存并计入配额 */}
+        {/* Spec Q1：灵感开关是画板级的「保留/不保留」，关闭会清理本板占位（不可恢复）——
+            不再是视图隐藏，故文案必须说清代价 */}
         {onToggleSuggestions && (
           <Tooltip
             content={
-              showSuggestions
-                ? '隐藏画板上的探索灵感节点（数据仍保留，可随时重新开启）'
-                : '显示探索灵感节点'
+              suggestionsToggleDisabled
+                ? '共享默认画板不支持该设置'
+                : suggestionsEnabled
+                ? '关闭后会清理本画板上的灵感节点，且不再生成（删除后不可恢复）'
+                : '开启后本画板的新回答会附带灵感节点'
             }
             side="bottom"
           >
@@ -592,19 +605,20 @@ export const Topbar: React.FC<TopbarProps> = ({
               <button
                 type="button"
                 role="switch"
-                aria-checked={showSuggestions}
-                aria-label={showSuggestions ? '隐藏探索灵感节点' : '显示探索灵感节点'}
+                aria-checked={suggestionsEnabled}
+                aria-label={suggestionsEnabled ? '关闭灵感并清理本画板的灵感节点' : '开启本画板的灵感节点'}
                 data-testid="suggestions-toggle"
+                disabled={suggestionsToggleDisabled}
                 onClick={onToggleSuggestions}
-                className={`relative w-9 h-5 rounded-full transition-colors duration-200 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/60 ${
-                  showSuggestions
-                    ? 'bg-indigo-500'
-                    : 'bg-slate-300 dark:bg-slate-600'
-                }`}
+                className={`relative w-9 h-5 rounded-full transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/60 ${
+                  suggestionsToggleDisabled
+                    ? 'opacity-40 cursor-not-allowed'
+                    : 'cursor-pointer'
+                } ${suggestionsEnabled ? 'bg-indigo-500' : 'bg-slate-300 dark:bg-slate-600'}`}
               >
                 <span
                   className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${
-                    showSuggestions ? 'translate-x-4' : 'translate-x-0'
+                    suggestionsEnabled ? 'translate-x-4' : 'translate-x-0'
                   }`}
                 />
               </button>

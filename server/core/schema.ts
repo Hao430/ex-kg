@@ -135,6 +135,10 @@ export async function initDbSchema(): Promise<boolean> {
         viewport_zoom DOUBLE PRECISION DEFAULT 1.0 NOT NULL,
         is_favorite BOOLEAN DEFAULT FALSE,
         is_archived BOOLEAN DEFAULT FALSE,
+        -- Spec Q1：本画板是否保留「探索灵感」占位节点（关闭 = 清理占位且不再生成）。
+        -- 画板级属性而非个人偏好，故与 is_favorite/is_archived 同列存在 canvases 上，
+        -- 由 PATCH /api/canvases/:id/meta 写入（客户端不得自行本地裁决）。
+        suggestions_enabled BOOLEAN DEFAULT TRUE,
         cover_image TEXT DEFAULT '',
         view_count INT DEFAULT 0,
         export_count INT DEFAULT 0,
@@ -144,6 +148,7 @@ export async function initDbSchema(): Promise<boolean> {
       );
       ALTER TABLE canvases ADD COLUMN IF NOT EXISTS is_favorite BOOLEAN DEFAULT FALSE;
       ALTER TABLE canvases ADD COLUMN IF NOT EXISTS is_archived BOOLEAN DEFAULT FALSE;
+      ALTER TABLE canvases ADD COLUMN IF NOT EXISTS suggestions_enabled BOOLEAN DEFAULT TRUE;
       ALTER TABLE canvases ADD COLUMN IF NOT EXISTS cover_image TEXT DEFAULT '';
       ALTER TABLE canvases ADD COLUMN IF NOT EXISTS view_count INT DEFAULT 0;
       ALTER TABLE canvases ADD COLUMN IF NOT EXISTS export_count INT DEFAULT 0;

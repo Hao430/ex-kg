@@ -255,6 +255,7 @@ export function confirmServerMeta(
     title?: string;
     isFavorite?: boolean;
     isArchived?: boolean;
+    suggestionsEnabled?: boolean;
     folderId?: string | null;
     updatedAt?: string;
   }
@@ -274,6 +275,9 @@ export function confirmServerMeta(
     nodeCount: prev?.nodeCount ?? local?.nodeCount ?? 0,
     isFavorite: server.isFavorite ?? prev?.isFavorite ?? local?.isFavorite ?? false,
     isArchived: server.isArchived ?? prev?.isArchived ?? local?.isArchived ?? false,
+    // Spec Q1：缺字段（旧服务端/旧库行）按「开」处理——灵感占位是默认行为
+    suggestionsEnabled:
+      server.suggestionsEnabled ?? prev?.suggestionsEnabled ?? local?.suggestionsEnabled ?? true,
     // null 是有效值（移出分组），不能用 ?? 把 null 吞成旧值
     folderId:
       server.folderId !== undefined ? server.folderId : prev?.folderId ?? local?.folderId ?? null,
@@ -306,6 +310,7 @@ export function confirmServerSave(id: string, server?: ServerConfirm): void {
     nodeCount: server?.nodeCount ?? prev?.nodeCount ?? local?.nodeCount ?? 0,
     isFavorite: prev?.isFavorite ?? local?.isFavorite ?? false,
     isArchived: prev?.isArchived ?? local?.isArchived ?? false,
+    suggestionsEnabled: prev?.suggestionsEnabled ?? local?.suggestionsEnabled ?? true,
     folderId: prev?.folderId ?? local?.folderId ?? null,
     isShared: prev?.isShared, // 服务端口径，本地投影不得改写（ADR-0018）
   };
@@ -315,6 +320,7 @@ export function confirmServerSave(id: string, server?: ServerConfirm): void {
     meta.name = local.name ?? meta.name;
     meta.isFavorite = local.isFavorite ?? meta.isFavorite;
     meta.isArchived = local.isArchived ?? meta.isArchived;
+    meta.suggestionsEnabled = local.suggestionsEnabled ?? meta.suggestionsEnabled;
     meta.folderId = local.folderId !== undefined ? local.folderId : meta.folderId;
   }
   serverMetas = [meta, ...serverMetas.filter((m) => m.id !== id)];

@@ -626,6 +626,8 @@ setMetaExecutor(async (boardId, opts) => {
         title: meta.name,
         isFavorite: meta.isFavorite ?? false,
         isArchived: meta.isArchived ?? false,
+        // Spec Q1：画板级灵感开关随 meta 通道同步（本地只作离线缓存/绘制，服务端为准）
+        suggestionsEnabled: meta.suggestionsEnabled ?? true,
         folderId: meta.folderId ?? null,
       }),
     });
@@ -695,7 +697,7 @@ export function enqueueBoardSync(boardId: string): void {
  */
 export function updateBoardMetaLocally(
   boardId: string,
-  patch: { name?: string; isFavorite?: boolean; isArchived?: boolean; folderId?: string | null }
+  patch: { name?: string; isFavorite?: boolean; isArchived?: boolean; suggestionsEnabled?: boolean; folderId?: string | null }
 ): void {
   boardStore.updateMetaLocal(boardId, patch);
   enqueueMeta(boardId);
@@ -761,6 +763,8 @@ export async function fetchBoardListFromServer(): Promise<DeepDiveBoardMeta[] | 
       nodeCount: c.nodeCount || 0,
       isFavorite: Boolean(c.isFavorite),
       isArchived: Boolean(c.isArchived),
+      // Spec Q1：服务端缺省视为「开」（列 DEFAULT TRUE），与仓储的 ?? true 同口径
+      suggestionsEnabled: c.suggestionsEnabled !== false,
       folderId: c.folderId ?? null,
       // 授权口径以服务端为准（ADR-0018）：缺字段（旧服务端）即按「非共享」处理，
       // 与 private 模式同向——比反过来把用户的私有板当成共享板、锁掉收藏入口要安全。
