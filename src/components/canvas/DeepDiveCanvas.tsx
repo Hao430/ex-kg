@@ -31,6 +31,7 @@ import { exportCanvasAsPng } from '../../lib/canvas-image-export';
 import { buildAncestorContext } from '../../lib/context';
 import { onSyncState } from '../../lib/sync-queue';
 import { saveBoard, StoredBoard, deduplicateNodes, deduplicateEdges } from '../../lib/storage';
+import { CanvasStructure, snapshotStructure, isStructuralChange } from '../../lib/canvas-change';
 import { canCreate, markPendingCreate } from '../../lib/quota-store';
 import { extractSuggestions, getFallbackSuggestions, collectSuggestedLeafIds } from '../../lib/suggestions';
 import { NodeActionsContext, NodeActionsContextValue } from '../../context/NodeActionsContext';
@@ -72,11 +73,25 @@ const NOTE_EDGE_MARKER: Edge['markerEnd'] = { type: MarkerType.ArrowClosed, colo
 /** 节点搜索命中高亮：加在 React Flow 节点包装器上的临时类（nodeHash 白名单不含 className，不标脏） */
 const SEARCH_HIT_CLASS = 'node-search-hit';
 
+/**
+ * 流式回答的落盘节流间隔。
+ *
+ * 回答是用户花了 token 换来的、且**不可复现**（重跑内容不一样），不能只等 600ms 防抖：
+ * 生成中途崩溃 / 被系统杀掉 / 切走画板，那一段就彻底没了——服务端只落审计日志、不保存
+ * 节点内容（`server/routes/chat.ts` 不碰 nodes），节点内容是客户端写的。按固定间隔强制
+ * 立即落一次，把可能丢的范围收在「最后几秒」而不是「整段回答」。
+ */
+const STREAM_FLUSH_INTERVAL_MS = 2000;
+
+/** 画布变更的上报选项：`immediate` = 不等防抖，立即落盘入队（结构操作/失焦提交） */
+export interface CanvasChangeOptions {
+  immediate?: boolean;
+}
 
 interface DeepDiveCanvasProps {
   initialNodes?: Node[];
   initialEdges?: Edge[];
-  onCanvasChange?: (nodes: Node[], edges: Edge[]) => void;
+  onCanvasChange?: (nodes: Node[], edges: Edge[], opts?: CanvasChangeOptions) => void;
   triggerAutoLayoutRef?: React.MutableRefObject<(() => void) | null>;
   triggerFitViewRef?: React.MutableRefObject<(() => void) | null>;
   triggerAddRootRef?: React.MutableRefObject<(() => void) | null>;
@@ -253,23 +268,56 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
 
   // Auto-save sync back to parent（拖动期间跳过逐帧上报，dragstop 一次性上报终态，避免每帧重排防抖定时器）
   const isDraggingRef = useRef(false);
+  /**
+   * 结构快照（节点/边 id 集合，判据见 `src/lib/canvas-change.ts`）：有 id 被新增/删除 =
+   * 离散的结构操作 → 立即落库，不等 600ms 防抖；内容类变更 id 集合不变，仍走防抖。
+   * 换画板会重挂载（App 的 key 含 boardId/canvasEpoch），故快照只需按 canvasId 保底重置。
+   */
+  const structureRef = useRef<{ boardId?: string; structure: CanvasStructure } | null>(null);
+  /** 显式请求下一次变更立即落库：id 集合不变但属于「提交点」（失焦、折叠） */
+  const immediateSaveRef = useRef(false);
+  const requestImmediateSave = useCallback(() => {
+    immediateSaveRef.current = true;
+  }, []);
+  /**
+   * 当前挂着的流式请求。组件卸载（切画板、采用服务端内容后重挂载）时中止它：
+   * 卸载后的 `setNodes` 是空操作，流会白跑到结束；而且继续读流只会在日志里留下
+   * 「明明没人看还在跑」的噪声。半成品的回答已由卸载前的 flushPendingCanvasSave 落盘。
+   */
+  const activeStreamAbortRef = useRef<AbortController | null>(null);
+  /** 流式落盘节流的上次时刻（见 STREAM_FLUSH_INTERVAL_MS） */
+  const lastStreamFlushRef = useRef(0);
+  useEffect(
+    () => () => {
+      activeStreamAbortRef.current?.abort();
+      activeStreamAbortRef.current = null;
+    },
+    []
+  );
   useEffect(() => {
     if (isDraggingRef.current) return;
-    onCanvasChange?.(nodes, edges);
-  }, [nodes, edges, onCanvasChange]);
+    const next = snapshotStructure(nodes, edges);
+    const prev = structureRef.current;
+    const structural = prev?.boardId === canvasId && isStructuralChange(prev.structure, next);
+    structureRef.current = { boardId: canvasId, structure: next };
+    const immediate = structural || immediateSaveRef.current;
+    immediateSaveRef.current = false;
+    onCanvasChange?.(nodes, edges, immediate ? { immediate: true } : undefined);
+  }, [nodes, edges, onCanvasChange, canvasId]);
   const handleNodeDragStart = useCallback(() => {
     isDraggingRef.current = true;
   }, []);
+  // 拖拽期间位置已在 nodes 里更新，但逐帧上报被跳过——结束时直接落一次，不能再等防抖
   const handleNodeDragStop = useCallback(() => {
     isDraggingRef.current = false;
-    onCanvasChange?.(nodesRef.current, edgesRef.current);
+    onCanvasChange?.(nodesRef.current, edgesRef.current, { immediate: true });
   }, [onCanvasChange]);
   const handleSelectionDragStart = useCallback(() => {
     isDraggingRef.current = true;
   }, []);
   const handleSelectionDragStop = useCallback(() => {
     isDraggingRef.current = false;
-    onCanvasChange?.(nodesRef.current, edgesRef.current);
+    onCanvasChange?.(nodesRef.current, edgesRef.current, { immediate: true });
   }, [onCanvasChange]);
 
   // Layout function (Zero-drag automatic tidy tree)
@@ -457,6 +505,8 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
           ? existingData.enableWebSearch
           : defaultEnableWebSearch;
 
+      // 提问一落进节点就立即固化：用户的问题也是内容，不该压在防抖窗口里等
+      requestImmediateSave();
       // Set generating status
       setNodes((nds) =>
         nds.map((n) => {
@@ -489,6 +539,8 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       let receivedGrounding: GroundingMetadata | undefined = undefined;
 
       const abortController = new AbortController();
+      activeStreamAbortRef.current = abortController;
+      lastStreamFlushRef.current = Date.now();
       let isCompleted = false;
       
       const timeoutId = setTimeout(() => {
@@ -602,6 +654,13 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
                   // Separate answer from suggestions in real-time
                   const currentAnswer = extractSuggestions(rawAccumulatedText).answer.trimEnd();
 
+                  // 流式内容按固定间隔强制落一次盘（见 STREAM_FLUSH_INTERVAL_MS）：
+                  // 只靠 600ms 防抖的话，生成中途崩掉/被切走 = 整段回答丢
+                  if (Date.now() - lastStreamFlushRef.current >= STREAM_FLUSH_INTERVAL_MS) {
+                    lastStreamFlushRef.current = Date.now();
+                    requestImmediateSave();
+                  }
+
                   // Stream answer update into card
                   setNodes((nds) =>
                     nds.map((n) => {
@@ -659,6 +718,10 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
         });
 
         // Immediately sync nodesRef and React state to avoid race conditions
+        // 定稿必须立即落盘：最终答案与本轮 status/grounding 是这一问的成果，
+        // 而灵感占位节点是否新增取决于服务端是否回了 suggestions（可能没有 id 变化 →
+        // 只靠结构判据抓不到），所以这里显式置位。
+        requestImmediateSave();
         nodesRef.current = finalizedNodes;
         setNodes(finalizedNodes);
 
@@ -670,6 +733,8 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       } catch (err: any) {
         console.error('Error generating AI response:', err);
         const friendlyMessage = sanitizeErrorMessage(err);
+        // 失败也要落盘：已经流出来的部分回答还在节点里，别让它只活在内存中
+        requestImmediateSave();
         setNodes((nds) => {
           const updated = nds.map((n) => {
             if (n.id !== nodeId) return n;
@@ -686,9 +751,19 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
           nodesRef.current = updated;
           return updated;
         });
+      } finally {
+        // 流已结束（成功或失败）：摘掉引用，避免卸载时去 abort 一个早已完成的请求
+        if (activeStreamAbortRef.current === abortController) activeStreamAbortRef.current = null;
       }
     },
-    [defaultModel, defaultEnableWebSearch, setNodes, spawnSuggestedNodes, autoTitleNode]
+    [
+      defaultModel,
+      defaultEnableWebSearch,
+      setNodes,
+      spawnSuggestedNodes,
+      autoTitleNode,
+      requestImmediateSave,
+    ]
   );
 
   // Shared helper: create a child chat node + edge under a source node, auto-layout, pan camera to the new node, start generation
@@ -944,6 +1019,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
   // Collapse / Expand node
   const handleToggleCollapse = useCallback(
     (nodeId: string) => {
+      requestImmediateSave(); // 离散提交点：折叠状态是持久化字段，但不属于「还在输入」
       setNodes((nds) =>
         nds.map((n) => {
           if (n.id !== nodeId) return n;
@@ -956,11 +1032,12 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       );
       setTimeout(() => applyLayout(), 50);
     },
-    [applyLayout, setNodes]
+    [applyLayout, setNodes, requestImmediateSave]
   );
 
   const handleUpdateTitle = useCallback(
     (nodeId: string, title: string) => {
+      requestImmediateSave(); // 改名在提交时才回调（失焦/回车），立即固化
       setNodes((nds) =>
         nds.map((n) => {
           if (n.id !== nodeId) return n;
@@ -972,11 +1049,22 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
         })
       );
     },
-    [setNodes]
+    [setNodes, requestImmediateSave]
   );
 
+  /**
+   * 便签内容提交点（失焦）。内容类变更仍走 600ms 防抖（打字中途不该每个字都发），
+   * 但**失焦 = 用户认为这段写完了**，立即固化——只靠防抖会在「刚写完就切走/关页面」时留窗口。
+   * 内容没变就不请求（避免点进点出便签也写一次本地）。
+   */
   const handleUpdateNote = useCallback(
     (nodeId: string, content: string, title?: string) => {
+      const cur = nodesRef.current.find((n) => n.id === nodeId)?.data as unknown as
+        | { content?: string; title?: string }
+        | undefined;
+      const changed =
+        !cur || cur.content !== content || (title !== undefined && cur.title !== title);
+      if (changed) requestImmediateSave();
       setNodes((nds) =>
         nds.map((n) => {
           if (n.id !== nodeId) return n;
@@ -987,7 +1075,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
         })
       );
     },
-    [setNodes]
+    [setNodes, requestImmediateSave]
   );
 
   // Add new standalone Root topic node

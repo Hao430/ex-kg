@@ -6,6 +6,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { ReactFlowProvider, Node, Edge } from '@xyflow/react';
 import { Topbar } from './components/ui/Topbar';
+import { BoardLockedNotice } from './components/ui/BoardLockedNotice';
 import { DeepDiveCanvas } from './components/canvas/DeepDiveCanvas';
 import { LandingPage } from './components/landing/LandingPage';
 import {
@@ -17,7 +18,6 @@ import {
   exportBoardToMarkdown,
   fetchBoardFromServer,
   fetchBoardListFromServer,
-  adoptServerVersion,
   StoredBoard,
 } from './lib/storage';
 import { exportCanvasAsPng } from './lib/canvas-image-export';
@@ -32,6 +32,7 @@ import * as folderStore from './lib/folder-store';
 import { useBoards, useFolders } from './hooks/useBoards';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { trackEvent } from './lib/analytics';
+import { getBoardEditLock } from './lib/board-edit-lock';
 import { markChecklistStep } from './lib/checklist';
 import {
   isShareCloned,
@@ -78,9 +79,6 @@ function createStarterRootNode(): Node[] {
 }
 
 /** 自动命名：视为「默认名」的画板名（命中才允许 LLM 自动命名，之后永不覆盖） */
-/** 采用服务端版、把本地未同步改动另存副本时的统一文案（三个调用点共用，别各写一份） */
-const CONFLICT_COPY_TOAST = '画板已在其他设备被修改，已载入云端最新版本；你的改动已另存为一块「(冲突副本)」画板';
-
 const DEFAULT_BOARD_NAMES = ['未命名思维画布', '未命名思维探索', '新建思维画布'];
 const isDefaultBoardName = (name: string): boolean =>
   DEFAULT_BOARD_NAMES.includes(name) || /^探索课题 #\d+$/.test(name);
@@ -106,6 +104,12 @@ function MainApp() {
   const [initialEdges, setInitialEdges] = useState<Edge[] | undefined>(undefined);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [nodeCount, setNodeCount] = useState<number>(1);
+  /**
+   * 本标签是否持有当前画板的编辑权（技术债 #0097）。false = 同一块画板已在另一个标签页打开，
+   * 此标签**不渲染编辑画布**——两个标签共享同一份本地存储，同时编辑会互相覆盖，更糟的是会
+   * 把对方刚保存的节点误判成「本地删除」并在云端真删掉。
+   */
+  const [boardEditOwner, setBoardEditOwner] = useState(true);
 
   const { isVip, openRechargeModal, user, resendVerification, loading: authLoading } = useAuth();
 
@@ -243,16 +247,25 @@ function MainApp() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const toggleSuggestions = useCallback(() => {
     if (!currentBoardId || currentBoardIsShared) return;
+    // 关闭方向会清理占位节点（= 删除）——非编辑权标签不得动手
+    if (!boardEditOwner) {
+      showToast('该画板正在另一个标签页中编辑，请先在此标签页点「继续编辑」');
+      return;
+    }
     if (!suggestionsEnabled) {
       updateBoardMetaLocally(currentBoardId, { suggestionsEnabled: true });
       showToast('已开启探索灵感：本画板之后的新回答会附带灵感节点');
       return;
     }
     requestDisableSuggestionsRef.current?.();
-  }, [suggestionsEnabled, currentBoardId, currentBoardIsShared]);
+  }, [suggestionsEnabled, currentBoardId, currentBoardIsShared, boardEditOwner]);
 
   // 保存冲突提示（Spec A4 乐观锁）+ 同步状态订阅（Spec A5，仅指示当前画板）
   const [syncState, setSyncState] = useState<'idle' | 'saved' | 'pending' | 'error' | 'conflict'>('idle');
+  /** 网络可达性：离线时「改动存不下」必须说出来（见下面的 unsavedDiscardRisk） */
+  const [online, setOnline] = useState<boolean>(() =>
+    typeof navigator === 'undefined' ? true : navigator.onLine !== false
+  );
   const [boardReady, setBoardReady] = useState(false); // Spec A2：画布数据就绪前不挂载画布
   /**
    * 画布重挂载计数。`DeepDiveCanvas` 用 `useNodesState(initialNodes)` 取初值——**只在首次
@@ -262,17 +275,128 @@ function MainApp() {
    */
   const [canvasEpoch, setCanvasEpoch] = useState(0);
   const currentBoardIdRef = useRef(currentBoardId);
+  const boardNameRef = useRef(boardName);
   useEffect(() => {
     currentBoardIdRef.current = currentBoardId;
+    boardNameRef.current = boardName;
+  }, [currentBoardId, boardName]);
+  /**
+   * 立刻落盘当前画板「还没到防抖窗口」的改动（纯 ref 读取，故恒稳定）。
+   *
+   * 为什么必须显式收口：改动先落在 React state，600ms 后才写 blob 并入队。切换画板 /
+   * 删除其他画板 / 页面隐藏都发生在窗口内时，那段改动**只存在于内存**，而「载入以服务端
+   * 为准」（ADR-0025）会把没传上去的内容丢弃——等于直接丢内容。便签因为点击外部会触发
+   * 失焦（走立即保存）侥幸安全，但没有失焦提交点的变更（最典型是 AI 流式回答）不保。
+   *
+   * 无待发改动（定时器已空）时 no-op，不会平白多写一次本地。
+   */
+  const flushPendingCanvasSave = useCallback(() => {
+    if (saveTimeoutRef.current === null) return;
+    window.clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = null;
+    saveBoard({
+      id: currentBoardIdRef.current,
+      name: boardNameRef.current,
+      updatedAt: Date.now(),
+      nodes: currentNodesRef.current,
+      edges: currentEdgesRef.current,
+    });
+  }, []);
+  /**
+   * 当前画板是否有未确认内容。`isDirty` 是 board-store 里那个「提示」（ADR-0025 后不再参与
+   * 裁决），这里正是它的正当用途：告诉用户「有东西还没到云端」。
+   */
+  const currentBoardHasUnsynced = !!currentBoardId && boardStore.isDirty(currentBoardId);
+  /**
+   * 「改动会被丢」的风险态：离线 / 同步已停止重试 / 冲突待刷新。
+   *
+   * 为什么单列出来：ADR-0025 之后载入以服务端为准，**没传上去的改动会被丢弃**。正常在线时
+   * 保存只是「稍后就好」，不值得打扰；但上面三种状态下，离开当前画板或刷新页面就是永久丢。
+   */
+  const unsavedDiscardRisk =
+    currentBoardHasUnsynced && (!online || syncState === 'error' || syncState === 'conflict');
+  const riskReason = !online
+    ? '当前无网络'
+    : syncState === 'conflict'
+    ? '画板已在其他窗口被修改'
+    : '同步已停止自动重试';
+  /** 离开当前画板/导入/新建前拦一下；无风险时不弹，不打扰正常使用 */
+  const confirmDiscardRisk = (action: string): boolean => {
+    if (!unsavedDiscardRisk) return true;
+    return window.confirm(
+      `「${boardName}」有改动尚未保存到云端（${riskReason}）。${action}后这些改动会丢失，仍要继续吗？`
+    );
+  };
+  // 风险态下刷新/关闭页面也要拦一下（浏览器原生确认框，不能自定义文案）
+  useEffect(() => {
+    if (!unsavedDiscardRisk) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [unsavedDiscardRisk]);
+
+  // ---- 多标签编辑权（技术债 #0097）：同一块画板同时只允许一个标签编辑 ----
+  useEffect(() => {
+    const lock = getBoardEditLock();
+    const off = lock.subscribe((owner) => {
+      setBoardEditOwner(owner);
+      // 让出编辑权时先把待发改动落盘：紧接着画布会被闸门替换掉（卸载），不 flush 就是丢内容
+      if (!owner) flushPendingCanvasSave();
+    });
+    setBoardEditOwner(lock.isOwner());
+    return off;
+  }, [flushPendingCanvasSave]);
+
+  // 切到哪块板就申请哪块板的编辑权（内部会先释放上一块）
+  useEffect(() => {
+    if (!currentBoardId) return;
+    getBoardEditLock().acquire(currentBoardId);
   }, [currentBoardId]);
+
+  // 卸载让出：心跳租约过期虽然也能自愈，但显式释放更快，不让另一个标签空等一轮
+  useEffect(() => {
+    const lock = getBoardEditLock();
+    return () => lock.release();
+  }, []);
+
+  // 未持有编辑权时不保留画布触发桥：画布已卸载，refs 里剩的是上一轮的陈旧闭包
+  useEffect(() => {
+    if (boardEditOwner) return;
+    triggerAutoLayoutRef.current = null;
+    triggerFitViewRef.current = null;
+    triggerAddRootRef.current = null;
+    triggerAddNoteRef.current = null;
+    triggerFocusNodeRef.current = null;
+  }, [boardEditOwner]);
+
+  /** 只有持有编辑权的标签才能改动当前画板；否则给出可操作的提示，而不是静默无反应 */
+  const ensureEditable = (): boolean => {
+    if (boardEditOwner) return true;
+    showToast('该画板正在另一个标签页中编辑，请先在此标签页点「继续编辑」');
+    return false;
+  };
+
+  /**
+   * 在此标签页接管编辑权。⚠️ 顺序不能反：**先按服务端对齐，再拿锁**。
+   * 上一个编辑者可能刚把它的改动传上去，我们手里的画面与差分基线是旧的；若先拿锁再对齐，
+   * 中间那一次防抖保存会带着旧画面做差分，把对方的节点当成「本地删除」并在云端删掉。
+   * 对齐期间拿不到编辑权，`handleCanvasChange` 直接返回，所以不会写入。
+   */
+  const handleTakeOverEdit = async () => {
+    const id = currentBoardIdRef.current;
+    if (!id) return;
+    const loaded = await fetchBoardFromServer(id);
+    if (loaded && currentBoardIdRef.current === id) applyLoadedBoard(loaded);
+    getBoardEditLock().takeOver();
+    showToast('已在此标签页继续编辑，另一个标签页转为只读');
+  };
+
   // 冲突收敛后需要刷新当前画板画面；applyLoadedBoard 定义在组件靠后位置，
   // 用 ref 转一手，避免在 effect 依赖数组里引用它而踩 TDZ。
   const applyLoadedBoardRef = useRef<((board: StoredBoard) => void) | null>(null);
-  // 采用服务端版会把本地未同步改动挪进「(冲突副本)」——这必须在每个调用点告诉用户，
-  // 否则用户只会发现画板列表里莫名多出一块，或者以为改动被吃掉了（不许静默挪走）。
-  const notifyConflictCopy = (conflictCopyId?: string) => {
-    if (conflictCopyId) showToast(CONFLICT_COPY_TOAST);
-  };
   const syncIdleTimerRef = useRef<number | null>(null);
   useEffect(() => {
     const onConflict = (e: Event) => {
@@ -280,7 +404,6 @@ function MainApp() {
         boardId?: string;
         message?: string;
         code?: string;
-        conflictCopyId?: string;
       };
       // 配额/会员类：引导升级，草稿保留待升级后自动补传
       if (detail?.code === 'BOARD_LIMIT_REACHED' || detail?.code === 'VIP_EXPIRED') {
@@ -295,20 +418,10 @@ function MainApp() {
         showToast(detail?.message || '登录状态已失效，请重新登录');
         return;
       }
-      // 真冲突已收敛：本地未同步版另存了「(冲突副本)」，原画板采用了服务端当前版本。
-      // 冲突的若正是当前画板，必须刷新画面——否则内存里还是本地旧内容，下一次防抖自动
-      // 保存会带着新鲜版本号把它再推上去，把刚采用的云端改动又覆盖掉（回到「谁后同步谁赢」）。
-      if (detail?.conflictCopyId && detail.boardId === currentBoardIdRef.current) {
-        if (saveTimeoutRef.current !== null) {
-          window.clearTimeout(saveTimeoutRef.current);
-          saveTimeoutRef.current = null;
-        }
-        showToast('画板已在其他窗口被修改，已载入云端最新版本；你的改动已另存为新画板');
-        void fetchBoardFromServer(detail.boardId).then((loaded) => {
-          if (loaded && currentBoardIdRef.current === loaded.id) {
-            applyLoadedBoardRef.current?.(loaded);
-          }
-        });
+      // 旧协议客户端/服务端配置不一致时才会出现的 409：重发不会变好，提示刷新
+      //（刷新即走「载入以服务端为准」的路径收敛，ADR-0025）。
+      if (detail?.code === 'CLIENT_OUTDATED') {
+        showToast(detail?.message || '画板已在其他窗口被修改，请刷新页面后重试');
         return;
       }
       showToast(detail?.message || '画板已在其他窗口被修改，请刷新后重试');
@@ -341,6 +454,10 @@ function MainApp() {
         syncIdleTimerRef.current = null;
       }
       setSyncState(state);
+      if (state === 'error') {
+        // 慢速自愈入口只 emit 一次，不会刷屏；这句是「改动没存上」的唯一显式告知
+        showToast('有改动尚未保存到云端，请检查网络后重试');
+      }
       if (state === 'saved') {
         syncIdleTimerRef.current = window.setTimeout(() => setSyncState('idle'), 3000);
       }
@@ -368,12 +485,21 @@ function MainApp() {
       void quotaStore.refreshQuota();
       void syncQueue.flush();
     };
-    // pagehide：页面即将消失，普通 fetch 会被浏览器掐掉，必须走 keepalive 单次补传
-    const onPageHide = () => syncQueue.flushForPageHide();
+    // pagehide：页面即将消失，普通 fetch 会被浏览器掐掉，必须走 keepalive 单次补传。
+    // ⚠️ 顺序不能反：keepalive 补传读的是**已落盘的 blob**，而最后一段编辑还压在防抖
+    // 定时器里——不先 flush 就补传的是旧内容，最后那几百毫秒照样丢。
+    const onPageHide = () => {
+      flushPendingCanvasSave();
+      syncQueue.flushForPageHide();
+    };
     // 切回前台：顺带给失败任务兜底，不等慢速自愈的长间隔
     const onVisibilityChange = () => {
-      if (document.visibilityState === 'hidden') syncQueue.flushForPageHide();
-      else void syncQueue.flush();
+      if (document.visibilityState === 'hidden') {
+        flushPendingCanvasSave();
+        syncQueue.flushForPageHide();
+      } else {
+        void syncQueue.flush();
+      }
     };
     window.addEventListener('online', onOnline);
     window.addEventListener('pagehide', onPageHide);
@@ -383,6 +509,23 @@ function MainApp() {
       window.removeEventListener('pagehide', onPageHide);
       window.removeEventListener('visibilitychange', onVisibilityChange);
     };
+  }, [flushPendingCanvasSave]);
+
+  // 网络可达性：离线时明确告知「现在的编辑存不下」——ADR-0025 之后载入以服务端为准，
+  // 没传上去的改动会被丢弃，不能只用「稍后自动补传」这种轻描淡写的口径。
+  useEffect(() => {
+    const goOnline = () => setOnline(true);
+    const goOffline = () => {
+      setOnline(false);
+      showToast('当前无网络，改动暂时无法保存到云端');
+    };
+    window.addEventListener('online', goOnline);
+    window.addEventListener('offline', goOffline);
+    return () => {
+      window.removeEventListener('online', goOnline);
+      window.removeEventListener('offline', goOffline);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 升级成功（isVip 变 true）：刷新配额并重试被额度拦下的草稿/克隆
@@ -546,12 +689,8 @@ function MainApp() {
       });
       void fetchBoardFromServer(activeId).then((loaded) => {
         if (cancelled || seq !== loadSeqRef.current || !loaded) return;
-        // 本地有未同步改动时既不无条件本地胜出（旧行为，会挡住他端改动），
-        // 也不无条件服务端胜出（会抹掉还没传上去的本地编辑）：
-        // adoptServerVersion 区分「本地领先，等上传」与「真冲突，本地版另存副本后采用服务端版」
-        const { adopt, conflictCopyId } = adoptServerVersion(loaded);
-        if (!adopt) return;
-        notifyConflictCopy(conflictCopyId);
+        // 载入以服务端为准（ADR-0025）：取到就采用，不再裁决「本地领先/真冲突」。
+        // 404 / 断网时 fetch 返回 null，本地画面（含未上传内容）原样保留。
         applyLoadedBoard(loaded);
       });
     };
@@ -561,19 +700,29 @@ function MainApp() {
     };
   }, [user?.id, authLoading, applyLoadedBoard]);
 
-  // Debounced auto-save whenever nodes or edges change
+  /**
+   * 画布变更自动保存。
+   *
+   * 内容类变更（打字、AI 流式回答）走 600ms 防抖——没必要每个字都发一次。
+   * **结构操作与提交点走 `immediate`**（新增/删除节点或边、连边、拖拽结束、失焦提交）：
+   * 这些是离散动作，没有「还在输入」的中间态，压着不发只是白留未上传窗口（ADR-0025 之后
+   * 载入以服务端为准，那个窗口里的内容会被丢弃，所以窗口越短越好）。
+   */
   const handleCanvasChange = useCallback(
-    (nodes: Node[], edges: Edge[]) => {
+    (nodes: Node[], edges: Edge[], opts?: { immediate?: boolean }) => {
       if (!boardReady) return; // Spec A2：数据就绪前不触发自动保存，防模板/旧数据污染
+      if (!boardEditOwner) return; // 非编辑权标签不得写入（闸门下画布本未挂载，这里是兜底）
       currentNodesRef.current = nodes;
       currentEdgesRef.current = edges;
       setNodeCount(nodes.length);
 
       if (saveTimeoutRef.current) {
         window.clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
       }
 
-      saveTimeoutRef.current = window.setTimeout(() => {
+      const doSave = () => {
+        saveTimeoutRef.current = null;
         const boardToSave: StoredBoard = {
           id: currentBoardId,
           name: boardName,
@@ -582,21 +731,35 @@ function MainApp() {
           edges,
         };
         saveBoard(boardToSave); // board-store 订阅自动刷新列表
-      }, 600);
+      };
+      if (opts?.immediate) {
+        doSave();
+        return;
+      }
+      saveTimeoutRef.current = window.setTimeout(doSave, 600);
     },
-    [currentBoardId, boardName, boardReady]
+    [currentBoardId, boardName, boardReady, boardEditOwner]
   );
 
   // 删除画板：confirm → 服务端 DELETE（若已登录）+ 本地清理；删当前画板时切到剩余第一个或空白画布
   const handleDeleteBoard = async (targetId: string) => {
     const target = boards.find((b) => b.id === targetId);
     if (!target) return;
+    // 删当前画板是破坏性操作：非编辑权标签不得删（另一个标签可能正拿着它编辑）
+    if (targetId === currentBoardId && !ensureEditable()) return;
     if (!window.confirm(`确定要删除画板「${target.name}」吗？该操作无法撤销。`)) return;
 
-    // 防止待触发的防抖自动保存把已删除的画板重新写回本地
-    if (saveTimeoutRef.current) {
-      window.clearTimeout(saveTimeoutRef.current);
-      saveTimeoutRef.current = null;
+    // 删的是**别的**画板：当前板还没到防抖窗口的改动与这次删除无关，先落盘——
+    // 否则紧接着的重挂载会清掉待发定时器，那段改动只存在于内存里，下次载入按
+    // 「服务端为准」丢弃（ADR-0025）。
+    // 删的是**当前**画板：绝不能 flush（那正是要删掉的内容），只作废待发保存防写回。
+    if (targetId === currentBoardId) {
+      if (saveTimeoutRef.current !== null) {
+        window.clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+    } else {
+      flushPendingCanvasSave();
     }
     // 冻结自动保存：删除/切换加载完成前，任何节点变更不得写入任何画板
     //（否则加载窗口内被删内容会经挂载 effect + handleCanvasChange 污染下一块画板）
@@ -614,15 +777,14 @@ function MainApp() {
     if (remaining.length > 0) {
       const nextId = remaining[0].id;
       const seq = ++loadSeqRef.current;
-      // 本地先出画面；无缓存再拉服务端（有未同步改动则本地版胜出）
+      // 本地先出画面；无缓存再拉服务端（载入以服务端为准，ADR-0025）
       const cached = loadBoard(nextId);
       if (cached) {
         applyLoadedBoard(cached);
       } else if (user) {
         const loaded = await fetchBoardFromServer(nextId);
         if (seq !== loadSeqRef.current) return; // 期间用户已手动切换画板，丢弃本次结果
-        // 走到这里说明本地无该画板缓存，不存在「本地未同步内容被覆盖」的风险，只做冲突裁决
-        if (loaded && adoptServerVersion(loaded).adopt) applyLoadedBoard(loaded);
+        if (loaded) applyLoadedBoard(loaded);
         else applyStarterBoard(nextId, remaining[0].name);
       } else {
         applyStarterBoard(nextId, remaining[0].name);
@@ -634,6 +796,7 @@ function MainApp() {
   };
 
   const handleRenameBoard = (newName: string) => {
+    if (!ensureEditable()) return;
     setBoardName(newName);
     const boardToSave: StoredBoard = {
       id: currentBoardId,
@@ -648,7 +811,10 @@ function MainApp() {
 
   // Spec L1：画板库管理操作（收藏/归档/改名）走轻量 meta 通道，本地乐观 + 队列同步
   const handleRenameBoardById = (id: string, newName: string) => {
-    if (id === currentBoardId) setBoardName(newName);
+    if (id === currentBoardId) {
+      if (!ensureEditable()) return;
+      setBoardName(newName);
+    }
     updateBoardMetaLocally(id, { name: newName });
     showToast(`画板已重命名为「${newName}」`);
   };
@@ -717,6 +883,11 @@ function MainApp() {
 
   const handleSwitchBoard = async (targetId: string) => {
     if (targetId === currentBoardId) return;
+    // 风险态下（离线/停止重试/冲突）先让用户确认：此时切走 = 永久丢掉那部分改动
+    if (!confirmDiscardRisk('切换画板')) return;
+    // 离开当前画板前先把压在防抖窗口里的改动落盘：紧接着的重挂载会让新板的变更清掉
+    // 待发定时器，那段改动只存在于内存里，下次载入按「服务端为准」丢弃（ADR-0025）。
+    flushPendingCanvasSave();
     const seq = ++loadSeqRef.current; // 过期的加载结果直接丢弃（Spec A2 审计修复）
     // 本地先出画面（无网络等待）
     const cached = loadBoard(targetId);
@@ -724,8 +895,7 @@ function MainApp() {
       applyLoadedBoard(cached);
       showToast(`已载入画板「${cached.name}」`);
     }
-    // 后台校验服务端版本：有未同步改动时交给 adoptServerVersion 裁决
-    //（本地领先 → 保留本地画面等上传；真冲突 → 本地版另存副本后采用服务端版）
+    // 载入以服务端为准（ADR-0025）：取到就采用，本地未上传内容按设计丢弃。
     if (user) {
       const loaded = await fetchBoardFromServer(targetId);
       if (seq !== loadSeqRef.current) return;
@@ -733,9 +903,6 @@ function MainApp() {
         if (!cached) showToast('画板加载失败，请稍后重试');
         return;
       }
-      const { adopt, conflictCopyId } = adoptServerVersion(loaded);
-      if (!adopt) return; // 本地领先：不动画面
-      notifyConflictCopy(conflictCopyId);
       applyLoadedBoard(loaded);
       if (!cached) showToast(`已载入画板「${loaded.name}」`);
     } else if (!cached) {
@@ -744,10 +911,12 @@ function MainApp() {
   };
 
   const handleNewBoard = () => {
+    if (!confirmDiscardRisk('新建画板')) return; // 风险态下先让用户确认，别默默丢掉存不上的改动
     if (quotaStore.canCreate(isVip) === 'block') {
       openRechargeModal('免费版用户最多支持创建 3 个独立画板。升级 Pro 会员解锁无限画板与无限节点！');
       return;
     }
+    flushPendingCanvasSave(); // 离开当前画板前先把防抖窗口里的改动落盘
     const newId = uuidv7();
     const newName = `探索课题 #${boards.length + 1}`;
     const starterNodes = createStarterRootNode();
@@ -968,7 +1137,10 @@ function MainApp() {
       openRechargeModal('免费版用户最多支持创建 3 个独立画板，升级 Pro 会员解锁无限画板后再导入吧！');
       return;
     }
+    if (!ensureEditable()) return;
+    if (!confirmDiscardRisk('导入备份')) return;
     const imported = result.board;
+    flushPendingCanvasSave(); // 切到导入的新板前，先落盘当前板压在防抖窗口里的改动
     quotaStore.markPendingCreate(imported.id);
     saveBoard(imported);
     applyLoadedBoard(imported);
@@ -1009,6 +1181,7 @@ function MainApp() {
   };
 
   const handleResetBoard = () => {
+    if (!ensureEditable()) return; // 清空 = 大量删除，非编辑权标签不得动手
     if (window.confirm('确定要清空当前画板的所有节点吗？此操作无法撤销。')) {
       const starter = createStarterRootNode();
       const resetBoard: StoredBoard = {
@@ -1167,6 +1340,7 @@ function MainApp() {
         onOpenLibrary={() => setLibraryOpen(true)}
         theme={theme}
         syncState={syncState}
+        offline={!online}
         onToggleTheme={toggleTheme}
         nodeCount={nodeCount}
         suggestionsEnabled={suggestionsEnabled}
@@ -1176,28 +1350,37 @@ function MainApp() {
 
       {/* Main Infinite Canvas Viewport */}
       <main className="flex-1 w-full h-full pt-14 relative bg-slate-50/50 dark:bg-[#070b14] transition-colors duration-200">
-        <ReactFlowProvider>
-          <DeepDiveCanvas
-            key={`${currentBoardId}:${canvasEpoch}`}
-            initialNodes={initialNodes}
-            initialEdges={initialEdges}
-            onCanvasChange={handleCanvasChange}
-            triggerAutoLayoutRef={triggerAutoLayoutRef}
-            triggerFitViewRef={triggerFitViewRef}
-            triggerAddRootRef={triggerAddRootRef}
-            triggerAddNoteRef={triggerAddNoteRef}
-            triggerFocusNodeRef={triggerFocusNodeRef}
-            theme={theme}
-            canvasId={currentBoardId}
-            boardNeedsAutoName={isDefaultBoardName(boardName)}
-            triggerExportPngRef={triggerExportPngRef}
-            suggestionsEnabled={suggestionsEnabled}
-            onSuggestionsDisabled={handleSuggestionsDisabled}
-            requestDisableSuggestionsRef={requestDisableSuggestionsRef}
+        {boardEditOwner ? (
+          <ReactFlowProvider>
+            <DeepDiveCanvas
+              key={`${currentBoardId}:${canvasEpoch}`}
+              initialNodes={initialNodes}
+              initialEdges={initialEdges}
+              onCanvasChange={handleCanvasChange}
+              triggerAutoLayoutRef={triggerAutoLayoutRef}
+              triggerFitViewRef={triggerFitViewRef}
+              triggerAddRootRef={triggerAddRootRef}
+              triggerAddNoteRef={triggerAddNoteRef}
+              triggerFocusNodeRef={triggerFocusNodeRef}
+              theme={theme}
+              canvasId={currentBoardId}
+              boardNeedsAutoName={isDefaultBoardName(boardName)}
+              triggerExportPngRef={triggerExportPngRef}
+              suggestionsEnabled={suggestionsEnabled}
+              onSuggestionsDisabled={handleSuggestionsDisabled}
+              requestDisableSuggestionsRef={requestDisableSuggestionsRef}
+            />
+          </ReactFlowProvider>
+        ) : (
+          /* 同一块画板已在另一个标签页编辑：不渲染画布，避免两个标签互相覆盖/误删（#0097） */
+          <BoardLockedNotice
+            boardName={boardName}
+            onTakeOver={() => void handleTakeOverEdit()}
+            onOpenLibrary={() => setLibraryOpen(true)}
           />
-        </ReactFlowProvider>
+        )}
         {/* Spec K5（D1）：空态新手 4 步 checklist（全完成/手动关闭后不再显示） */}
-        <StarterChecklist hasBoards={boards.length > 0} />
+        {boardEditOwner && <StarterChecklist hasBoards={boards.length > 0} />}
       </main>
 
       {/* Spec K5（D1）：示例画布只读查看器（纯前端静态内容，不占用户配额） */}

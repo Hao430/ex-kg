@@ -16,7 +16,6 @@ import * as boardStore from './board-store';
 import * as boardOps from './board-ops';
 import * as quotaStore from './quota-store';
 import { trackEvent } from './analytics';
-import { uuidv7 } from './uuid';
 import { remapBoardIds } from './board-remap';
 
 const STORAGE_BOARD_PREFIX = boardScope.BOARD_BLOB_PREFIX;
@@ -132,9 +131,9 @@ function persistBoard(cleanedBoard: StoredBoard, opts?: { dirty?: boolean }): vo
 
 /**
  * Sync board to backend API（三态：ok / conflict / fail，供重试队列判定）
- * - 携带 serverUpdatedAt 作为乐观锁版本（Spec A4）
- * - 409 冲突**不再自愈**：服务端本就正确检测到了冲突，是客户端在否决它。
- *   旧行为（本地版胜出）的机理与代价见 `preserveLocalAsConflictCopy` 注释。
+ * - 携带 serverUpdatedAt 作为乐观锁版本（Spec A4）；合并路径下服务端**刻意不校验**它（ADR-0017）。
+ * - 只上行本设备改过的节点/边（`computeOps` 差分），服务端节点级合并、墓碑胜出。
+ * - 409 仅作防御：v2 客户端正常走不到（见分支注释）；**任何情况下都不再建冲突副本**（ADR-0025）。
  * - 403/404 带 code：BOARD_LIMIT_REACHED/VIP_EXPIRED 保留草稿待升级；NOT_FOUND 收敛幽灵板。
  */
 
@@ -155,178 +154,32 @@ const KEEPALIVE_MAX_BYTES = 60_000;
  */
 const PERMANENT_SAVE_REJECTION_CODES = new Set(['NODE_CANVAS_MISMATCH', 'NODE_PARENT_CYCLE']);
 
-/** 冲突副本命名后缀 */
-const CONFLICT_COPY_SUFFIX = ' (冲突副本)';
-
-/** 冲突副本复用表键：源画板 id → 副本 id（持久化，防重试/刷新后重复堆积副本） */
-function conflictCopyKey(boardId: string): string {
-  return `deepdive_conflict_copy_${boardId}`;
-}
-
-function readConflictCopyId(boardId: string): string | null {
-  try {
-    return localStorage.getItem(conflictCopyKey(boardId));
-  } catch {
-    return null;
-  }
-}
-
-function rememberConflictCopy(boardId: string, copyId: string | null): void {
-  try {
-    if (copyId) localStorage.setItem(conflictCopyKey(boardId), copyId);
-    else localStorage.removeItem(conflictCopyKey(boardId));
-  } catch {
-    /* ignore */
-  }
-}
-
 /**
- * 派生哈希的分段分隔符。用可打印字符而不是 NUL：NUL 会让整个文件被 `file` / `grep` /
- * diff 当成二进制——`grep` 会**静默跳过**它（2026-09-14 踩过，排查时白找半天）。
- * id 只含 uuidv7 的十六进制与短横，竖线不会与之混淆。
+ * 载入路径的「在途保存作废」纪元（per board）。
+ *
+ * 载入采用服务端内容后，若该板有一个**更早发出**的保存请求随后才返回，它会用旧快照
+ * `advanceBase` + `confirmServerSave`，把刚重置成服务端状态的基线打回旧值——之后所有差分
+ * 都是错的。故采用时把纪元 +1；保存请求在 `res.ok` 前比对出发时捕获的纪元，不一致即丢弃结果。
  */
-const HASH_SEP = '|';
+const contentEpoch = new Map<string, number>();
 
-/** 32bit FNV-1a：稳定、同步、零依赖，够这个用途（单块副本的节点量级为百） */
-function fnv1a32(input: string): number {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < input.length; i++) {
-    h ^= input.charCodeAt(i);
-    h = Math.imul(h, 0x01000193) >>> 0;
-  }
-  return h >>> 0;
+function currentContentEpoch(boardId: string): number {
+  return contentEpoch.get(boardId) ?? 0;
 }
 
-/**
- * 冲突副本的节点/边 id 派生：以 (副本 id, 源 id) 为输入的可重放纯函数。
- *
- * 为什么不直接 `uuidv7()`：同一轮冲突会**反复重拍**同一块副本（源画板持续保存失败时），
- * 每拍一次换一批新 id 的话，上一拍已上行的节点在这一拍里「没带」——合并语义下没带 = 不动，
- * 于是整块副本被全量墓碑 + 重插一遍（rev 空转、墓碑堆积），而这恰好发生在系统已经不正常时。
- * 纯函数派生让重拍幂等：同一对输入恒得同一个新 id。
- *
- * 形状仍是 UUIDv7（48bit 时间前缀取自副本 id，版本/变体位合规），保留不可枚举与 B-tree 局部性。
- */
-function derivedCopyNodeId(copyId: string, oldId: string): string {
-  const tsHex = copyId.replace(/-/g, '').slice(0, 12); // 副本 id 的 48bit 时间戳
-  const bytes = new Uint8Array(10);
-  for (let seg = 0; seg < 5; seg++) {
-    const h = fnv1a32(`${copyId}${HASH_SEP}${oldId}${HASH_SEP}${seg}`);
-    bytes[seg * 2] = (h >>> 8) & 0xff;
-    bytes[seg * 2 + 1] = h & 0xff;
-  }
-  const chars = (
-    tsHex + Array.from(bytes, (x) => x.toString(16).padStart(2, '0')).join('')
-  ).split('');
-  chars[12] = '7'; // 版本位（时间戳只占前 12 个 hex，此处不属于时间戳）
-  chars[16] = ((parseInt(chars[16], 16) & 0x3) | 0x8).toString(16); // RFC 变体位
-  return (
-    `${chars.slice(0, 8).join('')}-${chars.slice(8, 12).join('')}-` +
-    `${chars.slice(12, 16).join('')}-${chars.slice(16, 20).join('')}-${chars.slice(20).join('')}`
-  );
-}
-
-/**
- * 冲突收敛之一：把本地未同步版另存为一块新画板「(冲突副本)」，用户的改动不丢。
- *
- * 同一轮冲突复用同一个副本 id（重试期间的编辑刷新副本内容），不重复堆积新画板；
- * 源画板保存成功后清空复用表，下一次冲突才另起一块。
- *
- * ⚠️ 副本**必须重映射节点/边的 id**：服务端 `nodes.id` 是全局主键，跨板搬节点会被
- * `mergeWriteCanvas` 拒成 400 `NODE_CANVAS_MISMATCH`。不重映射的副本**永远传不上去**，
- * 只活在本机 localStorage 里——换设备/清缓存就没了，安全网恰好在唯一该起作用时失效
- *（2026-09-14 线上事故：一块冲突副本以 60s 间隔重试了 20 分钟无法收敛）。
- * 分享克隆与 JSON 导入走的是同一条纪律。
- *
- * @returns 副本 id；本地无内容或落盘失败返回 null
- */
-function preserveLocalAsConflictCopy(boardId: string): string | null {
-  const local = loadBoard(boardId);
-  if (!local) return null;
-  const copyId = readConflictCopyId(boardId) ?? uuidv7();
-  const { nodes, edges, droppedEdges } = remapBoardIds(local.nodes, local.edges, {
-    boardId: copyId,
-    generateId: (oldId) => derivedCopyNodeId(copyId, oldId ?? ''),
-  });
-  if (droppedEdges > 0) {
-    // 静默丢东西很难排查（口径同服务端 saveCanvas 丢边时的告警）
-    console.warn(`[conflict-copy] 副本丢弃 ${droppedEdges} 条端点不可达的边 canvas=${copyId}`);
-  }
-  const copy: StoredBoard = {
-    id: copyId,
-    name: `${local.name}${CONFLICT_COPY_SUFFIX}`,
-    updatedAt: Date.now(),
-    nodes,
-    edges,
-    viewport: local.viewport,
-    // 刻意不继承 serverUpdatedAt：副本是全新画板，首次上传走新建
-    //（带上源画板的版本号会被服务端判 409）
-  };
-  try {
-    persistBoard(copy, { dirty: true });
-  } catch (e) {
-    boardScope.reportPersistFailure('conflict-copy', e);
-    return null;
-  }
-  rememberConflictCopy(boardId, copyId);
-  enqueue(copyId); // 后台补传，失败走退避重试
-  return copyId;
-}
-
-export interface AdoptResult {
-  /** true = 调用方可以拿服务端内容覆盖画面 */
-  adopt: boolean;
-  /** 本轮把本地未同步版另存了副本时给出副本 id，供上层明确告知用户（不要静默挪走改动） */
-  conflictCopyId?: string;
-}
-
-/**
- * 采用服务端版本前的冲突裁决（页面加载/切换路径用）。
- *
- * 本地 dirty 有两种成因，必须区分开：
- * - **本地领先**：只是还没传上去（服务端 updatedAt 仍等于本地记录的基线）→ 保留本地等上传。
- *   此时拿服务端内容覆盖，会直接抹掉用户刚做的改动。
- * - **真冲突**：服务端已被他端推进（基线对不上）→ 本地版另存冲突副本，再采用服务端版。
- *
- * @param opts.force 已知服务端刚以 409 否决了本地基线，不必再比对基线（保存路径用）
- */
-export function adoptServerVersion(
-  serverBoard: StoredBoard,
-  opts?: { force?: boolean }
-): AdoptResult {
-  const id = serverBoard.id;
-  if (!boardStore.isDirty(id) && !opts?.force) return { adopt: true }; // 无未同步改动，已由 fetchBoardFromServer 落盘
-  if (!opts?.force) {
-    const base = loadBoard(id)?.serverUpdatedAt;
-    // 从未同步过（纯本地草稿）或基线一致：本地领先，保留本地等上传
-    if (!base || base === serverBoard.serverUpdatedAt) return { adopt: false };
-  }
-  const conflictCopyId = preserveLocalAsConflictCopy(id) ?? undefined; // 必须先于覆盖——读的是本地未同步内容
-  try {
-    persistBoard(serverBoard, { dirty: false });
-    if (serverBoard.serverUpdatedAt) persistServerUpdatedAt(id, serverBoard.serverUpdatedAt);
-  } catch (e) {
-    // 落盘失败则本地副本仍是旧内容，此时采用服务端版会让下次保存把旧内容推上去覆盖云端 → 不采用
-    boardScope.reportPersistFailure('board-adopt', e);
-    return { adopt: false, conflictCopyId };
-  }
-  boardStore.markDirty(id, false);
-  // 本地画面此刻就是服务端这份内容，基线跟着对齐（不变量：基线 = 本地画面继承的那份状态）。
-  // 不对齐的话，下次保存会把「服务端这段时间的改动」整批当成本设备改动重推一遍。
-  boardOps.advanceBase(id, serverBoard);
-  return { adopt: true, conflictCopyId };
+function bumpContentEpoch(boardId: string): void {
+  contentEpoch.set(boardId, currentContentEpoch(boardId) + 1);
 }
 
 /** keepalive 体积按真实 UTF-8 字节数判断（中文正文下 字符数 与 字节数 差 3 倍） */
 const utf8 = new TextEncoder();
 
-/** 冲突/失败提示事件统一派发（detail 向后兼容，新增 code / conflictCopyId 字段） */
+/** 冲突/失败提示事件统一派发（detail 带可选 code，供 UI 分流处理） */
 function dispatchConflictEvent(
   boardId: string,
   message?: string,
   latestUpdatedAt?: string,
-  code?: string,
-  conflictCopyId?: string
+  code?: string
 ): void {
   window.dispatchEvent(
     new CustomEvent('deepdive:canvas-save-conflict', {
@@ -335,7 +188,6 @@ function dispatchConflictEvent(
         message,
         latestUpdatedAt,
         code,
-        conflictCopyId,
       },
     })
   );
@@ -372,6 +224,7 @@ async function syncBoardToBackendInner(
   const keepalive = opts?.keepalive === true;
 
   // 差分基线 = 本设备已知与服务端一致的那份内容。缺失时补一次（升级到本版、或基线键被清）
+  const hadBase = boardOps.readBase(board.id) !== null;
   let base = boardOps.readBase(board.id);
   if (!base) {
     // 页面卸载补传不做额外 GET；此刻也**绝不能**退化成整板 upsert——那正是
@@ -380,12 +233,23 @@ async function syncBoardToBackendInner(
     base = await boardOps.seedBaseFromServer(board.id);
   }
   const ops = boardOps.computeOps(base, board);
+  // 基线是刚补拉的服务端全量时，**本次请求不得携带墓碑**：本地 blob 可能落后于服务端，
+  // 那样「基线里有、本地没有」的 id 全是服务端独有节点，报删除等于反过来删别人的内容。
+  // 缺基线的补拉路径见 `seedBaseFromServer`（ADR-0025）。
+  if (!hadBase) {
+    ops.deletedNodeIds = [];
+    ops.deletedEdgeIds = [];
+  }
   if (boardOps.isEmptyOps(ops)) {
     // 没有任何会被持久化的字段真的变了 → 不发请求。
     // 打开画板时 React Flow 会给每个节点发一次 dimensions（不进投影），旧实现在这里会平白
     // 整板重传一次——「别人正在编辑，我这边一打开就把他覆盖掉」的成因之一。
+    // 顺带收敛提示：不发请求即与基线一致，不该再留着「未同步」标记。
+    boardStore.markDirty(board.id, false);
     return 'ok';
   }
+  // 载入采用服务端内容会把本板的基线重置；若本次请求在那之后才返回，其回包属于旧纪元。
+  const epochAtSend = currentContentEpoch(board.id);
 
   const payload = JSON.stringify({
     // ADR-0017 协议分流：**必须显式给版本号**。旧客户端的整板 payload 与本客户端的
@@ -442,30 +306,19 @@ async function syncBoardToBackendInner(
     return 'conflict';
   }
 
-  // 409 冲突：服务端为准。本地未同步版另存「(冲突副本)」，原画板采用服务端当前内容。
+  // 409 仅作防御：v2 客户端走节点级合并，服务端**刻意不校验**画板级乐观锁（ADR-0017），
+  // 正常永远到不了这里。能到这里的只有旧协议客户端 / 服务端配置不一致，重发同样的内容
+  // 不会变好，故按确定性拒绝处理：提示刷新并停止重试——**绝不建冲突副本**（ADR-0025）。
   if (res.status === 409) {
-    // 卸载前的补传不做决策：这里要再发一次 GET 取服务端内容，而页面正在消失——
-    // keepalive 请求有体积上限，此刻也不该改本地状态。留给下次启动的正常链路。
-    if (keepalive) return 'fail';
+    if (keepalive) return 'fail'; // 页面正在消失：不改本地状态，留给下次启动的正常链路
     const body = await res.json().catch(() => null) as any;
-    const latest = typeof body?.latest_updated_at === 'string' && body.latest_updated_at
-      ? body.latest_updated_at
-      : undefined;
-    const serverBoard = await fetchBoardFromServer(board.id);
-    // force：服务端刚以 409 否决了本地基线，这一定是真冲突，不必再比对基线
-    const adopted = serverBoard ? adoptServerVersion(serverBoard, { force: true }) : null;
-    // 副本 id 由 adoptServerVersion 直接给出（force 路径必定尝试另存），失败时为 undefined
-    const copyId = adopted?.adopt ? adopted.conflictCopyId ?? readConflictCopyId(board.id) : null;
-    trackEvent('canvas_save_conflict', { adopted: adopted?.adopt ? 1 : 0 });
     dispatchConflictEvent(
       board.id,
-      body?.error || '画板已在其他窗口被修改',
-      latest,
-      'CANVAS_SAVE_CONFLICT',
-      copyId ?? undefined
+      body?.error || '画板已在其他窗口被修改，请刷新页面后重试',
+      undefined,
+      'CLIENT_OUTDATED'
     );
-    // 采用失败（多为取不到服务端内容）→ 保留本地脏状态交退避重试，副本按源画板复用不会堆积
-    return adopted?.adopt ? 'conflict' : 'fail';
+    return 'rejected';
   }
 
   // 400：payload 被服务端校验拒绝。**不是所有 400 都永久**——用户把内容改了可能就过了，
@@ -516,6 +369,10 @@ async function syncBoardToBackendInner(
 
   if (res.ok) {
     const body = await res.json().catch(() => null) as any;
+    // 载入已在本次请求之后采用过服务端内容：本次回包属于旧纪元，它的快照不能再推进基线
+    // （否则会把刚重置成服务端状态的基线打回旧值，之后所有差分都是错的）。
+    // 请求本身已发出无法撤回，但结果按「已作废」处理即可。
+    if (currentContentEpoch(board.id) !== epochAtSend) return 'ok';
     if (body?.canvas?.updatedAt) {
       board.serverUpdatedAt = body.canvas.updatedAt;
       persistServerUpdatedAt(board.id, body.canvas.updatedAt);
@@ -533,7 +390,6 @@ async function syncBoardToBackendInner(
     // 墓碑守卫拒绝的 id（删除胜出）：本次不算冲突，但要让观测看得见
     const ignored = Array.isArray(body?.canvas?.ignoredNodeIds) ? body.canvas.ignoredNodeIds.length : 0;
     if (ignored > 0) trackEvent('canvas_merge_ignored', { count: ignored });
-    rememberConflictCopy(board.id, null); // 保存成功：本次冲突了结，下次冲突另起一块副本
     return 'ok';
   }
   return 'fail';
@@ -704,17 +560,31 @@ export function updateBoardMetaLocally(
 }
 
 /**
- * Spec A2：画布加载走服务端（服务端为真源）。
- * GET /api/canvases/:id 成功 → 映射为 StoredBoard 并写本地缓存/索引；404（从未同步）或网络失败 → null（调用方回退本地）。
+ * 画布载入的唯一入口：**以服务端为准，取到就一律采用**（ADR-0025）。
+ *
+ * 三种结果：
+ * - GET 2xx → 覆盖本地内容（含未上行的本机改动，这是明确接受的代价）、把差分基线重置成
+ *   服务端状态、清未同步标记，并作废在途保存（`bumpContentEpoch`）。
+ * - GET 404 → 返回 null，调用方**保留本地**：服务端没有这一行（纯本地草稿 / 首次保存还没
+ *   落库的新板），本机就是唯一副本，不能拿「空」去覆盖。
+ * - 非 2xx / 网络失败 → 返回 null，调用方保留本地画面；拿不到服务端内容就无从采用。
  */
 export async function fetchBoardFromServer(boardId: string): Promise<StoredBoard | null> {
+  let branch: 'adopt' | 'notfound' | 'offline' = 'offline';
   try {
     const res = await fetch(`/api/canvases/${encodeURIComponent(boardId)}`, {
       credentials: 'include',
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      branch = res.status === 404 ? 'notfound' : 'offline';
+      trackEvent('canvas_load', { branch });
+      return null;
+    }
     const data = await res.json() as any;
-    if (!data?.id) return null;
+    if (!data?.id) {
+      trackEvent('canvas_load', { branch: 'offline' });
+      return null;
+    }
 
     const board: StoredBoard = {
       id: data.id,
@@ -725,24 +595,24 @@ export async function fetchBoardFromServer(boardId: string): Promise<StoredBoard
       edges: deduplicateEdges(data.edges || []),
       serverUpdatedAt: data.updatedAt,
     };
-    // 本地有未同步改动时不覆盖内容（本地版胜出，避免抹掉离线编辑）
-    if (!boardStore.isDirty(board.id)) {
-      try {
-        persistBoard(board, { dirty: false });
-        persistServerUpdatedAt(board.id, board.serverUpdatedAt!);
-        // 基线 = 服务端刚回的这份内容。**只在真的采用它时才推进**，这是一条不变式：
-        // 基线必须是「本地画面所继承的那份状态」。本地有未同步改动而此处不采用时，本地
-        // 画面继承的是更早那份基线，此刻把基线换成服务端版本，本设备缺的那些他端节点就会
-        // 在下次保存时被算成「本地删除」，反手把他人的内容删掉。
-        // （采用服务端版本的路径由 adoptServerVersion 推进基线。）
-        boardOps.writeBase(board.id, boardOps.baseFromServerPayload(data));
-      } catch (e) {
-        // 服务端内容已取到，只是离线副本写不下去（配额/隐私模式）：不阻断本次打开，但要上报
-        boardScope.reportPersistFailure('board-hydrate', e);
-      }
+    try {
+      persistBoard(board, { dirty: false });
+      persistServerUpdatedAt(board.id, board.serverUpdatedAt!);
+      // 基线重置为服务端刚回的这份内容。不变式：基线必须是「本地画面所继承的那份状态」——
+      // 本设备未知的他端节点此刻都进了本地，下次保存才不会把它们算成「本地删除」。
+      boardOps.writeBase(board.id, boardOps.baseFromServerPayload(data));
+      boardStore.markDirty(board.id, false);
+      // 作废在途保存：它带着采用之前的旧快照，回包会把基线打回旧值（见 contentEpoch 注释）。
+      bumpContentEpoch(board.id);
+    } catch (e) {
+      // 服务端内容已取到，只是离线副本写不下去（配额/隐私模式）：不阻断本次打开，但要上报
+      boardScope.reportPersistFailure('board-hydrate', e);
     }
+    branch = 'adopt';
+    trackEvent('canvas_load', { branch });
     return board;
   } catch (e) {
+    trackEvent('canvas_load', { branch });
     return null;
   }
 }

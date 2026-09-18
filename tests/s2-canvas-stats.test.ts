@@ -147,7 +147,7 @@ describe('S2 画布统计链路（服务端）', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 前端：canvas_save_conflict 埋点（stub window/localStorage/fetch，模式同 a6）
+// 前端：埋点（保存分流 + 载入分支；stub window/localStorage/fetch，模式同 a6）
 // ---------------------------------------------------------------------------
 const store = new Map<string, string>();
 const tracked: Array<{ name: string; data?: any }> = [];
@@ -191,23 +191,40 @@ let fetchScript: MockRes[] = [];
   };
 };
 
-const { syncBoardToBackend } = await import('../src/lib/storage.js');
+const { syncBoardToBackend, fetchBoardFromServer } = await import('../src/lib/storage.js');
 const boardStore = await import('../src/lib/board-store.js');
 
 function makeBoard(): any {
   return { id: 's2-fe-board', name: '统计', updatedAt: Date.now(), nodes: [], edges: [] };
 }
 
-describe('S2 canvas_save_conflict 前端埋点', () => {
+describe('S2 前端埋点（保存分流 + 载入分支）', () => {
   beforeEach(() => {
     tracked.length = 0;
     fetchScript = [];
     store.clear();
   });
 
-  test('409 收敛成功（采用服务端版）→ track("canvas_save_conflict", {adopted: 1})', async () => {
+  test('409 → rejected，且不再有 canvas_save_conflict 埋点（副本机制已删，ADR-0025）', async () => {
     fetchScript = [
       { status: 409, body: { error: 'conflict', latest_updated_at: '2026-09-09T00:00:00.000Z' } },
+    ];
+    assert.equal(await syncBoardToBackend(makeBoard()), 'rejected');
+    assert.equal(
+      tracked.filter((t) => t.name === 'canvas_save_conflict').length,
+      0,
+      '冲突副本机制已删除，该埋点不该再出现'
+    );
+  });
+
+  test('无冲突直连成功 → 不上报', async () => {
+    fetchScript = [{ status: 200, body: { canvas: { updatedAt: '2026-09-09T00:00:00.000Z' } } }];
+    assert.equal(await syncBoardToBackend(makeBoard()), 'ok');
+    assert.equal(tracked.filter((t) => t.name === 'canvas_save_conflict').length, 0);
+  });
+
+  test('载入取到服务端内容 → track("canvas_load", {branch: "adopt"})', async () => {
+    fetchScript = [
       {
         status: 200,
         body: {
@@ -220,27 +237,19 @@ describe('S2 canvas_save_conflict 前端埋点', () => {
         },
       },
     ];
-    assert.equal(await syncBoardToBackend(makeBoard()), 'conflict');
-    const hits = tracked.filter((t) => t.name === 'canvas_save_conflict');
+    const loaded = await fetchBoardFromServer('s2-fe-board');
+    assert.ok(loaded);
+    const hits = tracked.filter((t) => t.name === 'canvas_load');
     assert.equal(hits.length, 1);
-    assert.deepEqual(hits[0].data, { adopted: 1 });
+    assert.deepEqual(hits[0].data, { branch: 'adopt' });
   });
 
-  test('无冲突直连成功 → 不上报', async () => {
-    fetchScript = [{ status: 200, body: { canvas: { updatedAt: '2026-09-09T00:00:00.000Z' } } }];
-    assert.equal(await syncBoardToBackend(makeBoard()), 'ok');
-    assert.equal(tracked.filter((t) => t.name === 'canvas_save_conflict').length, 0);
-  });
-
-  test('409 但取服务端内容失败 → fail，埋点 adopted:0（待退避重试）', async () => {
-    fetchScript = [
-      { status: 409, body: { latest_updated_at: '2026-09-09T00:00:00.000Z' } },
-      { networkError: true },
-    ];
-    assert.equal(await syncBoardToBackend(makeBoard()), 'fail');
-    const hits = tracked.filter((t) => t.name === 'canvas_save_conflict');
+  test('载入 404 → track("canvas_load", {branch: "notfound"}) 且不写本地', async () => {
+    fetchScript = [{ status: 404, body: { error: 'not found' } }];
+    assert.equal(await fetchBoardFromServer('s2-fe-board'), null);
+    const hits = tracked.filter((t) => t.name === 'canvas_load');
     assert.equal(hits.length, 1);
-    assert.deepEqual(hits[0].data, { adopted: 0 });
+    assert.deepEqual(hits[0].data, { branch: 'notfound' });
   });
 
   test('保存成功：列表条目按服务端回包收敛，本地投影不顶替服务端真相', async () => {
@@ -269,9 +278,9 @@ describe('S2 canvas_save_conflict 前端埋点', () => {
     assert.equal(boardStore.isDirty('s2-fe-board'), false);
   });
 
-  test('keepalive 补传遇 409 → 不做冲突决策，不埋点', async () => {
+  test('keepalive 补传遇 409 → fail，不做决策、不埋点', async () => {
     fetchScript = [{ status: 409, body: { latest_updated_at: '2026-09-09T00:00:00.000Z' } }];
     assert.equal(await syncBoardToBackend(makeBoard(), { keepalive: true }), 'fail');
-    assert.equal(tracked.filter((t) => t.name === 'canvas_save_conflict').length, 0);
+    assert.equal(tracked.length, 0);
   });
 });

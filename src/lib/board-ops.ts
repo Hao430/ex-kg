@@ -17,6 +17,10 @@
  * 2. 从服务端取回画板 → 推进为服务端那份内容
  * 因此基线里的 id 必然是「本设备见过的」，不会凭空生成删除指令。
  *
+ * ⚠️ 唯一的例外是「基线缺失时补拉」：`seedBaseFromServer` 把基线设成**服务端当前全量**，
+ * 而本地 blob 可能落后于服务端——此时「基线里有、本地没有」的 id 全是他端新节点，按差分
+ * 会报成本地删除。故保存路径在走过补拉时**必须清空本次请求的墓碑**（storage.ts，ADR-0025）。
+ *
  * 投影（nodeHash/edgeHash）：
  * 哈希只覆盖**会被持久化的字段**，React Flow 的易变字段（selected / dragging / measured /
  * dimensions / positionAbsolute）一律不进哈希——否则挂载时每个节点发一次 dimensions 就等于
@@ -317,14 +321,6 @@ export function writeBase(boardId: string, base: BoardOpsBase): void {
     // 落盘失败只影响差分的精度（退化为整板新增），不影响本次保存，不必打断用户；
     // 但下一轮会重试写，所以留日志即可。
     console.warn('[board-ops] 基线落盘失败，本次退化为全量新增：', e);
-  }
-}
-
-export function clearBase(boardId: string): void {
-  try {
-    localStorage.removeItem(baseKey(boardId));
-  } catch {
-    /* ignore */
   }
 }
 

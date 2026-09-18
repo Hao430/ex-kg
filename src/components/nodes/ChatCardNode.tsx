@@ -34,6 +34,7 @@ import { useNodeActions } from '../../context/NodeActionsContext';
 import { useAuth } from '../../context/AuthContext';
 import { Tooltip } from '../ui/Tooltip';
 import { useRenderMonitor } from '../../hooks/useRenderMonitor';
+import { getChatDraft, setChatDraft, clearChatDraft } from '../../lib/chat-draft.js';
 
 // Preprocess LaTeX math syntax so remark-math and rehype-katex render it properly
 function preprocessLaTeX(content: string): string {
@@ -158,8 +159,10 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
   const nodeActions = useNodeActions();
   const { openAuthModal, openRechargeModal } = useAuth();
 
-  const [followUpInput, setFollowUpInput] = useState('');
-  const [initialInput, setInitialInput] = useState('');
+  // 输入的初值取自未提交草稿（sessionStorage，按节点 + 输入框种类）：
+  // 提问框在提交前只是组件 state，切走画板/重挂载就没了——用户体感是「我打的字消失了」。
+  const [followUpInput, setFollowUpInput] = useState(() => getChatDraft(id, 'followup'));
+  const [initialInput, setInitialInput] = useState(() => getChatDraft(id, 'initial'));
   const [copied, setCopied] = useState(false);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleValue, setTitleValue] = useState(nodeData.title || '思维节点');
@@ -312,6 +315,7 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
     };
     nodeActions?.followUpInquiry?.(id, query, options);
     setFollowUpInput('');
+    clearChatDraft(id, 'followup'); // 已提交：清掉草稿，别让下次打开误以为是新输入
   };
 
   // Initial question submit if node is an empty root
@@ -325,6 +329,7 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
     };
     nodeActions?.sendMessage?.(id, query, options);
     setInitialInput('');
+    clearChatDraft(id, 'initial');
   };
 
   const handleTitleSubmit = () => {
@@ -618,7 +623,10 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
                   <input
                     type="text"
                     value={initialInput}
-                    onChange={(e) => setInitialInput(e.target.value)}
+                    onChange={(e) => {
+                      setInitialInput(e.target.value);
+                      setChatDraft(id, 'initial', e.target.value);
+                    }}
                     placeholder="例如：量子纠错码（Surface Code）核心架构是什么？"
                     className="nodrag flex-1 px-3 py-2 text-xs border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/10 text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-800/80 placeholder:text-slate-400 dark:placeholder:text-slate-500"
                     autoFocus
@@ -834,7 +842,10 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
                 <input
                   type="text"
                   value={followUpInput}
-                  onChange={(e) => setFollowUpInput(e.target.value)}
+                  onChange={(e) => {
+                    setFollowUpInput(e.target.value);
+                    setChatDraft(id, 'followup', e.target.value);
+                  }}
                   placeholder={
                     nodeData.status === 'generating'
                       ? 'AI 正在深度思考与推演中，请稍候...'

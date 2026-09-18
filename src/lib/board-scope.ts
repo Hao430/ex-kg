@@ -38,6 +38,12 @@ export const LEGACY_BOARD_BLOB_PREFIX = 'rabbithole_board_';
 export const SERVER_TS_PREFIX = 'deepdive_board_server_ts_';
 /** 节点级合并基线小键前缀（全局；ADR-0017 差分用，随画板删除一并清理，见 purgeBoardBlobs） */
 export const BOARD_BASE_PREFIX = 'deepdive_board_base_';
+/**
+ * 已废弃的「冲突副本复用表」键前缀（`deepdive_conflict_copy_<源画板 id>`）。
+ * 冲突副本机制已由 ADR-0025 整条删除，历史用户浏览器里可能残留这些孤儿键——
+ * 在 bindScope 时清一次，见 `purgeLegacyConflictCopyKeys`。
+ */
+export const CONFLICT_COPY_KEY_PREFIX = 'deepdive_conflict_copy_';
 
 let activeScope: ScopeKey = 'guest';
 
@@ -121,9 +127,7 @@ let lastPersistFailureAt = 0;
 
 /**
  * 本地持久化失败上报：localStorage 写失败意味着**用户的编辑可能保不住**，必须让用户看见。
- * 旧实现只 console.error，UI 无感知——dirty 标记一旦没落盘，下次启动 `fetchBoardFromServer`
- * 的 `isDirty` 守卫就会失效，直接拿服务端内容覆盖本地，造成改动静默消失。
- * 按 scope 调用，1 分钟节流；非浏览器环境静默降级为日志。
+ * 旧实现只 console.error，UI 无感知。按 scope 调用，1 分钟节流；非浏览器环境静默降级为日志。
  */
 export function reportPersistFailure(where: string, err: unknown): void {
   console.error(`[persist] ${where} failed:`, err);
@@ -193,6 +197,34 @@ export function purgeBoardBlobs(boardId: string): void {
   } catch {
     /* ignore */
   }
+}
+
+/**
+ * 清理已废弃的「冲突副本复用表」孤儿键（ADR-0025 删除了该机制）。
+ * 幂等、按前缀扫描；localStorage 不可用或读键枚举失败时静默 no-op。
+ * @returns 实际删除的键数（供测试断言）
+ */
+export function purgeLegacyConflictCopyKeys(): number {
+  const store = ls();
+  if (!store) return 0;
+  let removed = 0;
+  try {
+    // 测试桩可能没有实现 length/key（只要能 get/set 即可满足其他用例），先判能力再枚举
+    if (typeof store.length !== 'number' || typeof store.key !== 'function') return 0;
+    // 先收集再删：边遍历边 removeItem 在部分实现下会跳键
+    const victims: string[] = [];
+    for (let i = 0; i < store.length; i++) {
+      const key = store.key(i);
+      if (key && key.startsWith(CONFLICT_COPY_KEY_PREFIX)) victims.push(key);
+    }
+    for (const key of victims) {
+      store.removeItem(key);
+      removed++;
+    }
+  } catch {
+    /* ignore */
+  }
+  return removed;
 }
 
 /**

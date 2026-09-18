@@ -102,6 +102,8 @@ interface TopbarProps {
   nodeCount?: number;
   /** 服务端同步状态指示（Spec A5） */
   syncState?: 'idle' | 'saved' | 'pending' | 'error' | 'conflict';
+  /** 网络不可达。与 syncState 分开：离线时同步状态可能还停在 idle/pending，但「存不下」是事实 */
+  offline?: boolean;
   /**
    * Spec Q1：本画板是否保留探索灵感节点（画板级状态，跟着画板走）。
    * 关闭是**有副作用**的：会清理本板占位且之后不再生成（确认框在画布侧），
@@ -143,6 +145,7 @@ export const Topbar: React.FC<TopbarProps> = ({
   onToggleTheme,
   nodeCount,
   syncState = 'idle',
+  offline = false,
   suggestionsEnabled = true,
   suggestionsToggleDisabled = false,
   onToggleSuggestions,
@@ -368,25 +371,28 @@ export const Topbar: React.FC<TopbarProps> = ({
 
         <div className="h-4 w-[1px] bg-slate-200 dark:bg-slate-800" />
 
-        {/* Sync Status Indicator (Spec A5)：云图标态 —— 斜杠云=本地模式，灰云=待同步，绿云=已同步，红云=失败/冲突 */}
+        {/* Sync Status Indicator (Spec A5)：云图标态 —— 斜杠云=本地模式，灰云=待同步，绿云=已同步，红云=失败/冲突/离线 */}
         <Tooltip
           content={
             !user ? '本地画板，未开启云端同步' :
-            syncState === 'pending' ? '待同步（离线或稍后自动补传）' :
-            syncState === 'error' ? '同步失败，已停止自动重试' :
-            syncState === 'conflict' ? '版本冲突：画板已在其他窗口被修改' :
+            offline ? '当前无网络，改动暂时无法保存到云端' :
+            syncState === 'pending' ? '正在保存到云端…' :
+            syncState === 'error' ? '有改动尚未保存到云端（已停止自动重试）' :
+            syncState === 'conflict' ? '有改动尚未保存到云端（画板已在其他窗口被修改）' :
             '已同步到云端'
           }
           side="bottom"
         >
           <span
             data-testid="sync-indicator"
-            aria-label={`同步状态：${!user ? 'local' : syncState}`}
+            aria-label={`同步状态：${!user ? 'local' : offline ? 'offline' : syncState}`}
             className={`flex items-center justify-center w-7 h-7 rounded-lg cursor-default ${
-              !user || syncState === 'pending'
+              !user
                 ? 'text-slate-400 dark:text-slate-500'
-                : syncState === 'error' || syncState === 'conflict'
+                : offline || syncState === 'error' || syncState === 'conflict'
                 ? 'text-red-500'
+                : syncState === 'pending'
+                ? 'text-slate-400 dark:text-slate-500'
                 : 'text-emerald-500'
             }`}
           >

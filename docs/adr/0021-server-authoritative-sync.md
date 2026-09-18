@@ -5,6 +5,10 @@
 - **Deciders**: 枝想架构组
 - **Tags**: sync, persistence, offline, canvas
 
+> **Amended by [ADR-0025](./0025-server-wins-on-load.md)（2026-09-18）**：本 ADR 的主体
+> （服务端权威 + 本地降级为未确认缓冲）仍然有效，但**载入路径的本地保护与「(冲突副本)」安全网
+> 已整条移除**——载入一律以服务端为准。下文涉及冲突副本的段落均已加补记说明。
+
 > **补记说明（2026-09-14）**：本决策在 2026-09-11 的对话中拍板、2026-09-12 落地实现
 > （阶段 1–6），但**当时没有写成 ADR**——只散落在 `CODEBUDDY.md` 的实现描述与技术债
 > `#0082` 里。结果是 2026-09-14 排查线上事故时，连「上次到底定了什么」都要翻会话记录
@@ -96,11 +100,15 @@
 - 换了一组新复杂度：连接状态 UI、请求重排与幂等、跨设备可见性；
 - **冲突不再自愈，需要一条安全网**：本地未同步版会被另存为「(冲突副本)」画板
   （`src/lib/storage.ts` 的 `preserveLocalAsConflictCopy`）。安全网本身也是要维护的代码。
+  - 补记（2026-09-18，ADR-0025）：**该安全网已删除**。载入改为以服务端为准（本机未上行内容
+    直接丢弃），不再有「本地版另存副本」这一步；理由见 ADR-0025「Considered Options」。
 
 ### Follow-up / Mitigation
 
 - **冲突副本**：409 时先另存副本再采用服务端版，用户的改动不丢；同轮冲突复用同一块副本，
   源画板保存成功后清空复用表；
+  - 补记（2026-09-18，ADR-0025）：**已作废**。冲突副本子系统整条删除，409 改为纯防御
+    （`CLIENT_OUTDATED` → 停止重试并提示刷新）；载入采用服务端时本机未上行内容按设计丢弃；
 - **SSE 而非 WebSocket**（若将来需要「多设备看到最新」）：单向推一个 `board-updated`
   事件、前端复用既有 stale-while-revalidate 重拉即可——无状态、单向、nginx 好配、
   部署断线自动重连。多人同屏才需要 socket + CRDT，那是另一个立项；
@@ -128,6 +136,10 @@
 断言的正是这个 bug——`deepEqual(副本.nodes, [LOCAL_NODE])` 要求 id 相同，等于把 bug
 写成了预期。测试写成什么样，bug 就长什么样。
 
+> 补记（2026-09-18，ADR-0025）：这次修复只救回了副本的**可用性**（能上传），没有触碰副本的
+> **触发条件**（假 `dirty` + 整板版本号比对）。触发条件随后继续制造「本机什么都没改也冒出
+> 副本」与「异节点并发编辑却复制整块板」，直到 ADR-0025 把整条机制删除。
+
 ### 残留风险（明确接受）
 
 1. **无网不可用**：已接受，但**尚未在 UI 口径上体现**——服务端不可用时用户看到的仍是
@@ -137,6 +149,8 @@
 3. **同节点并发编辑**仍是最后到达者胜——影响面已缩到节点粒度，见 ADR-0017 残留风险；
 4. **跨设备可见性**未做（需 SSE 或 focus 时比对版本），意味着「另一台改了、我这台还
    显示旧内容」仍会发生——但**不会再丢数据**：那台设备保存时 409 会把它引到副本路径。
+   - 补记（2026-09-18，ADR-0025）：副本路径已删除，改为「载入即采用服务端」——仍然不会
+     丢服务端的数据；本机那份未上行内容则按设计丢弃（见 ADR-0025 Negative Consequences）。
 
 ### 明确不做
 
@@ -167,14 +181,17 @@
 
 ## References
 
-- 代码：`src/lib/storage.ts`（`syncBoardToBackend` 的 409/400 分流与 `preserveLocalAsConflictCopy`）、
-  `src/lib/board-store.ts`（服务端快照 + 未确认缓冲）、`src/lib/board-ops.ts`（差分基线与投影）、
-  `src/lib/sync-queue.ts`（`SyncOutcome` 与慢速自愈）、`server/repositories/canvas.repository.ts`（`mergeWriteCanvas`）
-- 测试：`tests/a6-conflict-self-heal.test.ts`（冲突收敛与副本不变量）、
+- 代码：`src/lib/storage.ts`（`syncBoardToBackend` 的 409/400 分流；`preserveLocalAsConflictCopy`
+  **已由 ADR-0025 删除**）、`src/lib/board-store.ts`（服务端快照 + 未确认缓冲）、
+  `src/lib/board-ops.ts`（差分基线与投影）、`src/lib/sync-queue.ts`（`SyncOutcome` 与慢速自愈）、
+  `server/repositories/canvas.repository.ts`（`mergeWriteCanvas`）
+- 测试：`tests/a6-conflict-self-heal.test.ts`（冲突收敛与副本不变量；副本部分**已由 ADR-0025 改写**）、
   `tests/a5-sync-queue.test.ts`（`rejected` vs `fail` 的分水岭）、
-  `tests/h2-canvas-merge.test.ts`（跨板拒收）、`tests/m2-clone-remap.test.ts`（id 重映射）
+  `tests/h2-canvas-merge.test.ts`（跨板拒收）、`tests/m2-clone-remap.test.ts`（id 重映射）、
+  `tests/reconcile-server-wins.test.ts`（ADR-0025 新增：载入采用与在途作废）
 - 相关决策：`docs/adr/0008-sync-state-machine.md`（本 ADR 修订其冲突裁决方向）、
   `docs/adr/0017-node-level-merge-and-tombstones.md`（本 ADR 的前置条件）、
   `docs/adr/0002-dual-mode-persistence.md`（双模持久化，本 ADR 收窄其客户端侧语义）、
-  `docs/adr/0018-default-board-private.md`（默认板私有化，阶段 5a）
+  `docs/adr/0018-default-board-private.md`（默认板私有化，阶段 5a）、
+  `docs/adr/0025-server-wins-on-load.md`（修订本 ADR：删除载入保护与冲突副本）
 - 文档：`CODEBUDDY.md` 第 79 条「画布列表真相」、`docs/技术债清单.md` `#0082`

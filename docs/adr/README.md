@@ -55,7 +55,9 @@
 | :--- | :--- | :--- | :--- | :--- |
 | [0008](./0008-sync-state-machine.md) | 同步状态机 + 乐观锁 | Accepted | 2026-09-09 | `pending/saved/conflict/error` 四态，指数退避重试，冲突不重试；画布保存的冲突面已由 ADR-0017 收窄到节点（2026-09-12 修订） |
 | [0017](./0017-node-level-merge-and-tombstones.md) | 节点级合并与墓碑语义 | Accepted | 2026-09-12 | `protocolVersion:2` 差分协议：客户端只发本次改动，服务端节点级 upsert（"没带 = 不动"），删除即 `deleted_at` 墓碑且稳定胜出；`SAVE_LEGACY_REPLACE_ENABLED` 熔断旧整板路径，墓碑按 `CANVAS_TOMBSTONE_RETENTION_DAYS`（默认 30）回收 |
-| [0021](./0021-server-authoritative-sync.md) | 采用服务端权威同步，本地降级为未确认缓冲 | Accepted | 2026-09-11 | 409 不再「本地胜出」（阶段 1）→ 节点级合并（ADR-0017，前置条件）→ 本地降级为未确认缓冲；长连接只解决「服务端主动推」不解决冲突，明确不做；**无网不可编辑是已接受的产品代价**；2026-09-14 补记——决策当时未写成 ADR，导致排查线上事故时无从查证 |
+| [0021](./0021-server-authoritative-sync.md) | 采用服务端权威同步，本地降级为未确认缓冲 | Accepted（Amended by [0025](./0025-server-wins-on-load.md)） | 2026-09-11 | 409 不再「本地胜出」（阶段 1）→ 节点级合并（ADR-0017，前置条件）→ 本地降级为未确认缓冲；长连接只解决「服务端主动推」不解决冲突，明确不做；**无网不可编辑是已接受的产品代价**；2026-09-14 补记——决策当时未写成 ADR，导致排查线上事故时无从查证。**2026-09-18 由 ADR-0025 修订：载入保护与冲突副本安全网已移除** |
+| [0025](./0025-server-wins-on-load.md) | 载入以服务端为准，删除冲突副本子系统 | Accepted | 2026-09-18 | 保存路径早已是节点级合并，载入路径却用「`dirty` 布尔 + 整板 `serverUpdatedAt`」裁决，异节点并发编辑会复制一整块「(冲突副本)」；`dirty` 双向漂移（打开即脏 / 飞行期编辑被清空）与缺基线误删他端节点同源。收敛为：**差分是唯一未同步判据，载入取到服务端即采用**（404/断网保留本地）、副本机制整条删除、409 仅作防御、在途保存回包作废（`contentEpoch`）、缺基线不发墓碑；服务端零改动。代价：本机未上行内容在载入时静默丢弃（ADR-0021 无网代价的彻底化；UI 口径已补，技术债 #0096 Done） |
+| [0026](./0026-single-writer-tab-lock.md) | 同一浏览器多标签采用单写者编辑锁 | Accepted | 2026-09-18 | 本地存储（blob/版本小键/差分基线/队列）**共享**而两标签内存状态**独立** → 后写者覆盖 blob、且按被推进的基线把自己没见过的节点判成「本地删除」并在云端真删。选型：`BroadcastChannel` 单写者锁（心跳 2s / 租约 5s / tabId 字典序决胜 / force 接管），非持有标签**不渲染编辑画布**只显示闸门；接管前**必须先按服务端对齐再拿锁**；无 `BroadcastChannel` 时退化为无锁。代价：第二个标签不能编辑也不能查看（另做只读渲染属 Follow-up） |
 
 ## 已废弃 / 取代 (Deprecated / Superseded)
 
@@ -75,6 +77,6 @@
 - **持久化 / 数据**：[0002](./0002-dual-mode-persistence.md) · [0004](./0004-strict-tenant-ownership.md) · [0005](./0005-soft-delete-with-30d-cooldown.md) · [0012](./0012-default-canvas-no-delete.md) · [0013](./0013-frontend-node-id-truncation.md) · [0015](./0015-canvas-library-single-level-folders.md) · [0016](./0016-admin-strict-canvas-tenancy.md) · [0019](./0019-db-role-separation-and-rls.md) · [0022](./0022-wechat-web-login.md) · [0023](./0023-account-binding.md)
 - **AI 集成**：[0003](./0003-multi-model-failover.md) · [0009](./0009-150-node-subtree-split.md)
 - **业务与安全**：[0007](./0007-independent-rate-limiters.md) · [0010](./0010-scrypt-hardening.md) · [0011](./0011-email-verification-code-first.md) · [0014](./0014-alipay-page-pay.md) · [0020](./0020-same-origin-guard.md) · [0022](./0022-wechat-web-login.md) · [0023](./0023-account-binding.md) · [0024](./0024-outbound-request-guard.md)
-- **同步与并发**：[0008](./0008-sync-state-machine.md) · [0017](./0017-node-level-merge-and-tombstones.md) · [0021](./0021-server-authoritative-sync.md)
+- **同步与并发**：[0008](./0008-sync-state-machine.md) · [0017](./0017-node-level-merge-and-tombstones.md) · [0021](./0021-server-authoritative-sync.md) · [0025](./0025-server-wins-on-load.md) · [0026](./0026-single-writer-tab-lock.md)
 
 > 索引本身由 ADR 维护者更新；新增 ADR 时把行加到对应主题段，并按编号升序排列。

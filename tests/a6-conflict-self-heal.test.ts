@@ -1,21 +1,17 @@
 /**
- * Spec A6 — 画布保存版本冲突收敛（stub localStorage/fetch，模式同 a2）
+ * Spec A6 — 保存失败分流（确定性拒绝 vs 可重试）与跨板 id 自愈（stub localStorage/fetch，模式同 a2）
  *
- * 2026-09-11 语义反转：409 **不再「本地版胜出」**。
- * 旧行为是拿响应的 latest_updated_at 写回版本号、再用同一份本地内容重发——版本号一刷新
- * 服务端就收下，本地版照样覆盖云端。叠加服务端的整板替换，结果就是「最后同步的设备赢」
- * 而不是「最后编辑的赢」：挂机两小时的设备随手改一个字，就能抹掉另一台设备这期间的改动。
- *
- * 新行为：服务端为准。
- * - 本地未同步版另存为一块「(冲突副本)」画板（用户的改动不丢）
- * - 原画板采用服务端当前内容、基线对齐（不再尝试用本地内容覆盖）
- * - 同一轮冲突复用同一块副本；保存成功后清空复用表，下一次冲突才另起一块
+ * 语义演进：
+ * - 2026-09-11：409 不再「本地版胜出」。
+ * - 2026-09-18（ADR-0025）：**冲突副本机制整条删除**，载入一律以服务端为准。409 只剩防御意义——
+ *   v2 客户端走节点级合并，服务端刻意不校验画板级乐观锁（ADR-0017），正常永远到不了这里；
+ *   能到这里的只有旧协议客户端/服务端配置不一致，重发不会变好，故按确定性拒绝处理。
  *
  * 覆盖：
- * - 409 → 另存副本 + 采用服务端版，仅 1 次 save（不再重发）、1 次取服务端内容
- * - 取服务端内容失败 → fail，本地内容与脏状态原样保留（未采用就不建副本，避免制造重复）
- * - keepalive（页面卸载补传）不做冲突决策：不建副本、不发额外 GET
- * - adoptServerVersion 区分「本地领先（等上传）」与「真冲突（采用服务端版）」
+ * - 409 → rejected：不重发、不发额外 GET、**不建任何副本**、提示用户刷新
+ * - keepalive（页面卸载补传）遇 409 → fail，不做决策
+ * - 400 结构性拒绝（NODE_PARENT_CYCLE）→ rejected 且告知用户；其余 400 → fail 退避
+ * - 400 NODE_CANVAS_MISMATCH → 就地重映射本板 id 后重试一次（存量坏数据与跨板搬节点的唯一出路）
  * - fetchBoardFromServer 成功同步小键 / persistBoard 兜底注入（行为不变）
  */
 import { test, describe, beforeEach, afterEach } from 'node:test';
@@ -62,10 +58,7 @@ interface FetchCall {
 }
 
 let fetchCalls: FetchCall[] = [];
-/**
- * 按「方法 + 画板 id」分流出队：冲突副本的后台上传会并发跑，用单一队列会吃掉
- * 主流程脚本，断言随之失真。未脚本化的请求给一个安全默认值。
- */
+/** 按「方法 + 画板 id」分流出队：未脚本化的请求给一个安全默认值 */
 let saveScripts = new Map<string, MockRes[]>();
 let getScripts = new Map<string, MockRes[]>();
 
@@ -98,7 +91,7 @@ function scriptGet(boardId: string, res: MockRes[]): void {
   } as any;
 };
 
-const { syncBoardToBackend, fetchBoardFromServer, saveBoard, loadBoard, loadBoardList, adoptServerVersion } =
+const { syncBoardToBackend, fetchBoardFromServer, saveBoard, loadBoard, loadBoardList } =
   await import('../src/lib/storage.ts');
 const { flush, resetForTest, setBackoffBaseForTest } = await import('../src/lib/sync-queue.ts');
 const boardStore = await import('../src/lib/board-store.js');
@@ -124,7 +117,6 @@ const SERVER_NODE = {
   position: { x: 10, y: 0 },
   data: { question: '他端写入的问题' },
 };
-const CONFLICT_SUFFIX = ' (冲突副本)';
 
 const makeBoard = (serverUpdatedAt?: string, nodes: any[] = [], edges: any[] = []) => ({
   id: BOARD_ID,
@@ -159,21 +151,11 @@ function seedDirtyLocal(base: string, nodes: any[] = [], edges: any[] = []): voi
   );
 }
 
-const conflictCopies = () => loadBoardList().filter((b) => b.name.endsWith(CONFLICT_SUFFIX));
-
-/**
- * 副本断言：**内容保真、id 全新**。
- *
- * 曾经这里断言的是 `deepEqual(副本.nodes, [LOCAL_NODE])`——即「副本节点 id 与源相同」，
- * 等于把这个 bug 写成了预期。服务端 `nodes.id` 是全局主键，跨板搬节点会被
- * `mergeWriteCanvas` 拒成 400 `NODE_CANVAS_MISMATCH`，副本于是**永远传不上去**，
- * 只活在本机 localStorage（2026-09-14 线上事故）。断言必须钉住「id 已重映射」。
- */
-function assertRemappedCopy(actual: any[] | undefined, source: any[], label = '副本'): void {
+/** 断言：节点内容保真、id 已重映射（跨板 id 冲突时唯一的出路就是换一套标识） */
+function assertRemappedNodes(actual: any[] | undefined, source: any[], label = '本板'): void {
   assert.ok(actual, `${label}必须落盘`);
   assert.equal(actual!.length, source.length, `${label}节点数量保真`);
   assert.equal(new Set(actual!.map((n) => n.id)).size, actual!.length, `${label}内节点 id 唯一`);
-  // 与源画板**零 id 交集**——这正是服务端跨板拦截的判定条件
   const sourceIds = new Set(source.map((n) => n.id));
   for (const got of actual!) {
     assert.ok(!sourceIds.has(got.id), `${label}节点 id「${got.id}」与源画板相同，会让整次保存被拒`);
@@ -192,8 +174,9 @@ function assertRemappedCopy(actual: any[] | undefined, source: any[], label = '�
 }
 const savesFor = (id: string) =>
   fetchCalls.filter((c) => c.method === 'POST' && c.url.endsWith(`/${id}/save`));
+const copyNamedBoards = () => loadBoardList().filter((b) => b.name.includes('冲突副本'));
 
-describe('A6 版本冲突收敛（服务端为准）', () => {
+describe('A6 保存失败分流与跨板 id 自愈', () => {
   beforeEach(() => {
     store.clear();
     dispatchedEvents.length = 0;
@@ -210,7 +193,7 @@ describe('A6 版本冲突收敛（服务端为准）', () => {
     setBackoffBaseForTest(2000);
   });
 
-  test('409 → 本地版另存「(冲突副本)」、原画板采用服务端内容，仅 1 次 save', async () => {
+  test('409 → rejected：不重发、不发额外 GET、不建任何副本', async () => {
     seedDirtyLocal(LOCAL_BASE, [LOCAL_NODE]);
     scriptSave(BOARD_ID, [
       { status: 409, body: { error: '画板已被其他窗口修改', latest_updated_at: SERVER_AHEAD } },
@@ -219,165 +202,49 @@ describe('A6 版本冲突收敛（服务端为准）', () => {
 
     const outcome = await syncBoardToBackend(makeBoard(LOCAL_BASE, [LOCAL_NODE]) as any);
 
-    assert.equal(outcome, 'conflict');
-    // 旧行为是刷新版本号后原样重发（本地版胜出）；现在一次都不重发
+    // 重发同一份内容不会变好（v2 合并路径本就不该 409），故按确定性拒绝：停止重试并告知用户
+    assert.equal(outcome, 'rejected');
     assert.equal(savesFor(BOARD_ID).length, 1, '409 后不得再重发本地内容');
     assert.equal(
       fetchCalls.filter((c) => c.method === 'GET').length,
-      1,
-      '应采用服务端内容（一次 GET），而不是把本地内容再推上去'
+      0,
+      '不再为「采用服务端版」额外发 GET——提示用户刷新即可（刷新即走载入采用路径）'
     );
 
-    // 副本：内容 = 本地未同步版
-    const copies = conflictCopies();
-    assert.equal(copies.length, 1, '本地未同步版必须另存副本，不得随采用服务端版一起消失');
-    const copyId = copies[0].id;
-    assertRemappedCopy(loadBoard(copyId)?.nodes, [LOCAL_NODE]);
+    // 本地内容原样保留（没采用就什么都不该动），也不得凭空多出一块画板
+    assert.deepEqual(loadBoard(BOARD_ID)?.nodes, [LOCAL_NODE], '本地内容不得被清掉');
+    assert.equal(loadBoardList().length, 1, '不得产生任何新画板');
+    assert.equal(copyNamedBoards().length, 0, '冲突副本机制已删除（ADR-0025）');
 
-    // 原画板：内容 = 服务端版，基线对齐
-    const original = loadBoard(BOARD_ID);
-    assert.deepEqual(original?.nodes, [SERVER_NODE]);
-    assert.equal(original?.serverUpdatedAt, SERVER_AHEAD);
-    assert.equal(store.get(SMALL_KEY), SERVER_AHEAD);
-    assert.equal(boardStore.isDirty(BOARD_ID), false, '采用服务端版后不再是未同步状态');
-
-    // 事件带副本 id：App 据此提示用户并刷新当前画板画面
     assert.equal(dispatchedEvents.length, 1);
     assert.equal(dispatchedEvents[0].type, 'deepdive:canvas-save-conflict');
-    assert.equal(dispatchedEvents[0].detail.conflictCopyId, copyId);
-
-    // 副本已入队并会被上传（flush 手动驱动，避免依赖 0ms 定时器）
-    await flush();
-    assert.ok(savesFor(copyId).length >= 1, '副本必须入队上传，否则改动只活在本地');
+    assert.equal(dispatchedEvents[0].detail.code, 'CLIENT_OUTDATED');
+    assert.equal(dispatchedEvents[0].detail.conflictCopyId, undefined, '事件不得再带副本 id');
   });
 
-  test('同一轮冲突复用同一块副本，不重复堆积', async () => {
-    seedDirtyLocal(LOCAL_BASE, [LOCAL_NODE]);
-    scriptSave(BOARD_ID, [
-      { status: 409, body: { latest_updated_at: SERVER_AHEAD } },
-      { status: 409, body: { latest_updated_at: SERVER_AHEAD } },
-    ]);
-    scriptGet(BOARD_ID, [
-      { status: 200, body: serverBoardPayload(SERVER_AHEAD, [SERVER_NODE]) },
-      { status: 200, body: serverBoardPayload(SERVER_AHEAD, [SERVER_NODE]) },
-    ]);
-
-    await syncBoardToBackend(makeBoard(LOCAL_BASE, [LOCAL_NODE]) as any);
-    // 模拟上一轮没收敛干净（例如取服务端内容时断网）：本地仍是脏的旧内容
-    seedDirtyLocal(LOCAL_BASE, [LOCAL_NODE]);
-    await syncBoardToBackend(makeBoard(LOCAL_BASE, [LOCAL_NODE]) as any);
-
-    assert.equal(conflictCopies().length, 1, '未了结的冲突必须复用副本，不得每次重试都新建一块画板');
-  });
-
-  test('副本节点/边 id 全部重映射、引用一并改写（服务端跨板拦截的前置条件）', async () => {
-    const root = { id: 'n-root', type: 'chat', position: { x: 0, y: 0 }, data: { question: '根' } };
-    const child = {
-      id: 'n-child',
-      type: 'chat',
-      position: { x: 0, y: 120 },
-      data: { question: '子', parentId: 'n-root' },
-    };
-    const edge = { id: 'e-1', source: 'n-root', target: 'n-child' };
-    seedDirtyLocal(LOCAL_BASE, [root, child], [edge]);
-    scriptSave(BOARD_ID, [{ status: 409, body: { latest_updated_at: SERVER_AHEAD } }]);
-    scriptGet(BOARD_ID, [{ status: 200, body: serverBoardPayload(SERVER_AHEAD, [SERVER_NODE]) }]);
-
-    await syncBoardToBackend(makeBoard(LOCAL_BASE, [root, child], [edge]) as any);
-
-    const copy = loadBoard(conflictCopies()[0].id)!;
-    assertRemappedCopy(copy.nodes, [root, child]);
-
-    // 边同样要重映射：id 换了，端点也必须指向副本内新节点——留着旧 id 一样会被跨板拦截拒收
-    assert.equal(copy.edges.length, 1, '边不得被丢弃');
-    assert.notEqual(copy.edges[0].id, 'e-1', '边 id 必须重映射');
-    const copyIds = new Set(copy.nodes.map((n) => n.id));
-    assert.ok(copyIds.has(copy.edges[0].source), '边起点必须指向副本内的新节点 id');
-    assert.ok(copyIds.has(copy.edges[0].target), '边终点必须指向副本内的新节点 id');
-  });
-
-  test('同一轮冲突重拍副本：内容刷新，但节点 id 保持不变（重拍幂等）', async () => {
-    seedDirtyLocal(LOCAL_BASE, [LOCAL_NODE]);
-    scriptSave(BOARD_ID, [
-      { status: 409, body: { latest_updated_at: SERVER_AHEAD } },
-      { status: 409, body: { latest_updated_at: SERVER_AHEAD } },
-    ]);
-    scriptGet(BOARD_ID, [
-      { status: 200, body: serverBoardPayload(SERVER_AHEAD, [SERVER_NODE]) },
-      { status: 200, body: serverBoardPayload(SERVER_AHEAD, [SERVER_NODE]) },
-    ]);
-
-    await syncBoardToBackend(makeBoard(LOCAL_BASE, [LOCAL_NODE]) as any);
-    const copyId = conflictCopies()[0].id;
-    // 先钉住「已重映射」——否则本用例对**修复前**的代码也是绿的（旧代码压根不换 id，
-    // 天然「稳定」），它就只防得住「每轮都换新 id」那个朴素修法，抓不住原 bug
-    assertRemappedCopy(loadBoard(copyId)!.nodes, [LOCAL_NODE]);
-    const firstIds = loadBoard(copyId)!.nodes.map((n) => n.id);
-
-    // 上一轮没收敛干净（源画板仍是脏的旧内容）→ 重拍同一块副本
-    seedDirtyLocal(LOCAL_BASE, [LOCAL_NODE]);
-    await syncBoardToBackend(makeBoard(LOCAL_BASE, [LOCAL_NODE]) as any);
-
-    assert.deepEqual(
-      loadBoard(copyId)!.nodes.map((n) => n.id),
-      firstIds,
-      '重拍必须复用同一批 id：否则上一拍已上行的节点在服务端「没带 = 不动」地留成孤儿，' +
-        '整块副本被全量墓碑 + 重插一遍'
-    );
-  });
-
-  test('保存成功后清空复用表：下一次冲突另起一块副本', async () => {
-    seedDirtyLocal(LOCAL_BASE, [LOCAL_NODE]);
-    scriptSave(BOARD_ID, [
-      { status: 409, body: { latest_updated_at: SERVER_AHEAD } },
-      { status: 200, body: { canvas: { updatedAt: '2026-09-06T11:00:00.000Z' } } },
-      { status: 409, body: { latest_updated_at: '2026-09-06T11:30:00.000Z' } },
-    ]);
-    scriptGet(BOARD_ID, [
-      { status: 200, body: serverBoardPayload(SERVER_AHEAD, [SERVER_NODE]) },
-      { status: 200, body: serverBoardPayload('2026-09-06T11:30:00.000Z', [SERVER_NODE]) },
-    ]);
-
-    await syncBoardToBackend(makeBoard(LOCAL_BASE, [LOCAL_NODE]) as any); // 冲突 #1
-    assert.equal(conflictCopies().length, 1);
-
-    // 中间一次正常保存 → 本轮冲突了结
-    seedDirtyLocal(SERVER_AHEAD, [SERVER_NODE]);
-    const ok = await syncBoardToBackend(makeBoard(SERVER_AHEAD, [SERVER_NODE]) as any);
-    assert.equal(ok, 'ok');
-
-    seedDirtyLocal('2026-09-06T11:00:00.000Z', [LOCAL_NODE]);
-    await syncBoardToBackend(makeBoard('2026-09-06T11:00:00.000Z', [LOCAL_NODE]) as any); // 冲突 #2
-
-    assert.equal(conflictCopies().length, 2, '了结后的新冲突应另起副本，别把两次冲突的改动混在一块里');
-  });
-
-  test('取服务端内容失败 → fail，本地内容与脏状态原样保留（未采用就不建副本）', async () => {
-    seedDirtyLocal(LOCAL_BASE, [LOCAL_NODE]);
-    scriptSave(BOARD_ID, [{ status: 409, body: { latest_updated_at: SERVER_AHEAD } }]);
-    scriptGet(BOARD_ID, [{ status: 0, networkError: true }]);
-
-    const outcome = await syncBoardToBackend(makeBoard(LOCAL_BASE, [LOCAL_NODE]) as any);
-
-    assert.equal(outcome, 'fail', '取不到服务端内容应交退避重试，而不是当成已收敛');
-    assert.deepEqual(loadBoard(BOARD_ID)?.nodes, [LOCAL_NODE], '本地内容不得被清掉');
-    assert.equal(boardStore.isDirty(BOARD_ID), true, '仍为未同步状态，等退避重试');
-    assert.equal(
-      conflictCopies().length,
-      0,
-      '没采用服务端版就不该建副本——本地内容还在原画板里，复制一份只会制造重复'
-    );
-  });
-
-  test('409 缺 latest_updated_at 不影响收敛（仍另存副本 + 采用服务端版）', async () => {
+  test('409 缺 latest_updated_at 也按 rejected 处理（分流与回传字段无关）', async () => {
     seedDirtyLocal(LOCAL_BASE, [LOCAL_NODE]);
     scriptSave(BOARD_ID, [{ status: 409, body: { error: '画板已被其他窗口修改' } }]);
-    scriptGet(BOARD_ID, [{ status: 200, body: serverBoardPayload(SERVER_AHEAD, [SERVER_NODE]) }]);
 
     const outcome = await syncBoardToBackend(makeBoard(LOCAL_BASE, [LOCAL_NODE]) as any);
-    assert.equal(outcome, 'conflict');
+
+    assert.equal(outcome, 'rejected');
     assert.equal(dispatchedEvents[0].detail.latestUpdatedAt, undefined);
-    assert.ok(dispatchedEvents[0].detail.conflictCopyId, '收敛与 latest 是否回传无关');
+    assert.equal(copyNamedBoards().length, 0);
+  });
+
+  test('keepalive 补传遇 409：不做决策，不发 GET、不建副本、不弹提示', async () => {
+    seedDirtyLocal(LOCAL_BASE, [LOCAL_NODE]);
+    scriptSave(BOARD_ID, [{ status: 409, body: { latest_updated_at: SERVER_AHEAD } }]);
+
+    const outcome = await syncBoardToBackend(makeBoard(LOCAL_BASE, [LOCAL_NODE]) as any, {
+      keepalive: true,
+    });
+
+    assert.equal(outcome, 'fail');
+    assert.equal(fetchCalls.filter((c) => c.method === 'GET').length, 0, '页面正在消失，不该再发 GET');
+    assert.equal(copyNamedBoards().length, 0);
+    assert.equal(dispatchedEvents.length, 0);
   });
 
   // 用 NODE_PARENT_CYCLE 而非 NODE_CANVAS_MISMATCH：后者现在会先走自愈重映射（见下两例），
@@ -418,7 +285,7 @@ describe('A6 版本冲突收敛（服务端为准）', () => {
 
     const outcome = await syncBoardToBackend(makeBoard(LOCAL_BASE, [LOCAL_NODE]) as any);
 
-    assert.equal(outcome, 'ok', '重映射后重试应当通过——这是给已困在本机的存量坏副本准备的出路');
+    assert.equal(outcome, 'ok', '重映射后重试应当通过——这是跨板 id 冲突与存量坏数据的唯一出路');
     const saves = savesFor(BOARD_ID);
     assert.equal(saves.length, 2, '只重试一次');
 
@@ -428,7 +295,7 @@ describe('A6 版本冲突收敛（服务端为准）', () => {
     assert.notEqual(sentIds[0], LOCAL_NODE.id, '重试必须带新 id，否则再撞一次');
 
     // 本地 blob 同步改写——UI 重新播种读的就是它
-    assertRemappedCopy(loadBoard(BOARD_ID)?.nodes, [LOCAL_NODE]);
+    assertRemappedNodes(loadBoard(BOARD_ID)?.nodes, [LOCAL_NODE]);
 
     // 必须通知 UI 重新播种：内存里的画布还攥着旧 id，不重播种下次防抖保存会打回来
     const remapEvents = dispatchedEvents.filter((e) => e.type === 'deepdive:board-ids-remapped');
@@ -481,100 +348,48 @@ describe('A6 版本冲突收敛（服务端为准）', () => {
     );
   });
 
-  test('keepalive 补传遇 409：不做冲突决策，不建副本、不发额外 GET', async () => {
-    seedDirtyLocal(LOCAL_BASE, [LOCAL_NODE]);
-    scriptSave(BOARD_ID, [{ status: 409, body: { latest_updated_at: SERVER_AHEAD } }]);
-
-    const outcome = await syncBoardToBackend(makeBoard(LOCAL_BASE, [LOCAL_NODE]) as any, {
-      keepalive: true,
-    });
-
-    assert.equal(outcome, 'fail');
-    assert.equal(fetchCalls.filter((c) => c.method === 'GET').length, 0, '页面正在消失，不该再发 GET');
-    assert.equal(conflictCopies().length, 0);
-    assert.equal(dispatchedEvents.length, 0);
-  });
-
-  test('adoptServerVersion：服务端基线未变（本地领先）→ 保留本地等上传', () => {
-    seedDirtyLocal(LOCAL_BASE, [LOCAL_NODE]);
-
-    const result = adoptServerVersion({
-      ...makeBoard(LOCAL_BASE, []),
-      nodes: [SERVER_NODE],
-      serverUpdatedAt: LOCAL_BASE,
-    } as any);
-
-    assert.equal(result.adopt, false, '基线一致说明期间无人写入，本地只是还没传上去');
-    assert.equal(result.conflictCopyId, undefined);
-    assert.deepEqual(loadBoard(BOARD_ID)?.nodes, [LOCAL_NODE], '本地未同步改动不得被服务端内容覆盖');
-    assert.equal(conflictCopies().length, 0);
-  });
-
-  test('adoptServerVersion：无未同步改动 → 直接采用，不建副本', () => {
-    store.set(BLOB_KEY, JSON.stringify(makeBoard(LOCAL_BASE)));
+  test('缺基线时补拉服务端基线：本次请求不得携带墓碑（不误删他端节点）', async () => {
+    // 本地有内容但**没有**差分基线（升级/基线键被清）：保存路径会先 GET 补基线。
+    // 补来的基线是「服务端当前全量」，本地若落后，服务端独有 id 会被差分判成本地删除。
+    store.set(BLOB_KEY, JSON.stringify(makeBoard(LOCAL_BASE, [LOCAL_NODE])));
+    store.set(SMALL_KEY, LOCAL_BASE);
     boardStore.bindScope('u1');
-    // upsertLocal 默认标脏，这里显式 dirty:false 才是「无未同步改动」
     boardStore.upsertLocal(
-      { id: BOARD_ID, name: '冲突画板', updatedAt: Date.now(), nodeCount: 0 },
-      { dirty: false }
+      { id: BOARD_ID, name: '冲突画板', updatedAt: Date.now(), nodeCount: 1 },
+      { dirty: true }
     );
-
-    const result = adoptServerVersion({
-      ...makeBoard(SERVER_AHEAD, [SERVER_NODE]),
-      serverUpdatedAt: SERVER_AHEAD,
-    } as any);
-
-    assert.equal(result.adopt, true);
-    assert.equal(result.conflictCopyId, undefined);
-    assert.equal(conflictCopies().length, 0);
-  });
-
-  test('adoptServerVersion：真冲突 → 采用服务端版并回传副本 id（页面加载路径靠它提示用户）', () => {
-    seedDirtyLocal(LOCAL_BASE, [LOCAL_NODE]);
-
-    const result = adoptServerVersion({
-      ...makeBoard(SERVER_AHEAD, [SERVER_NODE]),
-      serverUpdatedAt: SERVER_AHEAD,
-    } as any);
-
-    assert.equal(result.adopt, true);
-    // 加载/切换画板时会静默把本地改动挪进副本——必须把 id 交给上层弹提示，
-    // 否则用户只会看到列表里莫名多出一块画板
-    assert.ok(result.conflictCopyId, '必须回传副本 id 供上层告知用户');
-    assertRemappedCopy(loadBoard(result.conflictCopyId!)?.nodes, [LOCAL_NODE]);
-    assert.deepEqual(loadBoard(BOARD_ID)?.nodes, [SERVER_NODE]);
-  });
-
-  test('本地有未同步改动时，拉取服务端内容不推进差分基线', async () => {
-    seedDirtyLocal(LOCAL_BASE, [LOCAL_NODE]); // 本地脏（画面继承的是更早那份基线）
     scriptGet(BOARD_ID, [{ status: 200, body: serverBoardPayload(SERVER_AHEAD, [SERVER_NODE]) }]);
+    scriptSave(BOARD_ID, [{ status: 200, body: { canvas: { updatedAt: SERVER_AHEAD } } }]);
 
-    const loaded = await fetchBoardFromServer(BOARD_ID);
-    assert.ok(loaded);
+    const outcome = await syncBoardToBackend(makeBoard(LOCAL_BASE, [LOCAL_NODE]) as any);
+    assert.equal(outcome, 'ok');
 
-    const base = boardOps.readBase(BOARD_ID)!;
-    assert.ok(
-      !base.nodes[SERVER_NODE.id],
-      '本地画面里根本没有他端这个节点，基线却记上它 → 下次保存会把它算成「本地删除」，' +
-        '反手删掉别人刚写的内容'
-    );
+    const sent = savesFor(BOARD_ID)[0];
+    assert.deepEqual(sent.body.deletedNodeIds, [], '缺基线补拉来的服务端节点不得被当成「本地删除」');
+    assert.deepEqual(sent.body.deletedEdgeIds, []);
+    assert.deepEqual((sent.body.nodes || []).map((n: any) => n.id), [LOCAL_NODE.id]);
   });
 
-  test('采用服务端版后基线对齐服务端内容（下次保存不再把他端改动重推一遍）', () => {
-    seedDirtyLocal(LOCAL_BASE, [LOCAL_NODE]);
+  test('flush 语义：saveBoard 同步落盘，紧随其后的出队发的是最新内容（切板/隐藏前 flush 的前提）', async () => {
+    // App 在「切换画板 / 删除其他画板 / 页面隐藏」前会先把压在 600ms 防抖里的改动
+    // saveBoard 落盘，再 flush。这依赖两个事实：saveBoard 是**同步**写 blob 的，
+    // 且出队执行器读的是**当前 blob**。两者任一被改成异步/防抖，那段改动就会丢。
+    store.set(SMALL_KEY, LOCAL_BASE);
+    boardOps.writeBase(BOARD_ID, { nodes: {}, edges: {} });
+    scriptSave(BOARD_ID, [{ status: 200, body: { canvas: { updatedAt: SERVER_AHEAD } } }]);
 
-    const result = adoptServerVersion({
-      ...makeBoard(SERVER_AHEAD, [SERVER_NODE]),
-      serverUpdatedAt: SERVER_AHEAD,
-    } as any);
-    assert.equal(result.adopt, true);
+    saveBoard({ ...makeBoard(LOCAL_BASE, [LOCAL_NODE]), id: BOARD_ID } as any);
 
-    const base = boardOps.readBase(BOARD_ID)!;
-    assert.ok(base.nodes[SERVER_NODE.id], '基线必须等于刚采用的这份服务端内容');
-    assert.ok(!base.nodes[LOCAL_NODE.id], '本地未同步版已挪进副本，不得留在基线里');
-    assert.ok(
-      boardOps.isEmptyOps(boardOps.computeOps(base, loadBoard(BOARD_ID) as any)),
-      '基线若不对齐，刚采用的云端内容会在下次保存时被整批当成自己的改动重推（rev 空转 + 覆盖风险）'
+    // 同步可读：不需要等任何定时器/微任务
+    assert.deepEqual(loadBoard(BOARD_ID)?.nodes.map((n) => n.id), [LOCAL_NODE.id]);
+
+    await flush();
+    const saves = savesFor(BOARD_ID);
+    assert.equal(saves.length, 1);
+    assert.deepEqual(
+      (saves[0].body.nodes || []).map((n: any) => n.id),
+      [LOCAL_NODE.id],
+      '出队必须发最新内容，否则 flush 只是把旧内容又发了一遍'
     );
   });
 

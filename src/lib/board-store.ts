@@ -41,6 +41,11 @@ let serverIds = new Set<string>();
  * 服务端一确认（confirmServerSave / confirmServerMeta）就出列，本地投影绝不留存为真相。
  */
 let pending = new Map<string, DeepDiveBoardMeta>();
+/**
+ * 内容有未确认改动。**仅作列表提示与启动兜底续传的预筛**，不参与任何裁决——
+ * 载入路径以服务端为准（ADR-0025），不再读它判断是否覆盖本地；「本设备改了什么」
+ * 的唯一权威是 storage 里的差分基线（board-ops 的 `BoardOpsBase` + 本地 blob）。
+ */
 let dirty = new Set<string>();
 /** Spec L1：收藏/归档等元数据待同步（与内容 dirty 分离，避免触发全量上传） */
 let metaDirty = new Set<string>();
@@ -151,6 +156,7 @@ export function bindScope(scopeKey: scope.ScopeKey): void {
   if (boundScope === scopeKey) return;
   scope.setActiveScopeKey(scopeKey);
   scope.adoptLegacyIndex(scopeKey);
+  scope.purgeLegacyConflictCopyKeys(); // ADR-0025：清掉已删除机制的孤儿键（幂等）
   boundScope = scopeKey;
   tombstones = scope.loadTombstones(scopeKey);
   dirty = scope.readStringSet(scope.dirtyKey(scopeKey));
