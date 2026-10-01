@@ -1,9 +1,8 @@
 import crypto from 'node:crypto';
 import { getDb } from '../core/db.js';
 import { inMemoryStore } from '../core/memory-store.js';
-import type { OAuthIdentityRecord, UserRecord } from '../core/records.js';
+import { type OAuthIdentityRecord, type UserRecord, mapRowToUser } from '../core/records.js';
 import { handlePgError } from '../core/db-guard.js';
-import { mapRowToUser } from './user.repository.js';
 
 /**
  * 第三方登录身份绑定仓储（ADR-0022 微信网站应用登录）。

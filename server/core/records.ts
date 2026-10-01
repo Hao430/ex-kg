@@ -27,6 +27,31 @@ export interface UserRecord {
   updated_at: string;
 }
 
+/** 将 PG 行映射为 UserRecord（数值/时间戳规范化） */
+export function mapRowToUser(row: any): UserRecord {
+  return {
+    id: row.id,
+    email: row.email,
+    password_hash: row.password_hash,
+    name: row.name,
+    avatar: row.avatar,
+    role: row.role,
+    vip_expires_at: row.vip_expires_at ? new Date(row.vip_expires_at).toISOString() : null,
+    email_verified: row.email_verified ?? false,
+    verify_token: row.verify_token,
+    verify_expires_at: row.verify_expires_at ? new Date(row.verify_expires_at).toISOString() : null,
+    reset_token: row.reset_token,
+    reset_expires_at: row.reset_expires_at ? new Date(row.reset_expires_at).toISOString() : null,
+    deleted_at: row.deleted_at ? new Date(row.deleted_at).toISOString() : null,
+    is_active: row.is_active,
+    failed_attempts: row.failed_attempts,
+    locked_until: row.locked_until,
+    last_login_at: row.last_login_at,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
 export interface FeedbackRecord {
   id: string;
   user_id?: string | null;

@@ -4,9 +4,9 @@ import { authMiddleware, subscriptionRateLimiter, orderStatusReadRateLimiter } f
 import { asyncHandler } from '../lib/async-handler.js';
 import { validate } from '../lib/validate.js';
 import { startSubscription, mockPayOrder, getOrderStatus, handleAlipayNotify, isPaymentEnabled, isMockPaymentChannel } from '../services/billing.service.js';
-import { runWithSystem } from '../core/db-context.js';
 
 export const subscriptionsRouter = Router();
+
 
 // 订阅端点限流（技术债 #0012，ADR-0007 独立实例）：IP 维度 10/min，防刷"尝试下单"
 // 注意：限流器逐端点挂载——/notify 例外（见其端点注释）。
@@ -85,9 +85,8 @@ subscriptionsRouter.get('/orders/:orderNo', authMiddleware, orderStatusReadRateL
  * 处理成功必须返回纯文本 'success'（支付宝据此停止重试），否则返回 'fail'。
  */
 subscriptionsRouter.post('/notify', asyncHandler(async (req: Request, res: Response) => {
-  // 回调方是支付宝服务器：按 out_trade_no 跨租户定位订单（验签即鉴权）
-  const result = await runWithSystem('subscriptions: 支付宝回调按订单号跨租户结算（ADR-0014）', () =>
-    handleAlipayNotify((req.body as Record<string, unknown>) || {})
-  );
+  // 回调方是支付宝服务器：由 handleAlipayNotify 内部 runWithSystem 跨租户定位结算（验签即鉴权）
+  const result = await handleAlipayNotify((req.body as Record<string, unknown>) || {});
   res.type('text/plain').send(result);
 }));
+

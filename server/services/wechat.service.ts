@@ -1,17 +1,19 @@
 import crypto from 'node:crypto';
 import { OAUTH_UNSET_PASSWORD_HASH, generateSessionToken } from '../lib/crypto.js';
 import { AppError, ForbiddenError } from '../lib/errors.js';
-import { createSession } from '../repositories/session.repository.js';
+import { createSession, findSession } from '../repositories/session.repository.js';
 import { recordAuditLog } from '../repositories/audit.repository.js';
 import { resetFailedLogin } from '../repositories/user.repository.js';
 import {
   findOAuthIdentity,
   findOAuthIdentityByUnionid,
+  findOAuthIdentityByUserId,
   createWechatUserWithIdentity,
   rebindOAuthIdentityToNewUser,
   linkOAuthIdentity,
 } from '../repositories/oauth.repository.js';
 import { exchangeCodeForProfile } from './wechat-provider.js';
+import { runWithSystem, runWithUser } from '../core/db-context.js';
 import type { UserRecord } from '../core/records.js';
 
 /**
@@ -132,55 +134,155 @@ export async function loginWithWechat(data: {
   ip?: string;
   userAgent?: string;
 }): Promise<WechatLoginResult> {
-  const profile = await exchangeCodeForProfile(data.code);
-  const email = placeholderEmailFor(profile.openid);
-  const nickname = sanitizeExternalNickname(profile.nickname);
-  const avatarUrl = profile.avatarUrl;
+  return runWithSystem('wechat: 回调按 openid 跨租户查/建账号（登录前无租户）', async () => {
+    const profile = await exchangeCodeForProfile(data.code);
+    const email = placeholderEmailFor(profile.openid);
+    const nickname = sanitizeExternalNickname(profile.nickname);
+    const avatarUrl = profile.avatarUrl;
 
-  const existing = await findOAuthIdentity(WECHAT_PROVIDER, profile.openid);
-  if (existing && !existing.user.deleted_at) {
-    return finishLogin(existing.user, false, data.ip, data.userAgent);
-  }
+    const existing = await findOAuthIdentity(WECHAT_PROVIDER, profile.openid);
+    if (existing && !existing.user.deleted_at) {
+      return finishLogin(existing.user, false, data.ip, data.userAgent);
+    }
 
-  const identityParams = {
-    provider: WECHAT_PROVIDER,
-    openid: profile.openid,
-    unionid: profile.unionid,
-    nickname,
-    avatarUrl,
-    email,
-    passwordHash: OAUTH_UNSET_PASSWORD_HASH,
-  };
+    const identityParams = {
+      provider: WECHAT_PROVIDER,
+      openid: profile.openid,
+      unionid: profile.unionid,
+      nickname,
+      avatarUrl,
+      email,
+      passwordHash: OAUTH_UNSET_PASSWORD_HASH,
+    };
 
-  // 规则 3：同一个人的另一个 openid（一期只有一个 appid 走不到，但接小程序/公众号时就是这条路）。
-  // 这里必须显式查一次：unionid 上没有唯一约束可依赖（见 oauth.repository 的说明）。
-  if (!existing && profile.unionid) {
-    const samePerson = await findOAuthIdentityByUnionid(WECHAT_PROVIDER, profile.unionid);
-    if (samePerson && !samePerson.user.deleted_at) {
-      try {
-        await linkOAuthIdentity({ userId: samePerson.user.id, ...identityParams });
-      } catch (e: any) {
-        if (e?.code !== '23505') throw e;
-        // 并发下已被另一路挂上：无害，直接用那个账号登录
+    // 规则 3：同一个人的另一个 openid（一期只有一个 appid 走不到，但接小程序/公众号时就是这条路）。
+    // 这里必须显式查一次：unionid 上没有唯一约束可依赖（见 oauth.repository 的说明）。
+    if (!existing && profile.unionid) {
+      const samePerson = await findOAuthIdentityByUnionid(WECHAT_PROVIDER, profile.unionid);
+      if (samePerson && !samePerson.user.deleted_at) {
+        try {
+          await linkOAuthIdentity({ userId: samePerson.user.id, ...identityParams });
+        } catch (e: any) {
+          if (e?.code !== '23505') throw e;
+          // 并发下已被另一路挂上：无害，直接用那个账号登录
+        }
+        return finishLogin(samePerson.user, false, data.ip, data.userAgent);
       }
-      return finishLogin(samePerson.user, false, data.ip, data.userAgent);
     }
+
+    let user: UserRecord;
+    try {
+      user = existing
+        ? await rebindOAuthIdentityToNewUser({ identityId: existing.identity.id, ...identityParams })
+        : await createWechatUserWithIdentity(identityParams);
+    } catch (e: any) {
+      if (e?.code !== '23505') throw e;
+      const converged = await resolveDuplicate(profile.openid);
+      if (!converged) {
+        // 极端并发（如注销后两个标签页同时回调）——让用户重试即可
+        throw new AppError(500, 'WECHAT_IDENTITY_CONFLICT', '微信登录身份冲突，请重试');
+      }
+      return finishLogin(converged, false, data.ip, data.userAgent);
+    }
+
+    return finishLogin(user, true, data.ip, data.userAgent);
+  });
+}
+
+export interface WechatBindResult {
+  success: boolean;
+  errorCode?: string;
+}
+
+export async function resolveSessionUser(token: string | null): Promise<UserRecord | null> {
+  if (!token) return null;
+  const result = await runWithSystem('wechat: 回调按 token 跨租户查会话以判定绑定/登录', () =>
+    findSession(token)
+  );
+  if (!result || !result.user.is_active) return null;
+  return result.user;
+}
+
+export async function bindWechatAccount(data: {
+  code: string;
+  sessionUserId: string;
+  ip?: string;
+  userAgent?: string;
+}): Promise<WechatBindResult> {
+  const profile = await exchangeCodeForProfile(data.code);
+  const nickname = sanitizeExternalNickname(profile.nickname);
+
+  // 跨租户查这个 openid 归属（按身份找用户，登录前语义）
+  const owner = await runWithSystem('wechat: 按 openid 跨租户查该微信已绑账号（绑定时判归属）', () =>
+    findOAuthIdentity(WECHAT_PROVIDER, profile.openid)
+  );
+  if (owner && owner.user.id !== data.sessionUserId) {
+    // 这个微信已经是别人的登录凭据：绝不改绑，也不因此把用户登进别人账号
+    return { success: false, errorCode: 'WECHAT_ALREADY_BOUND' };
   }
 
-  let user: UserRecord;
-  try {
-    user = existing
-      ? await rebindOAuthIdentityToNewUser({ identityId: existing.identity.id, ...identityParams })
-      : await createWechatUserWithIdentity(identityParams);
-  } catch (e: any) {
-    if (e?.code !== '23505') throw e;
-    const converged = await resolveDuplicate(profile.openid);
-    if (!converged) {
-      // 极端并发（如注销后两个标签页同时回调）——让用户重试即可
-      throw new AppError(500, 'WECHAT_IDENTITY_CONFLICT', '微信登录身份冲突，请重试');
+  // 归属已确定是本账号，之后的读写在用户自己的作用域里完成
+  const alreadyBoundToMe = await runWithUser(data.sessionUserId, async () => {
+    const mine = await findOAuthIdentityByUserId(data.sessionUserId, WECHAT_PROVIDER);
+    if (mine) {
+      // 幂等：绑的就是这个微信，什么都不做（不重复插行、不重复审计）。
+      // 绑的是另一个微信号 → 拒绝：一个账号只允许一个微信身份，否则会累积出无法移除的凭据
+      return mine.openid === profile.openid;
     }
-    return finishLogin(converged, false, data.ip, data.userAgent);
-  }
+    await linkOAuthIdentity({
+      userId: data.sessionUserId,
+      provider: WECHAT_PROVIDER,
+      openid: profile.openid,
+      unionid: profile.unionid,
+      nickname,
+      avatarUrl: profile.avatarUrl,
+    });
+    await recordAuditLog({
+      userId: data.sessionUserId,
+      action: 'wechat_bind',
+      ip: data.ip,
+      userAgent: data.userAgent,
+      details: { provider: WECHAT_PROVIDER, nickname },
+    });
+    return true;
+  });
 
-  return finishLogin(user, true, data.ip, data.userAgent);
+  return alreadyBoundToMe
+    ? { success: true }
+    : { success: false, errorCode: 'WECHAT_ALREADY_BOUND' };
+}
+
+export async function recordWechatBindFailure(data: {
+  userId: string;
+  reason: string;
+  errcode?: number | null;
+  ip?: string;
+  userAgent?: string;
+}): Promise<void> {
+  await runWithUser(data.userId, () =>
+    recordAuditLog({
+      userId: data.userId,
+      action: 'wechat_bind_failed',
+      ip: data.ip,
+      userAgent: data.userAgent,
+      details: { reason: data.reason, errcode: data.errcode ?? null },
+    })
+  );
+}
+
+export async function recordWechatLoginFailure(data: {
+  reason: string;
+  errcode?: number | null;
+  ip?: string;
+  userAgent?: string;
+}): Promise<void> {
+  await runWithSystem('wechat: 记录回调失败归因（无登录态）', () =>
+    recordAuditLog({
+      userId: null,
+      action: 'wechat_login_failed',
+      ip: data.ip,
+      userAgent: data.userAgent,
+      details: { reason: data.reason, errcode: data.errcode ?? null },
+    })
+  );
 }

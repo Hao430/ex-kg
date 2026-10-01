@@ -1,9 +1,18 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { deleteSession, findSession } from '../repositories/session.repository.js';
-import { recordAuditLog } from '../repositories/audit.repository.js';
-import { signUp, signIn, updateProfile, resendVerification, requestPasswordReset, resetPassword, changeOwnPassword, deleteOwnAccount, sendRegisterCode } from '../services/auth.service.js';
-import { markEmailVerifiedByToken } from '../repositories/user.repository.js';
+import {
+  signUp,
+  signIn,
+  updateProfile,
+  resendVerification,
+  requestPasswordReset,
+  resetPassword,
+  changeOwnPassword,
+  deleteOwnAccount,
+  sendRegisterCode,
+  signOutSession,
+  verifyEmailByToken,
+} from '../services/auth.service.js';
 import { ValidationError } from '../lib/errors.js';
 import { OAUTH_UNSET_PASSWORD_HASH } from '../lib/crypto.js';
 import { isPlaceholderEmail } from '../services/wechat.service.js';
@@ -13,11 +22,11 @@ import { validate } from '../lib/validate.js';
 import { resolveRequestOrigin } from '../lib/origin.js';
 import { effectiveEntitlements } from '../services/quota.service.js';
 import { setSessionCookie, clearSessionCookie, extractSessionToken } from '../lib/session-cookie.js';
-import { runWithSystem } from '../core/db-context.js';
 import { authMiddleware, loginRateLimiter, signupRateLimiter, resendVerificationRateLimiter, forgotPasswordRateLimiter, resetPasswordRateLimiter, sendRegisterCodeRateLimiter, bindEmailSendCodeRateLimiter, bindEmailRateLimiter, feedbackSubmitRateLimiter, feedbackMineReadRateLimiter } from '../middleware/auth.js';
 import { bindEmail, bindEmailSendCode, getWechatBinding } from '../services/account-binding.service.js';
 
 export const authRouter = Router();
+
 
 // Zod schemas
 const SignUpSchema = z.object({
@@ -119,10 +128,7 @@ function publicUser(user: {
  */
 authRouter.post('/send-register-code', sendRegisterCodeRateLimiter, asyncHandler(async (req: Request, res: Response) => {
   const { email } = validate(SendRegisterCodeSchema, req.body);
-  // 账号建立前按 email 寻址 → 跨租户（ADR-0019 显式豁免，见 ADR-0019「作用域清单」）
-  await runWithSystem('auth: send-register-code 按 email 查重（账号建立前无租户）', () =>
-    sendRegisterCode(email)
-  );
+  await sendRegisterCode(email);
   res.json({ success: true, message: '验证码已发送至您的邮箱，10 分钟内有效' });
 }));
 
@@ -137,17 +143,14 @@ authRouter.post('/send-register-code', sendRegisterCodeRateLimiter, asyncHandler
  */
 authRouter.post('/sign-up', signupRateLimiter, asyncHandler(async (req: Request, res: Response) => {
   const { email, password, code, name } = validate(SignUpSchema, req.body);
-  // 建号前按 email 查重、消费验证码，全是跨租户寻址
-  const { user, token } = await runWithSystem('auth: sign-up 按 email 查重并建号（账号建立前无租户）', () =>
-    signUp({
-      email,
-      password,
-      code,
-      name,
-      ip: req.ip,
-      userAgent: req.headers['user-agent'],
-    })
-  );
+  const { user, token } = await signUp({
+    email,
+    password,
+    code,
+    name,
+    ip: req.ip,
+    userAgent: req.headers['user-agent'],
+  });
 
   setSessionCookie(res, token);
 
@@ -164,15 +167,12 @@ authRouter.post('/sign-up', signupRateLimiter, asyncHandler(async (req: Request,
  */
 authRouter.post('/sign-in', loginRateLimiter, asyncHandler(async (req: Request, res: Response) => {
   const { email, password } = validate(SignInSchema, req.body);
-  // 登录前还不知道是谁 → 只能按 email 跨租户查
-  const { user, token } = await runWithSystem('auth: sign-in 按 email 查用户（登录前无租户）', () =>
-    signIn({
-      email,
-      password,
-      ip: req.ip,
-      userAgent: req.headers['user-agent'],
-    })
-  );
+  const { user, token } = await signIn({
+    email,
+    password,
+    ip: req.ip,
+    userAgent: req.headers['user-agent'],
+  });
 
   setSessionCookie(res, token);
 
@@ -193,22 +193,12 @@ authRouter.post('/sign-in', loginRateLimiter, asyncHandler(async (req: Request, 
 authRouter.post('/sign-out', asyncHandler(async (req: Request, res: Response) => {
   const token = extractSessionToken(req);
   if (token) {
-    // 登出端点刻意不挂 authMiddleware（令牌可能已过期，也要能清 cookie），
-    // 因此这里同样是「按 token 定位会话」的跨租户路径
-    await runWithSystem('auth: sign-out 按 token 定位并删除会话', async () => {
-      const result = await findSession(token).catch(() => null);
-      await deleteSession(token);
-      await recordAuditLog({
-        userId: result?.user.id || null,
-        action: 'sign_out',
-        ip: req.ip,
-        userAgent: req.headers['user-agent'],
-      });
-    });
+    await signOutSession(token, req.ip, req.headers['user-agent']);
   }
   clearSessionCookie(res);
   res.json({ success: true, message: '已安全登出' });
 }));
+
 
 /**
  * DELETE /api/auth/account
@@ -292,9 +282,7 @@ authRouter.get('/verify-email', asyncHandler(async (req: Request, res: Response)
     throw new ValidationError('缺少验证令牌', 'INVALID_TOKEN');
   }
 
-  const verified = await runWithSystem('auth: verify-email 按令牌标记邮箱（无登录态）', () =>
-    markEmailVerifiedByToken(token)
-  );
+  const verified = await verifyEmailByToken(token);
   if (!verified) {
     throw new ValidationError('验证链接无效或已过期', 'INVALID_TOKEN');
   }
@@ -322,9 +310,7 @@ authRouter.post('/forgot-password', forgotPasswordRateLimiter, asyncHandler(asyn
   // 令牌明文入库、点击即换号）。resolveRequestOrigin 先取 APP_URL，未配置才用经
   // 字符白名单校验的 Host，两者都不可信时抛 500（安全审查 M3）。
   const origin = resolveRequestOrigin(req);
-  await runWithSystem('auth: forgot-password 按 email 发重置链接（账号建立前无租户）', () =>
-    requestPasswordReset(email, origin)
-  );
+  await requestPasswordReset(email, origin);
   res.json({ success: true, message: '若该邮箱已注册，重置链接已发送' });
 }));
 
@@ -335,14 +321,12 @@ authRouter.post('/forgot-password', forgotPasswordRateLimiter, asyncHandler(asyn
  */
 authRouter.post('/reset-password', resetPasswordRateLimiter, asyncHandler(async (req: Request, res: Response) => {
   const { token, password } = validate(ResetPasswordSchema, req.body);
-  await runWithSystem('auth: reset-password 按令牌重置并踢下线（无登录态）', () =>
-    resetPassword({
-      token,
-      newPassword: password,
-      ip: req.ip,
-      userAgent: req.headers['user-agent'],
-    })
-  );
+  await resetPassword({
+    token,
+    newPassword: password,
+    ip: req.ip,
+    userAgent: req.headers['user-agent'],
+  });
   res.json({ success: true, message: '密码已重置，请使用新密码登录' });
 }));
 
@@ -406,10 +390,8 @@ authRouter.post('/feedback', feedbackSubmitRateLimiter, asyncHandler(async (req:
   // Optional user attachment via session token
   const token = extractSessionToken(req);
 
-  // 反馈可匿名提交（token 可选）→ 按令牌归属，属跨租户寻址
-  const fb = await runWithSystem('auth: feedback 按可选令牌归属提交（可匿名）', () =>
-    submitFeedback({ token, type, rating, content, contactInfo })
-  );
+  // 反馈可匿名提交（token 可选）→ submitFeedback 内部按可选令牌归属提交
+  const fb = await submitFeedback({ token, type, rating, content, contactInfo });
 
   res.status(201).json({
     success: true,
@@ -417,6 +399,7 @@ authRouter.post('/feedback', feedbackSubmitRateLimiter, asyncHandler(async (req:
     feedbackId: fb.id,
   });
 }));
+
 
 /**
  * GET /api/auth/feedback（/api/feedback 别名同样可达）

@@ -53,6 +53,7 @@ import { UserProfileModal } from './components/ui/UserProfileModal';
 import { MySharesModal } from './components/ui/MySharesModal';
 import { FeedbackModal } from './components/ui/FeedbackModal';
 import { BoardLibraryModal } from './components/ui/BoardLibraryModal';
+import { useAppModals } from './hooks/useAppModals';
 
 /**
  * 新画布引导（H2）：注入一个待填写的主题根节点，避免新用户/新建画板面对纯空白画布。
@@ -102,7 +103,16 @@ function MainApp() {
   const [boardName, setBoardName] = useState<string>('量子计算深度探索');
   const [initialNodes, setInitialNodes] = useState<Node[] | undefined>(undefined);
   const [initialEdges, setInitialEdges] = useState<Edge[] | undefined>(undefined);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const {
+    sampleViewerOpen,
+    setSampleViewerOpen,
+    libraryOpen,
+    setLibraryOpen,
+    shareDialog,
+    setShareDialog,
+    toastMessage,
+    showToast,
+  } = useAppModals();
   const [nodeCount, setNodeCount] = useState<number>(1);
   /**
    * 本标签是否持有当前画板的编辑权（技术债 #0097）。false = 同一块画板已在另一个标签页打开，
@@ -112,12 +122,6 @@ function MainApp() {
   const [boardEditOwner, setBoardEditOwner] = useState(true);
 
   const { isVip, openRechargeModal, user, resendVerification, loading: authLoading } = useAuth();
-
-  // Spec K5（D1）：示例画布只读查看器开关（Topbar「示例画布」入口）
-  const [sampleViewerOpen, setSampleViewerOpen] = useState(false);
-
-  // Spec L1：画板库弹窗（搜索/收藏/归档）
-  const [libraryOpen, setLibraryOpen] = useState(false);
 
   // Global Dark Mode state ('light' | 'dark')
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -189,9 +193,6 @@ function MainApp() {
     ((title: string) => Promise<{ ok: boolean; error?: string }>) | null
   >(null);
 
-  // Spec K2：分享链接弹窗（创建/重建提示/撤销）
-  const [shareDialog, setShareDialog] = useState<{ url: string; recreated: boolean } | null>(null);
-
   const handleShareLink = async () => {
     try {
       const res = await fetch(`/api/canvases/${encodeURIComponent(currentBoardId)}/share`, {
@@ -230,13 +231,6 @@ function MainApp() {
   const currentNodesRef = useRef<Node[]>([]);
   const currentEdgesRef = useRef<Edge[]>([]);
   const saveTimeoutRef = useRef<number | null>(null);
-
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => {
-      setToastMessage((prev) => (prev === msg ? null : prev));
-    }, 2500);
-  };
 
   /**
    * Spec Q1：灵感开关分方向处理。

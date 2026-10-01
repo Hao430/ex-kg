@@ -10,6 +10,8 @@ import { recordAuditLog } from '../repositories/audit.repository.js';
 import { recordEventLog } from '../repositories/event-log.repository.js';
 import { ForbiddenError, NotFoundError } from '../lib/errors.js';
 import type { UserRecord } from '../core/records.js';
+import { runWithSystem } from '../core/db-context.js';
+
 
 /**
  * Spec K2（跟踪清单 B1）：快照式只读分享服务。
@@ -99,18 +101,21 @@ export async function revokeShareForCanvas(user: UserRecord, canvasId: string): 
 
 /** 公开读取分享快照（无效统一 404，不泄露撤销/删除/不存在的原因差异）；countViews 控制浏览计数 */
 export async function getShareView(code: string, countViews = true): Promise<ShareViewPayload> {
-  const record = await findActiveShareByCode(code, countViews);
-  if (!record || !record.snapshot) {
-    throw new NotFoundError('分享不存在或已失效');
-  }
-  return {
-    title: record.snapshot.title,
-    nodes: record.snapshot.nodes || [],
-    edges: record.snapshot.edges || [],
-    createdAt: record.created_at,
-    viewCount: record.views_count,
-  };
+  return runWithSystem('shares: 公开分享按 shareCode 读快照（无登录态）', async () => {
+    const record = await findActiveShareByCode(code, countViews);
+    if (!record || !record.snapshot) {
+      throw new NotFoundError('分享不存在或已失效');
+    }
+    return {
+      title: record.snapshot.title,
+      nodes: record.snapshot.nodes || [],
+      edges: record.snapshot.edges || [],
+      createdAt: record.created_at,
+      viewCount: record.views_count,
+    };
+  });
 }
+
 
 export interface MyShareItem {
   canvasId: string;

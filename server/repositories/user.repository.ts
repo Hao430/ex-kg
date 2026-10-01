@@ -1,34 +1,10 @@
 import crypto from 'node:crypto';
 import { getDb } from '../core/db.js';
 import { inMemoryStore } from '../core/memory-store.js';
-import type { UserRecord } from '../core/records.js';
-import { deleteUserSessions } from './session.repository.js';
+import { type UserRecord, mapRowToUser } from '../core/records.js';
 import { handlePgError } from '../core/db-guard.js';
 
-/** 将 PG 行映射为 UserRecord（数值/时间戳规范化） */
-export function mapRowToUser(row: any): UserRecord {
-  return {
-    id: row.id,
-    email: row.email,
-    password_hash: row.password_hash,
-    name: row.name,
-    avatar: row.avatar,
-    role: row.role,
-    vip_expires_at: row.vip_expires_at ? new Date(row.vip_expires_at).toISOString() : null,
-    email_verified: row.email_verified ?? false,
-    verify_token: row.verify_token,
-    verify_expires_at: row.verify_expires_at ? new Date(row.verify_expires_at).toISOString() : null,
-    reset_token: row.reset_token,
-    reset_expires_at: row.reset_expires_at ? new Date(row.reset_expires_at).toISOString() : null,
-    deleted_at: row.deleted_at ? new Date(row.deleted_at).toISOString() : null,
-    is_active: row.is_active,
-    failed_attempts: row.failed_attempts,
-    locked_until: row.locked_until,
-    last_login_at: row.last_login_at,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-  };
-}
+export { mapRowToUser };
 
 export async function findUserByEmail(email: string): Promise<UserRecord | null> {
   const normalizedEmail = email.toLowerCase().trim();
@@ -478,6 +454,10 @@ export async function deleteAccount(userId: string): Promise<boolean> {
  * 「无画板则提前返回」之前：没有画板的用户也要清掉身份行。
  */
 function purgeUserDataMemory(userId: string): void {
+  for (const [token, s] of inMemoryStore.sessions.entries()) {
+    if (s.user_id === userId) inMemoryStore.sessions.delete(token);
+  }
+
   for (const [key, identity] of inMemoryStore.oauthIdentities.entries()) {
     if (identity.user_id === userId) inMemoryStore.oauthIdentities.delete(key);
   }
@@ -523,7 +503,6 @@ export async function cleanupDeletedUsers(retentionDays: number): Promise<number
       removedIds.push(id);
     }
     for (const id of removedIds) {
-      await deleteUserSessions(id);
       purgeUserDataMemory(id);
     }
     return removedIds.length;
@@ -540,7 +519,6 @@ export async function cleanupDeletedUsers(retentionDays: number): Promise<number
   }
   // 级联清理残留会话与画板数据（对应 PG 外键 ON DELETE CASCADE）
   for (const id of removedIds) {
-    await deleteUserSessions(id);
     purgeUserDataMemory(id);
   }
   return removedIds.length;

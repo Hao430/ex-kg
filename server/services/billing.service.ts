@@ -11,6 +11,8 @@ import { getAlipayProvider, isAlipayConfigured } from './payment/alipay-provider
 import type { PaymentProvider } from './payment/payment-provider.js';
 import { recordAuditLog } from '../repositories/audit.repository.js';
 import type { OrderRecord, UserRecord } from '../core/records.js';
+import { runWithSystem } from '../core/db-context.js';
+
 
 const planInfoMap = {
   weekly: { days: 7, name: '周度 Pro 会员', amountCents: 990 },
@@ -142,53 +144,56 @@ export async function settleOrderPaid(orderNo: string): Promise<OrderRecord | nu
  * 响应规范：处理成功（含重复通知的幂等命中）返回 'success' 纯文本。
  */
 export async function handleAlipayNotify(form: Record<string, unknown>): Promise<'success' | 'fail'> {
-  const provider = getPaymentProvider();
-  if (provider.name !== 'alipay') {
-    console.warn('alipay notify received but alipay provider not configured');
-    return 'fail';
-  }
-  const alipay = getAlipayProvider();
-  if (!alipay.verifyNotifySignature(form)) {
-    console.warn('alipay notify signature verification failed');
-    return 'fail';
-  }
+  return runWithSystem('subscriptions: 支付宝回调按订单号跨租户结算（ADR-0014）', async () => {
+    const provider = getPaymentProvider();
+    if (provider.name !== 'alipay') {
+      console.warn('alipay notify received but alipay provider not configured');
+      return 'fail';
+    }
+    const alipay = getAlipayProvider();
+    if (!alipay.verifyNotifySignature(form)) {
+      console.warn('alipay notify signature verification failed');
+      return 'fail';
+    }
 
-  const outTradeNo = String(form.out_trade_no || '');
-  const order = await findOrderByNo(outTradeNo);
-  if (!order) {
-    console.warn(`alipay notify for unknown order: ${outTradeNo}`);
-    return 'fail';
-  }
-  if (String(form.app_id || '') !== alipay.appId) {
-    console.warn(`alipay notify app_id mismatch: ${form.app_id}`);
-    return 'fail';
-  }
-  if (String(form.total_amount || '') !== (order.amount_cents / 100).toFixed(2)) {
-    console.warn(`alipay notify amount mismatch for order ${outTradeNo}: ${form.total_amount}`);
-    return 'fail';
-  }
+    const outTradeNo = String(form.out_trade_no || '');
+    const order = await findOrderByNo(outTradeNo);
+    if (!order) {
+      console.warn(`alipay notify for unknown order: ${outTradeNo}`);
+      return 'fail';
+    }
+    if (String(form.app_id || '') !== alipay.appId) {
+      console.warn(`alipay notify app_id mismatch: ${form.app_id}`);
+      return 'fail';
+    }
+    if (String(form.total_amount || '') !== (order.amount_cents / 100).toFixed(2)) {
+      console.warn(`alipay notify amount mismatch for order ${outTradeNo}: ${form.total_amount}`);
+      return 'fail';
+    }
 
-  const tradeStatus = String(form.trade_status || '');
-  if (tradeStatus !== 'TRADE_SUCCESS' && tradeStatus !== 'TRADE_FINISHED') {
-    // 非成功态（TRADE_CLOSED 等）：确认收到即可，不激活、不置失败（查单兜底负责终态同步）
+    const tradeStatus = String(form.trade_status || '');
+    if (tradeStatus !== 'TRADE_SUCCESS' && tradeStatus !== 'TRADE_FINISHED') {
+      // 非成功态（TRADE_CLOSED 等）：确认收到即可，不激活、不置失败（查单兜底负责终态同步）
+      return 'success';
+    }
+
+    const settled = await settleOrderPaid(outTradeNo);
+    if (!settled) {
+      console.warn(`alipay notify could not settle order ${outTradeNo}`);
+      return 'fail';
+    }
+
+    await recordAuditLog({
+      userId: settled.user_id,
+      action: 'subscribe',
+      targetType: 'order',
+      targetId: outTradeNo,
+      details: { planId: settled.plan_id, source: 'alipay_notify' },
+    });
     return 'success';
-  }
-
-  const settled = await settleOrderPaid(outTradeNo);
-  if (!settled) {
-    console.warn(`alipay notify could not settle order ${outTradeNo}`);
-    return 'fail';
-  }
-
-  await recordAuditLog({
-    userId: settled.user_id,
-    action: 'subscribe',
-    targetType: 'order',
-    targetId: outTradeNo,
-    details: { planId: settled.plan_id, source: 'alipay_notify' },
   });
-  return 'success';
 }
+
 
 /** 查单兜底节流：同一订单两次真实查单最小间隔（防前端轮询打爆网关） */
 const QUERY_THROTTLE_MS = 5000;

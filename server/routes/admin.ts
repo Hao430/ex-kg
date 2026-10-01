@@ -16,14 +16,13 @@ import {
   listAuditLogs,
   listAiRequestLogs,
   listEventLogs,
+  getDatabaseStatus,
 } from '../services/admin.service.js';
 import { listFeedbacksForAdmin, updateFeedbackStatus } from '../services/feedback.service.js';
 import { getAiModelConfig, isModelConfigured } from '../services/ai.service.js';
 import { asyncHandler } from '../lib/async-handler.js';
-import { checkDbStatus } from '../core/db-status.js';
 import { validate } from '../lib/validate.js';
-import { authMiddleware, requireAdmin, adminLogReadRateLimiter, adminUserWriteRateLimiter, adminFeedbackReadRateLimiter } from '../middleware/auth.js';
-import { runWithSystem } from '../core/db-context.js';
+import { authMiddleware, requireAdmin, adminSystemScopeMiddleware, adminLogReadRateLimiter, adminUserWriteRateLimiter, adminFeedbackReadRateLimiter } from '../middleware/auth.js';
 import { assertSafeOutboundUrl } from '../lib/outbound-url.js';
 import { AppError } from '../lib/errors.js';
 import { GoogleGenAI } from '@google/genai';
@@ -35,23 +34,23 @@ adminRouter.use(authMiddleware);
 adminRouter.use(requireAdmin);
 
 // 运营台的聚合统计/日志/用户管理**必然跨租户**（ADR-0016 保留的 admin 能力就只有这些），
-// 因此在鉴权通过后整台路由切到 system 作用域（ADR-0019）。位置必须在 requireAdmin 之后：
-// 作用域是「已确认是管理员」才授予的跨租户通行证，不是路由自带属性。
-adminRouter.use((_req, _res, next) => runWithSystem('admin: 跨租户运营台聚合与用户管理（ADR-0016）', next));
+// 因此在鉴权通过后整台路由切到 system 作用域（ADR-0019）。位置必须在 requireAdmin 之后。
+adminRouter.use(adminSystemScopeMiddleware);
 
 /**
  * GET /api/admin/overview
  * Operation dashboard metrics (total users, tokens, canvases, models)
- * 附带 database（checkDbStatus）：底座存储状态供前端「底座数据存储与事务状态」面板消费
+ * 附带 database（getDatabaseStatus）：底座存储状态供前端「底座数据存储与事务状态」面板消费
  */
 adminRouter.get('/overview', asyncHandler(async (_req: Request, res: Response) => {
   const overview = await getAdminOverview();
-  const database = await checkDbStatus();
+  const database = await getDatabaseStatus();
   // Spec E4：模型配置状态透出（false = 管理员未配置可用模型，全站推理 400 MODEL_NOT_CONFIGURED），
   // Admin 后台据此展示醒目告警横幅
   const modelConfigured = await isModelConfigured();
   res.json({ success: true, overview, database, modelConfigured });
 }));
+
 
 /**
  * GET /api/admin/users

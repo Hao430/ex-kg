@@ -11,6 +11,7 @@ import type { AdminFeedbackView, MyFeedbackView } from '../repositories/feedback
 import type { FeedbackRecord } from '../core/records.js';
 import { recordAuditLog } from '../repositories/audit.repository.js';
 import { NotFoundError, ValidationError } from '../lib/errors.js';
+import { runWithSystem } from '../core/db-context.js';
 
 /**
  * 提交反馈：可选附着当前会话用户信息
@@ -22,26 +23,29 @@ export async function submitFeedback(data: {
   content: string;
   contactInfo?: string;
 }): Promise<FeedbackRecord> {
-  let userId: string | undefined;
-  let userEmail: string | undefined;
+  return runWithSystem('auth: feedback 按可选令牌归属提交（可匿名）', async () => {
+    let userId: string | undefined;
+    let userEmail: string | undefined;
 
-  if (data.token) {
-    const sessionData = await findSessionByToken(data.token);
-    if (sessionData) {
-      userId = sessionData.user.id;
-      userEmail = sessionData.user.email;
+    if (data.token) {
+      const sessionData = await findSessionByToken(data.token);
+      if (sessionData) {
+        userId = sessionData.user.id;
+        userEmail = sessionData.user.email;
+      }
     }
-  }
 
-  return createFeedback({
-    userId,
-    userEmail,
-    type: data.type,
-    rating: data.rating,
-    content: data.content,
-    contactInfo: data.contactInfo,
+    return createFeedback({
+      userId,
+      userEmail,
+      type: data.type,
+      rating: data.rating,
+      content: data.content,
+      contactInfo: data.contactInfo,
+    });
   });
 }
+
 
 /**
  * 状态机（Spec P1）：`pending → processing → resolved | rejected`，`pending` 可直达终态。

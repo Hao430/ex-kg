@@ -5,9 +5,9 @@ import { asyncHandler } from '../lib/async-handler.js';
 import { validate } from '../lib/validate.js';
 import { resolveRequestOrigin } from '../lib/origin.js';
 import { getShareView, listMyShares } from '../services/share.service.js';
-import { runWithSystem } from '../core/db-context.js';
 
 export const sharesRouter = Router();
+
 
 /**
  * GET /api/shares（「我的分享」2026-09-09）
@@ -49,10 +49,9 @@ sharesRouter.get(
   asyncHandler(async (req: Request, res: Response) => {
     const { shareCode } = validate(ShareCodeSchema, req.params);
     const { countViews } = validate(ShareQuerySchema, req.query);
-    // 公开只读分享：无登录态，按 shareCode（不可枚举随机串）跨租户寻址，读的是快照
-    const view = await runWithSystem('shares: 公开分享按 shareCode 读快照（无登录态）', () =>
-      getShareView(shareCode, countViews !== '0')
-    );
+    // 公开只读分享：无登录态，由 getShareView 内部 runWithSystem 按 shareCode 跨租户寻址
+    const view = await getShareView(shareCode, countViews !== '0');
     res.json(view);
   })
 );
+

@@ -2,7 +2,6 @@ import crypto from 'node:crypto';
 import { Router, Request, Response } from 'express';
 import { asyncHandler } from '../lib/async-handler.js';
 import { AppError } from '../lib/errors.js';
-import { runWithSystem, runWithUser } from '../core/db-context.js';
 import { resolveOrigin } from '../lib/seo.js';
 import {
   setSessionCookie,
@@ -19,14 +18,15 @@ import {
 import {
   isWechatConfigured,
   buildAuthorizeUrl,
-  exchangeCodeForProfile,
   WechatAuthError,
 } from '../services/wechat-provider.js';
-import { loginWithWechat, sanitizeExternalNickname, WECHAT_PROVIDER } from '../services/wechat.service.js';
-import { findSession } from '../repositories/session.repository.js';
-import { findOAuthIdentity, findOAuthIdentityByUserId, linkOAuthIdentity } from '../repositories/oauth.repository.js';
-import { recordAuditLog } from '../repositories/audit.repository.js';
-import type { UserRecord } from '../core/records.js';
+import {
+  loginWithWechat,
+  resolveSessionUser,
+  bindWechatAccount,
+  recordWechatBindFailure,
+  recordWechatLoginFailure,
+} from '../services/wechat.service.js';
 
 /**
  * 网站应用微信登录（ADR-0022）。挂在 `/api/auth/wechat`（见 `server/app.ts`）。
@@ -107,65 +107,6 @@ wechatRouter.get('/authorize', wechatAuthorizeRateLimiter, (req: Request, res: R
  *   此时点微信登录的语义就是登录，报错只会无谓拦住一个已经登出的用户；
  * - 账号被冻结（交给 `loginWithWechat` 抛 ACCOUNT_FROZEN，走统一错误通道）。
  */
-async function resolveSessionUser(req: Request): Promise<UserRecord | null> {
-  const token = extractSessionToken(req);
-  if (!token) return null;
-  const result = await runWithSystem('wechat: 回调按 token 跨租户查会话以判定绑定/登录', () =>
-    findSession(token)
-  );
-  if (!result || !result.user.is_active) return null;
-  return result.user;
-}
-
-/** 绑定分支：把当前微信挂到已登录的账号上。**绝不建账号、绝不动会话 cookie** */
-async function handleBind(
-  req: Request,
-  res: Response,
-  code: string,
-  sessionUser: UserRecord
-): Promise<void> {
-  const profile = await exchangeCodeForProfile(code);
-  const nickname = sanitizeExternalNickname(profile.nickname);
-
-  // 跨租户查这个 openid 归属（按身份找用户，登录前语义）
-  const owner = await runWithSystem('wechat: 按 openid 跨租户查该微信已绑账号（绑定时判归属）', () =>
-    findOAuthIdentity(WECHAT_PROVIDER, profile.openid)
-  );
-  if (owner && owner.user.id !== sessionUser.id) {
-    // 这个微信已经是别人的登录凭据：绝不改绑，也不因此把用户登进别人账号
-    res.redirect(bindErrorRedirect('WECHAT_ALREADY_BOUND'));
-    return;
-  }
-
-  // 归属已确定是本账号，之后的读写在用户自己的作用域里完成
-  const alreadyBoundToMe = await runWithUser(sessionUser.id, async () => {
-    const mine = await findOAuthIdentityByUserId(sessionUser.id, WECHAT_PROVIDER);
-    if (mine) {
-      // 幂等：绑的就是这个微信，什么都不做（不重复插行、不重复审计）。
-      // 绑的是另一个微信号 → 拒绝：一个账号只允许一个微信身份，否则会累积出无法移除的凭据
-      return mine.openid === profile.openid;
-    }
-    await linkOAuthIdentity({
-      userId: sessionUser.id,
-      provider: WECHAT_PROVIDER,
-      openid: profile.openid,
-      unionid: profile.unionid,
-      nickname,
-      avatarUrl: profile.avatarUrl,
-    });
-    await recordAuditLog({
-      userId: sessionUser.id,
-      action: 'wechat_bind',
-      ip: req.ip,
-      userAgent: req.headers['user-agent'],
-      details: { provider: WECHAT_PROVIDER, nickname },
-    });
-    return true;
-  });
-
-  res.redirect(alreadyBoundToMe ? BOUND_REDIRECT : bindErrorRedirect('WECHAT_ALREADY_BOUND'));
-}
-
 /**
  * GET /api/auth/wechat/callback
  * 微信回跳落点：校验 state → （有会话 ? 绑定 : 登录）→ 302 回主应用。
@@ -187,12 +128,22 @@ wechatRouter.get(
       return;
     }
 
-    const sessionUser = await resolveSessionUser(req);
+    const sessionUser = await resolveSessionUser(extractSessionToken(req));
     const userAgent = req.headers['user-agent'];
 
     if (sessionUser) {
       try {
-        await handleBind(req, res, code, sessionUser);
+        const bindResult = await bindWechatAccount({
+          code,
+          sessionUserId: sessionUser.id,
+          ip: req.ip,
+          userAgent,
+        });
+        if (!bindResult.success) {
+          res.redirect(bindErrorRedirect(bindResult.errorCode || 'WECHAT_ALREADY_BOUND'));
+          return;
+        }
+        res.redirect(BOUND_REDIRECT);
       } catch (error: any) {
         const reason =
           error instanceof WechatAuthError
@@ -200,15 +151,13 @@ wechatRouter.get(
             : error instanceof AppError
               ? error.code
               : 'SERVER';
-        await runWithUser(sessionUser.id, () =>
-          recordAuditLog({
-            userId: sessionUser.id,
-            action: 'wechat_bind_failed',
-            ip: req.ip,
-            userAgent,
-            details: { reason, errcode: error?.errcode ?? null },
-          })
-        );
+        await recordWechatBindFailure({
+          userId: sessionUser.id,
+          reason,
+          errcode: error?.errcode ?? null,
+          ip: req.ip,
+          userAgent,
+        });
         console.warn('[wechat] 绑定失败:', reason, error?.errcode ?? (error?.message || ''));
         res.redirect(bindErrorRedirect(reason));
       }
@@ -216,9 +165,7 @@ wechatRouter.get(
     }
 
     try {
-      const { token } = await runWithSystem('wechat: 回调按 openid 跨租户查/建账号（登录前无租户）', () =>
-        loginWithWechat({ code, ip: req.ip, userAgent })
-      );
+      const { token } = await loginWithWechat({ code, ip: req.ip, userAgent });
       setSessionCookie(res, token);
       res.redirect(OK_REDIRECT);
     } catch (error: any) {
@@ -230,17 +177,12 @@ wechatRouter.get(
             ? error.code
             : 'SERVER';
 
-      // 失败归因必须写在 system 作用域内：这是一条 user_id 可空的审计
-      // （RLS 的 WITH CHECK 把 NULL 视为 false，app 作用域下会被直接拒掉）
-      await runWithSystem('wechat: 记录回调失败归因（无登录态）', () =>
-        recordAuditLog({
-          userId: null,
-          action: 'wechat_login_failed',
-          ip: req.ip,
-          userAgent,
-          details: { reason, errcode: error?.errcode ?? null },
-        })
-      );
+      await recordWechatLoginFailure({
+        reason,
+        errcode: error?.errcode ?? null,
+        ip: req.ip,
+        userAgent,
+      });
       console.warn('[wechat] 回调失败:', reason, error?.errcode ?? (error?.message || ''));
 
       res.redirect(errorRedirect(reason));

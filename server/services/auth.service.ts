@@ -13,13 +13,17 @@ import {
   setVerificationToken,
   setPasswordResetToken,
   markPasswordResetByToken,
+  markEmailVerifiedByToken,
   updateUserPassword,
   deleteAccount,
 } from '../repositories/user.repository.js';
-import { createSession, deleteUserSessions } from '../repositories/session.repository.js';
+import { createSession, deleteUserSessions, findSession, deleteSession } from '../repositories/session.repository.js';
 import { recordAuditLog } from '../repositories/audit.repository.js';
+
 import { isPlaceholderEmail } from './wechat.service.js';
 import type { UserRecord } from '../core/records.js';
+import { runWithSystem } from '../core/db-context.js';
+
 
 export interface AuthResult {
   user: UserRecord;
@@ -67,45 +71,47 @@ export async function signUp(data: {
   ip?: string;
   userAgent?: string;
 }): Promise<AuthResult> {
-  const email = data.email.toLowerCase().trim();
-  // ADR-0022：预留域必须拒。否则有人能用 wx_<受害者openid哈希>@wechat.invalid 抢注占位，
-  // 让受害者的微信首登撞 users.email 唯一索引且无身份行可回退（定向拒绝服务）
-  if (isPlaceholderEmail(email)) {
-    throw new ValidationError('该邮箱域名不可用于注册', 'EMAIL_DOMAIN_RESERVED');
-  }
-  const existing = await findUserByEmail(email);
-  if (existing) {
-    throw new ConflictError('该邮箱已被注册，请直接登录', 'EMAIL_EXISTS');
-  }
+  return runWithSystem('auth: sign-up 按 email 查重并建号（账号建立前无租户）', async () => {
+    const email = data.email.toLowerCase().trim();
+    // ADR-0022：预留域必须拒。否则有人能用 wx_<受害者openid哈希>@wechat.invalid 抢注占位，
+    // 让受害者的微信首登撞 users.email 唯一索引且无身份行可回退（定向拒绝服务）
+    if (isPlaceholderEmail(email)) {
+      throw new ValidationError('该邮箱域名不可用于注册', 'EMAIL_DOMAIN_RESERVED');
+    }
+    const existing = await findUserByEmail(email);
+    if (existing) {
+      throw new ConflictError('该邮箱已被注册，请直接登录', 'EMAIL_EXISTS');
+    }
 
-  // 验证码先行：无有效验证码不得建号。先查重后消费，避免已注册邮箱借码链路探测
-  await consumeEmailCodeOrThrow(email, data.code);
+    // 验证码先行：无有效验证码不得建号。先查重后消费，避免已注册邮箱借码链路探测
+    await consumeEmailCodeOrThrow(email, data.code);
 
-  const passwordHash = await hashPassword(data.password);
-  const newUser = await createUser({
-    email,
-    passwordHash,
-    name: data.name,
-    role: 'user',
-    emailVerified: true,
+    const passwordHash = await hashPassword(data.password);
+    const newUser = await createUser({
+      email,
+      passwordHash,
+      name: data.name,
+      role: 'user',
+      emailVerified: true,
+    });
+
+    const token = generateSessionToken();
+    await createSession({
+      userId: newUser.id,
+      token,
+      ipAddress: data.ip,
+      userAgent: data.userAgent,
+    });
+
+    await recordAuditLog({
+      userId: newUser.id,
+      action: 'sign_up',
+      ip: data.ip,
+      userAgent: data.userAgent,
+    });
+
+    return { user: newUser, token };
   });
-
-  const token = generateSessionToken();
-  await createSession({
-    userId: newUser.id,
-    token,
-    ipAddress: data.ip,
-    userAgent: data.userAgent,
-  });
-
-  await recordAuditLog({
-    userId: newUser.id,
-    action: 'sign_up',
-    ip: data.ip,
-    userAgent: data.userAgent,
-  });
-
-  return { user: newUser, token };
 }
 
 /**
@@ -113,28 +119,31 @@ export async function signUp(data: {
  * 邮箱已注册 → 409 EMAIL_EXISTS（与 sign-up 查重口径一致）。
  */
 export async function sendRegisterCode(email: string): Promise<void> {
-  const normalized = email.toLowerCase().trim();
-  // 与 signUp 同款预留域拦截：不让验证码白白发往一个永不可用、且会抢占微信占位的地址
-  if (isPlaceholderEmail(normalized)) {
-    throw new ValidationError('该邮箱域名不可用于注册', 'EMAIL_DOMAIN_RESERVED');
-  }
-  const existing = await findUserByEmail(normalized);
-  if (existing) {
-    throw new ConflictError('该邮箱已被注册，请直接登录', 'EMAIL_EXISTS');
-  }
+  return runWithSystem('auth: send-register-code 按 email 查重（账号建立前无租户）', async () => {
+    const normalized = email.toLowerCase().trim();
+    // 与 signUp 同款预留域拦截：不让验证码白白发往一个永不可用、且会抢占微信占位的地址
+    if (isPlaceholderEmail(normalized)) {
+      throw new ValidationError('该邮箱域名不可用于注册', 'EMAIL_DOMAIN_RESERVED');
+    }
+    const existing = await findUserByEmail(normalized);
+    if (existing) {
+      throw new ConflictError('该邮箱已被注册，请直接登录', 'EMAIL_EXISTS');
+    }
 
-  const rec = await getCode(normalized);
-  if (rec && Date.now() - new Date(rec.updated_at).getTime() < 60 * 1000) {
-    throw new AppError(429, 'CODE_COOLDOWN', '验证码发送过于频繁，请 1 分钟后再试');
-  }
+    const rec = await getCode(normalized);
+    if (rec && Date.now() - new Date(rec.updated_at).getTime() < 60 * 1000) {
+      throw new AppError(429, 'CODE_COOLDOWN', '验证码发送过于频繁，请 1 分钟后再试');
+    }
 
-  const code = generateEmailCode();
-  const expiresAt = new Date(Date.now() + EMAIL_CODE_TTL_MS).toISOString();
-  await upsertCode(normalized, code, expiresAt);
+    const code = generateEmailCode();
+    const expiresAt = new Date(Date.now() + EMAIL_CODE_TTL_MS).toISOString();
+    await upsertCode(normalized, code, expiresAt);
 
-  // 发信失败仅 warn，不影响响应（用户可重发，受冷却/限流保护）
-  await sendVerificationCodeEmail(normalized, code);
+    // 发信失败仅 warn，不影响响应（用户可重发，受冷却/限流保护）
+    await sendVerificationCodeEmail(normalized, code);
+  });
 }
+
 
 /**
  * 登录：状态检查 + 防爆破锁定 + 验密 + 建会话
@@ -145,68 +154,71 @@ export async function signIn(data: {
   ip?: string;
   userAgent?: string;
 }): Promise<AuthResult> {
-  const user = await findUserByEmail(data.email);
+  return runWithSystem('auth: sign-in 按 email 查用户（登录前无租户）', async () => {
+    const user = await findUserByEmail(data.email);
 
-  if (!user) {
-    throw new UnauthorizedError('账号或密码错误', 'INVALID_CREDENTIALS');
-  }
-
-  if (!user.is_active) {
-    await recordAuditLog({ userId: user.id, action: 'sign_in_failed', details: { reason: 'account_frozen' }, ip: data.ip, userAgent: data.userAgent });
-    throw new ForbiddenError('该账户已被运营管理员冻结，无法登录', 'ACCOUNT_FROZEN');
-  }
-
-  if (isAccountLocked(user.locked_until)) {
-    const remainingMinutes = getRemainingLockMinutes(user.locked_until!);
-    await recordAuditLog({ userId: user.id, action: 'sign_in_failed', details: { reason: 'account_locked' }, ip: data.ip, userAgent: data.userAgent });
-    throw new LockedError(
-      `连续输错密码达 5 次，账户已被临时锁定。请在 ${remainingMinutes} 分钟后重试`,
-      { remainingMinutes }
-    );
-  }
-
-  const isMatch = await verifyPassword(data.password, user.password_hash);
-  if (!isMatch) {
-    const { failedAttempts, lockedUntil } = await recordFailedLogin(user.id);
-    await recordAuditLog({ userId: user.id, action: 'sign_in_failed', details: { reason: 'wrong_password', failedAttempts }, ip: data.ip, userAgent: data.userAgent });
-    if (lockedUntil) {
-      throw new LockedError('连续 5 次输错密码，账号已被锁定 15 分钟', { remainingMinutes: 15 });
+    if (!user) {
+      throw new UnauthorizedError('账号或密码错误', 'INVALID_CREDENTIALS');
     }
 
-    throw new UnauthorizedError(
-      `账号或密码错误（连续输错 5 次将锁定 15 分钟，当前失败 ${failedAttempts} 次）`,
-      'INVALID_CREDENTIALS',
-      { failedAttempts }
-    );
-  }
+    if (!user.is_active) {
+      await recordAuditLog({ userId: user.id, action: 'sign_in_failed', details: { reason: 'account_frozen' }, ip: data.ip, userAgent: data.userAgent });
+      throw new ForbiddenError('该账户已被运营管理员冻结，无法登录', 'ACCOUNT_FROZEN');
+    }
 
-  // 登录成功：重置失败计数
-  await resetFailedLogin(user.id);
+    if (isAccountLocked(user.locked_until)) {
+      const remainingMinutes = getRemainingLockMinutes(user.locked_until!);
+      await recordAuditLog({ userId: user.id, action: 'sign_in_failed', details: { reason: 'account_locked' }, ip: data.ip, userAgent: data.userAgent });
+      throw new LockedError(
+        `连续输错密码达 5 次，账户已被临时锁定。请在 ${remainingMinutes} 分钟后重试`,
+        { remainingMinutes }
+      );
+    }
 
-  // Spec F5：旧参数哈希透明升级到新 scrypt 参数
-  if (needsRehash(user.password_hash)) {
-    const upgraded = await hashPassword(data.password);
-    await updateUserPassword(user.id, upgraded);
-    user.password_hash = upgraded;
-  }
+    const isMatch = await verifyPassword(data.password, user.password_hash);
+    if (!isMatch) {
+      const { failedAttempts, lockedUntil } = await recordFailedLogin(user.id);
+      await recordAuditLog({ userId: user.id, action: 'sign_in_failed', details: { reason: 'wrong_password', failedAttempts }, ip: data.ip, userAgent: data.userAgent });
+      if (lockedUntil) {
+        throw new LockedError('连续 5 次输错密码，账号已被锁定 15 分钟', { remainingMinutes: 15 });
+      }
 
-  const token = generateSessionToken();
-  await createSession({
-    userId: user.id,
-    token,
-    ipAddress: data.ip,
-    userAgent: data.userAgent,
+      throw new UnauthorizedError(
+        `账号或密码错误（连续输错 5 次将锁定 15 分钟，当前失败 ${failedAttempts} 次）`,
+        'INVALID_CREDENTIALS',
+        { failedAttempts }
+      );
+    }
+
+    // 登录成功：重置失败计数
+    await resetFailedLogin(user.id);
+
+    // Spec F5：旧参数哈希透明升级到新 scrypt 参数
+    if (needsRehash(user.password_hash)) {
+      const upgraded = await hashPassword(data.password);
+      await updateUserPassword(user.id, upgraded);
+      user.password_hash = upgraded;
+    }
+
+    const token = generateSessionToken();
+    await createSession({
+      userId: user.id,
+      token,
+      ipAddress: data.ip,
+      userAgent: data.userAgent,
+    });
+
+    await recordAuditLog({
+      userId: user.id,
+      action: 'sign_in',
+      ip: data.ip,
+      userAgent: data.userAgent,
+    });
+
+    return { user, token };
   });
-
-  await recordAuditLog({
-    userId: user.id,
-    action: 'sign_in',
-    ip: data.ip,
-    userAgent: data.userAgent,
-  });
-
-  return { user, token };
 }
+
 
 /**
  * Spec F4：用户自助注销账号。
@@ -269,15 +281,17 @@ export async function resendVerification(userId: string): Promise<void> {
  * 邮箱不存在直接静默返回（防账号枚举）；存在则生成 1h token 并发送重置邮件。
  */
 export async function requestPasswordReset(email: string, origin: string): Promise<void> {
-  const user = await findUserByEmail(email);
-  if (!user) return;
+  return runWithSystem('auth: forgot-password 按 email 发重置链接（账号建立前无租户）', async () => {
+    const user = await findUserByEmail(email);
+    if (!user) return;
 
-  const resetToken = crypto.randomBytes(32).toString('hex');
-  const resetExpiresAt = new Date(Date.now() + 3600 * 1000).toISOString();
-  await setPasswordResetToken(user.id, resetToken, resetExpiresAt);
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const resetExpiresAt = new Date(Date.now() + 3600 * 1000).toISOString();
+    await setPasswordResetToken(user.id, resetToken, resetExpiresAt);
 
-  const resetUrl = `${process.env.APP_URL || origin}/reset-password?token=${resetToken}`;
-  await sendPasswordResetEmail(user.email, resetUrl);
+    const resetUrl = `${process.env.APP_URL || origin}/reset-password?token=${resetToken}`;
+    await sendPasswordResetEmail(user.email, resetUrl);
+  });
 }
 
 /**
@@ -290,22 +304,48 @@ export async function resetPassword(data: {
   ip?: string | null;
   userAgent?: string | null;
 }): Promise<void> {
-  const user = await markPasswordResetByToken(data.token);
-  if (!user) {
-    throw new AppError(400, 'INVALID_TOKEN', '重置链接无效或已过期');
-  }
+  return runWithSystem('auth: reset-password 按令牌重置并踢下线（无登录态）', async () => {
+    const user = await markPasswordResetByToken(data.token);
+    if (!user) {
+      throw new AppError(400, 'INVALID_TOKEN', '重置链接无效或已过期');
+    }
 
-  const passwordHash = await hashPassword(data.newPassword);
-  await updateUserPassword(user.id, passwordHash);
-  await deleteUserSessions(user.id);
+    const passwordHash = await hashPassword(data.newPassword);
+    await updateUserPassword(user.id, passwordHash);
+    await deleteUserSessions(user.id);
 
-  await recordAuditLog({
-    userId: user.id,
-    action: 'password_reset',
-    ip: data.ip,
-    userAgent: data.userAgent,
+    await recordAuditLog({
+      userId: user.id,
+      action: 'password_reset',
+      ip: data.ip,
+      userAgent: data.userAgent,
+    });
   });
 }
+
+/** 登出：按 token 定位并清理会话 */
+export async function signOutSession(token: string, ip?: string, userAgent?: string): Promise<void> {
+  return runWithSystem('auth: sign-out 按 token 定位并删除会话', async () => {
+    const result = await findSession(token).catch(() => null);
+    await deleteSession(token);
+    await recordAuditLog({
+      userId: result?.user.id || null,
+      action: 'sign_out',
+      ip,
+      userAgent,
+    });
+  });
+}
+
+
+/** 邮箱链接验证：按 token 标记邮箱为已验证 */
+export async function verifyEmailByToken(token: string): Promise<boolean> {
+  return runWithSystem('auth: verify-email 按令牌标记邮箱（无登录态）', async () => {
+    const user = await markEmailVerifiedByToken(token);
+    return Boolean(user);
+  });
+}
+
 
 /**
  * 已登录修改密码。
