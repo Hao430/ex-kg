@@ -339,6 +339,15 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction): v
 }
 
 /**
+ * 运营台跨租户 System 作用域中间件（ADR-0016 / ADR-0019）
+ * 必须挂在 requireAdmin 之后，确保仅已验证管理员可获得 cross-tenant system 作用域
+ */
+export function adminSystemScopeMiddleware(_req: Request, _res: Response, next: NextFunction): void {
+  void runWithSystem('admin: 跨租户运营台聚合与用户管理（ADR-0016）', next);
+}
+
+
+/**
  * Input limits validator for malicious payload defense
  * - Single question <= 4,000 characters
  * - Total context history <= 16,000 characters
@@ -363,11 +372,11 @@ export function validateInputLimits(req: Request, res: Response, next: NextFunct
     return;
   }
 
-  // 2. Total context history length check
+  // 2. Total context history length check (relaxed to 32,000 chars for deep exploration headroom)
   const totalLength = messages.reduce((acc, msg) => acc + (typeof msg.content === 'string' ? msg.content.length : 0), 0);
-  if (totalLength > 16000) {
+  if (totalLength > 32000) {
     res.status(400).json({
-      error: `对话历史上下文过长（当前 ${totalLength} 字符，上限 16,000 字符）`,
+      error: `对话历史上下文过长（当前 ${totalLength} 字符，上限 32,000 字符）`,
       code: 'CONTEXT_TOO_LONG',
     });
     return;
