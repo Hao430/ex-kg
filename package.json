@@ -20,6 +20,7 @@
     "arch:all": "npm run arch:check && npm run arch:test"
   },
   "dependencies": {
+    "@antv/hierarchy": "^0.7.1",
     "@google/genai": "^2.4.0",
     "@tailwindcss/vite": "^4.1.14",
     "@types/cookie-parser": "^1.4.10",

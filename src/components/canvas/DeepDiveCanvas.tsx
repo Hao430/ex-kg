@@ -25,13 +25,15 @@ import { ChatCardNode } from '../nodes/ChatCardNode';
 import { NoteCardNode } from '../nodes/NoteCardNode';
 import { withErrorBoundary, ErrorBoundary } from '../ErrorBoundary';
 import { SelectionPopup } from './SelectionPopup';
+import { useRabbitHole } from './hooks/useRabbitHole';
+import { useCanvasLayout } from './hooks/useCanvasLayout';
+import { useCanvasChatStream } from './hooks/useCanvasChatStream';
 import { ChatNodeData, TextSelectionPayload, GroundingMetadata } from '../../types';
 import { getLayoutedElements } from '../../lib/layout';
-import { exportCanvasAsPng } from '../../lib/canvas-image-export';
-import { buildAncestorContext } from '../../lib/context';
 import { onSyncState } from '../../lib/sync-queue';
 import { saveBoard, StoredBoard, deduplicateNodes, deduplicateEdges } from '../../lib/storage';
 import { CanvasStructure, snapshotStructure, isStructuralChange } from '../../lib/canvas-change';
+import { getDescendantNodeIds as collectDescendantNodeIds } from '../../lib/tree';
 import { canCreate, markPendingCreate } from '../../lib/quota-store';
 import { extractSuggestions, getFallbackSuggestions, collectSuggestedLeafIds } from '../../lib/suggestions';
 import { NodeActionsContext, NodeActionsContextValue } from '../../context/NodeActionsContext';
@@ -147,8 +149,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
   const [edges, setEdges, onEdgesChange] = useEdgesState(
     initialEdges || []
   );
-  const [selectionPayload, setSelectionPayload] = useState<TextSelectionPayload | null>(null);
-  const [apiWarning, setApiWarning] = useState<string | null>(null);
+  const { selectionPayload, setSelectionPayload } = useRabbitHole();
   const [dismissLargeCanvasBanner, setDismissLargeCanvasBanner] = useState(false);
   const [deleteConfirmTarget, setDeleteConfirmTarget] = useState<{
     nodeId: string;
@@ -165,45 +166,17 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
   nodesRef.current = nodes;
   edgesRef.current = edges;
 
-  // 节点搜索高亮：临时 className（nodeHash 白名单不含 className → 不标脏、不触发上传；
-  // 也不用 selected——浮层关闭后焦点离开搜索框，误按 Backspace/Delete 会静默删掉刚选中的节点）
-  const searchHitTimerRef = useRef<number | null>(null);
-  const clearSearchHit = useCallback(() => {
-    searchHitTimerRef.current = null;
-    if (!nodesRef.current.some((n) => n.className === SEARCH_HIT_CLASS)) return;
-    const next = nodesRef.current.map((n) =>
-      n.className === SEARCH_HIT_CLASS ? { ...n, className: undefined } : n
-    );
-    nodesRef.current = next;
-    setNodes(next);
-  }, [setNodes]);
-  // 卸载清理（exposure useEffect deps 多、会频繁重建，不能把清理挂在它身上）
-  useEffect(() => () => {
-    if (searchHitTimerRef.current !== null) clearTimeout(searchHitTimerRef.current);
-  }, []);
-  const focusSearchHit = useCallback((nodeId: string) => {
-    if (!nodesRef.current.some((n) => n.id === nodeId)) return; // 节点已被他端删除 → 静默
-    const next = nodesRef.current.map((n) => {
-      if (n.id === nodeId) return { ...n, className: SEARCH_HIT_CLASS };
-      if (n.className === SEARCH_HIT_CLASS) return { ...n, className: undefined };
-      return n;
-    });
-    nodesRef.current = next;
-    setNodes(next);
-    if (searchHitTimerRef.current !== null) clearTimeout(searchHitTimerRef.current);
-    searchHitTimerRef.current = window.setTimeout(clearSearchHit, 2500);
-    // 虚拟化下节点进入视口才挂载：先提交 className，再镜头飞行（沿用下方 setTimeout 时序先例）
-    window.setTimeout(() => {
-      const target = nodesRef.current.find((n) => n.id === nodeId);
-      if (target) {
-        reactFlowInstance.setCenter(
-          target.position.x + 220,
-          target.position.y + 180,
-          { zoom: 0.9, duration: 600 }
-        );
-      }
-    }, 60);
-  }, [reactFlowInstance, setNodes, clearSearchHit]);
+  const { applyLayout, exportFullRender } = useCanvasLayout({
+    nodesRef,
+    edgesRef,
+    setNodes,
+    setEdges,
+    reactFlowInstance,
+    triggerAutoLayoutRef,
+    triggerFitViewRef,
+    triggerFocusNodeRef,
+    triggerExportPngRef,
+  });
 
   // Spec J2：服务端配额单一事实源（GET /api/quota，口径「排除 suggested 占位」与后端拦截完全一致）。
   // null = 余量未知（VIP/Admin 不受限、查询失败或未同步）——此时前端不做本地拦截，由服务端 chat 403 兜底。
@@ -279,21 +252,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
   const requestImmediateSave = useCallback(() => {
     immediateSaveRef.current = true;
   }, []);
-  /**
-   * 当前挂着的流式请求。组件卸载（切画板、采用服务端内容后重挂载）时中止它：
-   * 卸载后的 `setNodes` 是空操作，流会白跑到结束；而且继续读流只会在日志里留下
-   * 「明明没人看还在跑」的噪声。半成品的回答已由卸载前的 flushPendingCanvasSave 落盘。
-   */
-  const activeStreamAbortRef = useRef<AbortController | null>(null);
-  /** 流式落盘节流的上次时刻（见 STREAM_FLUSH_INTERVAL_MS） */
-  const lastStreamFlushRef = useRef(0);
-  useEffect(
-    () => () => {
-      activeStreamAbortRef.current?.abort();
-      activeStreamAbortRef.current = null;
-    },
-    []
-  );
+
   useEffect(() => {
     if (isDraggingRef.current) return;
     const next = snapshotStructure(nodes, edges);
@@ -304,34 +263,122 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
     immediateSaveRef.current = false;
     onCanvasChange?.(nodes, edges, immediate ? { immediate: true } : undefined);
   }, [nodes, edges, onCanvasChange, canvasId]);
-  const handleNodeDragStart = useCallback(() => {
-    isDraggingRef.current = true;
-  }, []);
-  // 拖拽期间位置已在 nodes 里更新，但逐帧上报被跳过——结束时直接落一次，不能再等防抖
-  const handleNodeDragStop = useCallback(() => {
-    isDraggingRef.current = false;
-    onCanvasChange?.(nodesRef.current, edgesRef.current, { immediate: true });
-  }, [onCanvasChange]);
+  // Subtree Drag Linkage: 记录拖拽开始时父节点及其所有子孙节点的初始坐标，实现 60 FPS 联动拖拽
+  const dragStartNodePosRef = useRef<{ id: string; x: number; y: number } | null>(null);
+  const dragDescendantsInitPosRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+
+  const handleNodeDragStart = useCallback(
+    (_event: MouseEvent | TouchEvent, node: Node) => {
+      isDraggingRef.current = true;
+      dragStartNodePosRef.current = { id: node.id, x: node.position.x, y: node.position.y };
+      const descendants = collectDescendantNodeIds(node.id, edgesRef.current);
+      const initMap = new Map<string, { x: number; y: number }>();
+      nodesRef.current.forEach((n) => {
+        if (descendants.has(n.id)) {
+          initMap.set(n.id, { x: n.position.x, y: n.position.y });
+        }
+      });
+      dragDescendantsInitPosRef.current = initMap;
+    },
+    []
+  );
+
+  const handleNodeDrag = useCallback(
+    (_event: MouseEvent | TouchEvent, node: Node) => {
+      const startPos = dragStartNodePosRef.current;
+      if (!startPos || startPos.id !== node.id) return;
+      const initMap = dragDescendantsInitPosRef.current;
+      if (!initMap || initMap.size === 0) return;
+
+      const dx = node.position.x - startPos.x;
+      const dy = node.position.y - startPos.y;
+
+      setNodes((currentNodes) => {
+        let changed = false;
+        const next = currentNodes.map((n) => {
+          const init = initMap.get(n.id);
+          if (!init) return n;
+          const targetX = init.x + dx;
+          const targetY = init.y + dy;
+          if (Math.abs(n.position.x - targetX) < 0.1 && Math.abs(n.position.y - targetY) < 0.1) {
+            return n;
+          }
+          changed = true;
+          return {
+            ...n,
+            position: { x: targetX, y: targetY },
+          };
+        });
+        if (changed) {
+          nodesRef.current = next;
+        }
+        return changed ? next : currentNodes;
+      });
+    },
+    [setNodes]
+  );
+
+  // 拖拽结束时标记手动位置并立即落盘，防止被常规自动布局覆盖
+  const handleNodeDragStop = useCallback(
+    (_event: MouseEvent | TouchEvent, node: Node) => {
+      isDraggingRef.current = false;
+      const descendants = dragDescendantsInitPosRef.current.size > 0
+        ? Array.from(dragDescendantsInitPosRef.current.keys())
+        : Array.from(collectDescendantNodeIds(node.id, edgesRef.current));
+      const affectedIds = new Set([node.id, ...descendants]);
+
+      dragStartNodePosRef.current = null;
+      dragDescendantsInitPosRef.current.clear();
+
+      setNodes((currentNodes) => {
+        const next = currentNodes.map((n) => {
+          if (affectedIds.has(n.id)) {
+            return {
+              ...n,
+              data: {
+                ...(n.data as any),
+                isManualPosition: true,
+              },
+            };
+          }
+          return n;
+        });
+        nodesRef.current = next;
+        return next;
+      });
+
+      onCanvasChange?.(nodesRef.current, edgesRef.current, { immediate: true });
+    },
+    [onCanvasChange, setNodes]
+  );
+
   const handleSelectionDragStart = useCallback(() => {
     isDraggingRef.current = true;
   }, []);
-  const handleSelectionDragStop = useCallback(() => {
-    isDraggingRef.current = false;
-    onCanvasChange?.(nodesRef.current, edgesRef.current, { immediate: true });
-  }, [onCanvasChange]);
 
-  // Layout function (Zero-drag automatic tidy tree)
-  const applyLayout = useCallback(
-    (currentNodes = nodesRef.current, currentEdges = edgesRef.current) => {
-      const layouted = getLayoutedElements(currentNodes, currentEdges, 'LR');
-      // 布局无变化（缓存命中且位置未动）时跳过 setNodes，避免无谓的全画布重渲染
-      if (layouted.nodes !== currentNodes) setNodes(layouted.nodes);
-      if (layouted.edges !== currentEdges) setEdges(layouted.edges);
-      window.requestAnimationFrame(() => {
-        reactFlowInstance.fitView({ padding: 0.25, duration: 400 });
+  const handleSelectionDragStop = useCallback(
+    (_event: React.MouseEvent, selectedNodes: Node[]) => {
+      isDraggingRef.current = false;
+      const selectedIds = new Set(selectedNodes.map((n) => n.id));
+      setNodes((currentNodes) => {
+        const next = currentNodes.map((n) => {
+          if (selectedIds.has(n.id)) {
+            return {
+              ...n,
+              data: {
+                ...(n.data as any),
+                isManualPosition: true,
+              },
+            };
+          }
+          return n;
+        });
+        nodesRef.current = next;
+        return next;
       });
+      onCanvasChange?.(nodesRef.current, edgesRef.current, { immediate: true });
     },
-    [reactFlowInstance, setNodes, setEdges]
+    [onCanvasChange, setNodes]
   );
 
   // MiniMap 节点配色（useCallback 按 theme 记忆化，避免内联函数使 MiniMap memo 失效）
@@ -343,32 +390,6 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
     },
     [theme]
   );
-
-  // Helper to extract clean user-friendly error message
-  const sanitizeErrorMessage = (raw: unknown): string => {
-    if (!raw) return '生成出错，请重试';
-    let str = (raw as any)?.message || String(raw);
-    try {
-      if (typeof str === 'string' && (str.startsWith('{') || str.includes('{\n'))) {
-        const start = str.indexOf('{');
-        const parsed = JSON.parse(str.slice(start));
-        if (parsed?.error?.message) {
-          try {
-            const nested = JSON.parse(parsed.error.message);
-            if (nested?.error?.message) return nested.error.message;
-          } catch {}
-          return parsed.error.message;
-        }
-      }
-    } catch {}
-    if (str.includes('503') || str.includes('high demand') || str.includes('UNAVAILABLE')) {
-      return '模型并发访问量较高，请点击重试。';
-    }
-    if (str.includes('429') || str.includes('RESOURCE_EXHAUSTED')) {
-      return '请求频次较高，请稍候再试。';
-    }
-    return str;
-  };
 
   // Automatically spawn suggested question nodes connected to parent
   const spawnSuggestedNodes = useCallback(
@@ -429,342 +450,19 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
     [defaultModel, defaultEnableWebSearch, setNodes, setEdges, suggestionsEnabled]
   );
 
-  // 自动命名（只命名一次）：节点生成成功后独立调用 LLM 命名端点。
-  // 手动改过标题（titleManual）或已消耗命名机会（autoTitled）的节点跳过；
-  // 画板名仅在 App 侧仍为默认名时由 boardNeedsAutoName 触发附带生成，经事件回传 App 采纳。
-  const autoTitleNode = useCallback(
-    async (nodeId: string, question: string, answer: string) => {
-      const target = nodesRef.current.find((n) => n.id === nodeId);
-      const d = target?.data as unknown as ChatNodeData | undefined;
-      if (!d || d.titleManual || d.autoTitled) return;
-      try {
-        const res = await fetch(
-          `/api/canvases/${encodeURIComponent(canvasId || 'local')}/auto-title`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({
-              nodeId,
-              question: question.slice(0, 2000),
-              answer: answer.slice(0, 3000),
-              includeBoard: Boolean(canvasId && boardNeedsAutoName),
-            }),
-          }
-        );
-        if (!res.ok) return; // 失败不置标志：下次生成可重试命名
-        const body = await res.json();
-        const nodeTitle = typeof body?.nodeTitle === 'string' ? body.nodeTitle.trim() : '';
-        setNodes((nds) =>
-          nds.map((n) => {
-            if (n.id !== nodeId) return n;
-            const nd = n.data as unknown as ChatNodeData;
-            return {
-              ...n,
-              data: { ...nd, autoTitled: true, ...(nodeTitle ? { title: nodeTitle } : {}) },
-            };
-          })
-        );
-        const boardTitle = typeof body?.boardTitle === 'string' ? body.boardTitle.trim() : '';
-        if (boardTitle && canvasId && boardNeedsAutoName) {
-          window.dispatchEvent(
-            new CustomEvent('deepdive:board-autotitle', {
-              detail: { boardId: canvasId, title: boardTitle },
-            })
-          );
-        }
-      } catch {
-        // 网络失败：保留截断标题，标志不置位，下次生成可重试
-      }
-    },
-    [canvasId, boardNeedsAutoName, setNodes]
-  );
-
-  // Core generator for answering a question in a single node
-  const generateNodeAnswer = useCallback(
-    async (
-      nodeId: string,
-      questionText: string,
-      options?: { model?: string; enableWebSearch?: boolean }
-    ) => {
-      if (!checkAiQuota()) return;
-      // K4 事件 6：每画板首次发起 AI 生成（终身一次去重，衡量激活深度）
-      if (canvasId) trackOnce(`ai_first_${canvasId}`, 'ai_generate_first');
-      // K5/D1：checklist 第 3 步（发起过一次 AI 生成）
-      markChecklistStep('generate');
-
-      const targetNode = nodesRef.current.find((n) => n.id === nodeId);
-      const existingData = targetNode?.data as unknown as ChatNodeData | undefined;
-
-      const activeModel =
-        options?.model || existingData?.model || defaultModel || '';
-      const activeWebSearch =
-        options?.enableWebSearch !== undefined
-          ? options.enableWebSearch
-          : existingData?.enableWebSearch !== undefined
-          ? existingData.enableWebSearch
-          : defaultEnableWebSearch;
-
-      // 提问一落进节点就立即固化：用户的问题也是内容，不该压在防抖窗口里等
-      requestImmediateSave();
-      // Set generating status
-      setNodes((nds) =>
-        nds.map((n) => {
-          if (n.id !== nodeId) return n;
-          const d = n.data as unknown as ChatNodeData;
-          return {
-            ...n,
-            data: {
-              ...d,
-              title: !d.title || d.title === '新探索主题' ? questionText.slice(0, 16) : d.title,
-              question: questionText,
-              status: 'generating',
-              model: activeModel,
-              enableWebSearch: activeWebSearch,
-              errorMessage: undefined,
-            },
-          };
-        })
-      );
-
-      // Assemble full ancestor lineage context
-      const ancestorContext = buildAncestorContext(nodeId, nodesRef.current, edgesRef.current);
-      // Ensure current question is the last user message
-      const lastContext = ancestorContext[ancestorContext.length - 1];
-      if (!lastContext || lastContext.content !== questionText) {
-        ancestorContext.push({ role: 'user', content: questionText });
-      }
-
-      let rawAccumulatedText = '';
-      let receivedGrounding: GroundingMetadata | undefined = undefined;
-
-      const abortController = new AbortController();
-      activeStreamAbortRef.current = abortController;
-      lastStreamFlushRef.current = Date.now();
-      let isCompleted = false;
-      
-      const timeoutId = setTimeout(() => {
-        if (!isCompleted) {
-          setApiWarning('AI 模型响应较慢，由于云端推理排队或并发较高，请您耐心等待...');
-          setTimeout(() => setApiWarning(null), 5000);
-        }
-      }, 10000); // 10 seconds gentle prompt
-
-      try {
-        const response = await fetch('/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({
-            messages: ancestorContext,
-            model: activeModel,
-            enableWebSearch: activeWebSearch,
-            canvasId: canvasId ?? null,
-            nodeId,
-          }),
-          signal: abortController.signal
-        });
-
-        clearTimeout(timeoutId);
-
-        if (!response.ok || !response.body) {
-          let errDetail = `请求失败: ${response.statusText || response.status}`;
-          try {
-            const bodyJson = await response.json();
-            if (bodyJson?.error) errDetail = sanitizeErrorMessage(bodyJson.error);
-          } catch {}
-
-          if (response.status === 401) {
-            openAuthModal('signin');
-            errDetail = '请先登录后再提问，欢迎加入枝想开启深度探索';
-          }
-
-          throw new Error(errDetail);
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) {
-            // Process any trailing data left in buffer
-            if (buffer.trim()) {
-              const trailingLines = buffer.split('\n');
-              for (const line of trailingLines) {
-                if (line.startsWith('data: ')) {
-                  try {
-                    const parsed = JSON.parse(line.slice(6));
-                    if (parsed.grounding) receivedGrounding = parsed.grounding;
-                    if (parsed.text) rawAccumulatedText += parsed.text;
-                  } catch {
-                    // Ignore parse error on partial chunks
-                  }
-                }
-              }
-            }
-            break;
-          }
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n\n');
-          buffer = lines.pop() || '';
-
-          let streamCompleted = false;
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              try {
-                const parsed = JSON.parse(line.slice(6));
-                if (parsed.error) {
-                  throw new Error(parsed.error);
-                }
-                if (parsed.grounding) {
-                  receivedGrounding = parsed.grounding;
-                }
-                if (parsed.done) {
-                  if (parsed.grounding) {
-                    receivedGrounding = parsed.grounding;
-                  }
-                  streamCompleted = true;
-                  break;
-                }
-                if (parsed.reset) {
-                  rawAccumulatedText = '';
-                  // 模型容灾换流：旧流来源一并作废，避免「文本无来源、列表留旧来源」错位
-                  receivedGrounding = undefined;
-                  setNodes((nds) =>
-                    nds.map((n) => {
-                      if (n.id !== nodeId) return n;
-                      const d = n.data as unknown as ChatNodeData;
-                      return {
-                        ...n,
-                        data: {
-                          ...d,
-                          answer: '',
-                        },
-                      };
-                    })
-                  );
-                  continue;
-                }
-                if (parsed.text) {
-                  rawAccumulatedText += parsed.text;
-
-                  // Separate answer from suggestions in real-time
-                  const currentAnswer = extractSuggestions(rawAccumulatedText).answer.trimEnd();
-
-                  // 流式内容按固定间隔强制落一次盘（见 STREAM_FLUSH_INTERVAL_MS）：
-                  // 只靠 600ms 防抖的话，生成中途崩掉/被切走 = 整段回答丢
-                  if (Date.now() - lastStreamFlushRef.current >= STREAM_FLUSH_INTERVAL_MS) {
-                    lastStreamFlushRef.current = Date.now();
-                    requestImmediateSave();
-                  }
-
-                  // Stream answer update into card
-                  setNodes((nds) =>
-                    nds.map((n) => {
-                      if (n.id !== nodeId) return n;
-                      const d = n.data as unknown as ChatNodeData;
-                      return {
-                        ...n,
-                        data: {
-                          ...d,
-                          answer: currentAnswer,
-                        },
-                      };
-                    })
-                  );
-                }
-              } catch (e: any) {
-                if (e.message && !e.message.includes('JSON')) {
-                  throw e;
-                }
-              }
-            }
-          }
-          if (streamCompleted) break;
-        }
-
-        // Stream finished: finalize answer and parse suggestions
-        const { answer: finalAnswer, suggestions: modelSuggestions } = extractSuggestions(rawAccumulatedText);
-        let parsedSuggestions = modelSuggestions;
-
-        if (parsedSuggestions.length === 0) {
-          parsedSuggestions = getFallbackSuggestions(questionText);
-        }
-
-        // Get parent depth
-        const currentNode = nodesRef.current.find((n) => n.id === nodeId);
-        const currentDepth = (currentNode?.data as unknown as ChatNodeData)?.depth ?? 0;
-
-        // Atomically prepare finalized nodes with completed idle status
-        const finalizedNodes = nodesRef.current.map((n) => {
-          if (n.id !== nodeId) return n;
-          const d = n.data as unknown as ChatNodeData;
-          return {
-            ...n,
-            data: {
-              ...d,
-              answer: finalAnswer,
-              status: 'idle' as const,
-              suggestionsSpawned: true,
-              model: activeModel,
-              enableWebSearch: activeWebSearch,
-              grounding: receivedGrounding || d.grounding,
-              errorMessage: undefined,
-            },
-          };
-        });
-
-        // Immediately sync nodesRef and React state to avoid race conditions
-        // 定稿必须立即落盘：最终答案与本轮 status/grounding 是这一问的成果，
-        // 而灵感占位节点是否新增取决于服务端是否回了 suggestions（可能没有 id 变化 →
-        // 只靠结构判据抓不到），所以这里显式置位。
-        requestImmediateSave();
-        nodesRef.current = finalizedNodes;
-        setNodes(finalizedNodes);
-
-        // Auto-spawn suggested question nodes using the fresh finalizedNodes
-        spawnSuggestedNodes(nodeId, parsedSuggestions, currentDepth, finalizedNodes);
-
-        // 自动命名（fire-and-forget，不阻塞卡片就绪；只命名一次）
-        void autoTitleNode(nodeId, questionText, finalAnswer);
-      } catch (err: any) {
-        console.error('Error generating AI response:', err);
-        const friendlyMessage = sanitizeErrorMessage(err);
-        // 失败也要落盘：已经流出来的部分回答还在节点里，别让它只活在内存中
-        requestImmediateSave();
-        setNodes((nds) => {
-          const updated = nds.map((n) => {
-            if (n.id !== nodeId) return n;
-            const d = n.data as unknown as ChatNodeData;
-            return {
-              ...n,
-              data: {
-                ...d,
-                status: 'error' as const,
-                errorMessage: friendlyMessage,
-              },
-            };
-          });
-          nodesRef.current = updated;
-          return updated;
-        });
-      } finally {
-        // 流已结束（成功或失败）：摘掉引用，避免卸载时去 abort 一个早已完成的请求
-        if (activeStreamAbortRef.current === abortController) activeStreamAbortRef.current = null;
-      }
-    },
-    [
-      defaultModel,
-      defaultEnableWebSearch,
-      setNodes,
-      spawnSuggestedNodes,
-      autoTitleNode,
-      requestImmediateSave,
-    ]
-  );
+  const { generateNodeAnswer, apiWarning, setApiWarning } = useCanvasChatStream({
+    nodesRef,
+    edgesRef,
+    setNodes,
+    canvasId,
+    boardNeedsAutoName,
+    defaultModel,
+    defaultEnableWebSearch,
+    checkAiQuota,
+    requestImmediateSave,
+    openAuthModal,
+    spawnSuggestedNodes,
+  });
 
   // Shared helper: create a child chat node + edge under a source node, auto-layout, pan camera to the new node, start generation
   const createChildChatNode = useCallback(
@@ -923,21 +621,12 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
   );
 
   // Helper to recursively collect all descendant node IDs downstream
-  const getDescendantNodeIds = useCallback((rootId: string, currentEdges = edgesRef.current): Set<string> => {
-    const descendants = new Set<string>();
-    const queue = [rootId];
-    while (queue.length > 0) {
-      const curr = queue.shift()!;
-      const outgoing = currentEdges.filter((e) => e.source === curr);
-      outgoing.forEach((e) => {
-        if (!descendants.has(e.target)) {
-          descendants.add(e.target);
-          queue.push(e.target);
-        }
-      });
-    }
-    return descendants;
-  }, []);
+  const getDescendantNodeIds = useCallback(
+    (rootId: string, currentEdges = edgesRef.current): Set<string> => {
+      return collectDescendantNodeIds(rootId, currentEdges);
+    },
+    []
+  );
 
   // 手动连线校验（isValidConnection）：同一条推导链上的节点禁止互连——
   // 祖先方向（会成环，服务端 NODE_PARENT_CYCLE 兜底）与后代方向（同链捷径）都拦；
@@ -1334,97 +1023,11 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
     [reactFlowInstance, setNodes, setEdges]
   );
 
-  // Expose trigger refs to parent
-  // Spec K1 修复：导出前临时关闭 onlyRenderVisibleElements 全量渲染（虚拟化会让
-  // 视口外的节点/边不在 DOM，捕获出的图片丢连线），捕获完成恢复
-  const [exportFullRender, setExportFullRender] = useState(false);
+  // Expose add-node trigger refs to parent
   useEffect(() => {
-    if (triggerAutoLayoutRef) triggerAutoLayoutRef.current = () => applyLayout();
-    if (triggerFitViewRef)
-      triggerFitViewRef.current = () =>
-        reactFlowInstance.fitView({ padding: 0.2, duration: 500 });
     if (triggerAddRootRef) triggerAddRootRef.current = handleAddRootNode;
     if (triggerAddNoteRef) triggerAddNoteRef.current = handleAddNoteNode;
-    if (triggerFocusNodeRef) triggerFocusNodeRef.current = focusSearchHit;
-    if (triggerExportPngRef) {
-      triggerExportPngRef.current = async (title: string) => {
-        setExportFullRender(true);
-        try {
-          // 等两帧 + 余量，确保 React 完成全量 DOM 挂载后再捕获
-          await new Promise<void>((r) =>
-            requestAnimationFrame(() => requestAnimationFrame(() => r()))
-          );
-          await new Promise<void>((r) => setTimeout(r, 80));
-          return await exportCanvasAsPng(nodesRef.current, title);
-        } finally {
-          setExportFullRender(false);
-        }
-      };
-    }
-  }, [
-    applyLayout,
-    reactFlowInstance,
-    handleAddRootNode,
-    handleAddNoteNode,
-    triggerAutoLayoutRef,
-    triggerFitViewRef,
-    triggerAddRootRef,
-    triggerAddNoteRef,
-    triggerFocusNodeRef,
-    triggerExportPngRef,
-    focusSearchHit,
-  ]);
-
-  // Text selection handler: detect selection inside chat card to pop up "钻入兔子洞" capsule
-  useEffect(() => {
-    const handleMouseUp = () => {
-      const selection = window.getSelection();
-      if (!selection || selection.isCollapsed || !selection.toString().trim()) {
-        setSelectionPayload(null);
-        return;
-      }
-
-      const selectedText = selection.toString().trim();
-      if (selectedText.length < 2) {
-        setSelectionPayload(null);
-        return;
-      }
-
-      // Check if selection is within a node
-      let anchorElem: HTMLElement | null = selection.anchorNode as HTMLElement;
-      if (anchorElem && anchorElem.nodeType === window.Node.TEXT_NODE) {
-        anchorElem = anchorElem.parentElement;
-      }
-
-      const nodeContainer = anchorElem?.closest('.react-flow__node');
-      if (!nodeContainer) {
-        setSelectionPayload(null);
-        return;
-      }
-
-      const nodeId = nodeContainer.getAttribute('data-id');
-      if (!nodeId) return;
-
-      const range = selection.getRangeAt(0);
-      const rect = range.getBoundingClientRect();
-
-      setSelectionPayload({
-        nodeId,
-        text: selectedText,
-        clientRect: {
-          top: rect.top,
-          left: rect.left,
-          width: rect.width,
-          height: rect.height,
-        },
-      });
-    };
-
-    document.addEventListener('mouseup', handleMouseUp);
-    return () => {
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, []);
+  }, [triggerAddRootRef, triggerAddNoteRef, handleAddRootNode, handleAddNoteNode]);
 
   const onConnect = useCallback(
     (params: Connection) => {
@@ -1652,6 +1255,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
           deleteKeyCode={['Backspace', 'Delete']}
           onPaneClick={handlePaneClick}
           onNodeDragStart={handleNodeDragStart}
+          onNodeDrag={handleNodeDrag}
           onNodeDragStop={handleNodeDragStop}
           onSelectionDragStart={handleSelectionDragStart}
           onSelectionDragStop={handleSelectionDragStop}
