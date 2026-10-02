@@ -46,6 +46,8 @@ export interface ChatNodeData {
   autoTitled?: boolean;
   /** 只读模式（分享页/示例画布）：隐藏交互控件，仅保留展示 */
   readOnly?: boolean;
+  /** 手动拖拽定位：标定该节点已被用户拖拽移动过，自动布局保留其相对坐标 */
+  isManualPosition?: boolean;
 }
 
 export interface NoteNodeData {
