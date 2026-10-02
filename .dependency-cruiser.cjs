@@ -71,10 +71,10 @@ module.exports = {
     {
       name: 'lib-cannot-depend-on-upper',
       severity: 'error',
-      comment: 'lib/* 是纯工具，禁止反向依赖 routes/services/repositories/core',
+      comment: 'lib/* 是纯工具，禁止反向依赖 routes/services/repositories/core/policies',
       from: { path: '^server/lib/' },
       to: {
-        path: '^server/(routes|services|repositories|core|middleware|jobs)/',
+        path: '^server/(routes|services|repositories|core|middleware|jobs|policies)/',
       },
     },
 
@@ -100,8 +100,33 @@ module.exports = {
       from: { path: '^server/core/' },
       to: { path: '^server/routes/' },
     },
+    {
+      name: 'core-cannot-depend-on-policies',
+      severity: 'error',
+      comment: 'core/* 是基础设施，禁止依赖 policies',
+      from: { path: '^server/core/' },
+      to: { path: '^server/policies/' },
+    },
+
+    // ---------- 2.5 policies 领域策略层 ----------
+    {
+      name: 'policies-cannot-depend-on-upper',
+      severity: 'error',
+      comment: 'policies/* 是领域策略层，禁止依赖 routes/services/repositories/middleware/jobs',
+      from: { path: '^server/policies/' },
+      to: {
+        path: '^server/(routes|services|repositories|middleware|jobs)/',
+      },
+    },
 
     // ---------- 3. repositories 数据访问层 ----------
+    {
+      name: 'repositories-cannot-depend-on-policies',
+      severity: 'error',
+      comment: 'repositories/* 是数据访问层，禁止依赖 policies',
+      from: { path: '^server/repositories/' },
+      to: { path: '^server/policies/' },
+    },
     {
       name: 'repositories-cannot-depend-on-services',
       severity: 'error',
