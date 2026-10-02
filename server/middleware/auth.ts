@@ -5,6 +5,7 @@ import type { UserRecord, SessionRecord } from '../core/records.js';
 import { UnauthorizedError } from '../lib/errors.js';
 import { extractSessionToken, clearSessionCookie } from '../lib/session-cookie.js';
 import { runWithSystem, runWithUser } from '../core/db-context.js';
+import { AccessPolicy } from '../policies/access.policy.js';
 
 // Extend Express Request type
 declare global {
@@ -302,11 +303,13 @@ export async function authMiddleware(req: Request, _res: Response, next: NextFun
   if (authResult) {
     const { session, user } = authResult;
 
-    if (!user.is_active) {
+    try {
+      AccessPolicy.assertUserActive(user);
+    } catch (e: any) {
       clearSessionCookie(_res);
       _res.status(403).json({
-        error: '账号已被系统冻结，请联系运营管理员',
-        code: 'ACCOUNT_FROZEN',
+        error: e.message || '账号已被系统冻结，请联系运营管理员',
+        code: e.code || 'ACCOUNT_FROZEN',
       });
       return;
     }
@@ -325,17 +328,18 @@ export async function authMiddleware(req: Request, _res: Response, next: NextFun
 }
 
 /**
- * Require admin role
+ * Require admin role（委托 AccessPolicy）
  */
 export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
-  if (!req.user || req.user.role !== 'admin') {
+  try {
+    AccessPolicy.assertAdmin(req.user);
+    next();
+  } catch (e: any) {
     res.status(403).json({
-      error: '越权访问：该接口仅限系统管理员访问',
-      code: 'FORBIDDEN_ADMIN_ONLY',
+      error: e.message || '越权访问：该接口仅限系统管理员访问',
+      code: e.code || 'FORBIDDEN_ADMIN_ONLY',
     });
-    return;
   }
-  next();
 }
 
 /**

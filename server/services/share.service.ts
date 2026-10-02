@@ -11,6 +11,7 @@ import { recordEventLog } from '../repositories/event-log.repository.js';
 import { ForbiddenError, NotFoundError } from '../lib/errors.js';
 import type { UserRecord } from '../core/records.js';
 import { runWithSystem } from '../core/db-context.js';
+import { AccessPolicy } from '../policies/access.policy.js';
 
 
 /**
@@ -39,9 +40,7 @@ export async function createShareForCanvas(
   if (!info.exists) {
     throw new NotFoundError('画布不存在');
   }
-  if (info.ownerId !== user.id) {
-    throw new ForbiddenError('只能分享自己的画板', 'CANVAS_FORBIDDEN');
-  }
+  AccessPolicy.assertCanShareCanvas(user.id, info.ownerId);
 
   // getCanvas 内部已含属主校验，属主路径必定放行
   const canvas = await getCanvas(canvasId, user.id);
@@ -81,9 +80,7 @@ export async function revokeShareForCanvas(user: UserRecord, canvasId: string): 
   if (!info.exists) {
     throw new NotFoundError('画布不存在');
   }
-  if (info.ownerId !== user.id) {
-    throw new ForbiddenError('只能管理自己的画板分享', 'CANVAS_FORBIDDEN');
-  }
+  AccessPolicy.assertCanManageShare(user.id, info.ownerId);
 
   const revoked = await revokeShareByCanvasId(canvasId);
   if (!revoked) {

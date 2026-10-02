@@ -12,6 +12,7 @@ import type { PaymentProvider } from './payment/payment-provider.js';
 import { recordAuditLog } from '../repositories/audit.repository.js';
 import type { OrderRecord, UserRecord } from '../core/records.js';
 import { runWithSystem } from '../core/db-context.js';
+import { AccessPolicy } from '../policies/access.policy.js';
 
 
 const planInfoMap = {
@@ -93,9 +94,7 @@ export async function mockPayOrder(userId: string, orderNo: string): Promise<{
   if (!order) {
     throw new NotFoundError('订单不存在');
   }
-  if (order.user_id !== userId) {
-    throw new ForbiddenError('无权操作此订单');
-  }
+  AccessPolicy.assertOrderOwnership(userId, order.user_id);
   if (order.status !== 'pending') {
     throw new ConflictError('订单已支付或已关闭', 'ORDER_ALREADY_PAID');
   }
@@ -243,9 +242,7 @@ export async function getOrderStatus(userId: string, orderNo: string): Promise<O
   if (!order) {
     throw new NotFoundError('订单不存在');
   }
-  if (order.user_id !== userId) {
-    throw new ForbiddenError('无权操作此订单');
-  }
+  AccessPolicy.assertOrderOwnership(userId, order.user_id);
   await syncPendingOrderWithProvider(order);
   return (await findOrderByNo(orderNo)) ?? order;
 }

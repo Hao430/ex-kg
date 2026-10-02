@@ -16,6 +16,7 @@ import { recordAuditLog } from '../repositories/audit.repository.js';
 import { recordEventLog } from '../repositories/event-log.repository.js';
 import { runWithSystem } from '../core/db-context.js';
 import type { CanvasRecord } from '../core/records.js';
+import { AccessPolicy } from '../policies/access.policy.js';
 
 /**
  * ADR-0018 的 legacy 共享默认板：`default-board` / `default-canvas` 在 SAVE_DEFAULT_BOARD_MODE
@@ -112,9 +113,7 @@ export async function updateUserCanvasMeta(
  */
 export async function assertCanvasAttributableByUser(canvasId: string, userId: string): Promise<void> {
   const info = await withLegacySharedBoard(canvasId, () => getCanvasOwnerInfo(canvasId));
-  if (info.exists && info.ownerId !== userId && !isSharedDefaultCanvas(canvasId)) {
-    throw new NotFoundError('画板不存在或无权访问 (IDOR Protected)');
-  }
+  AccessPolicy.assertCanvasAttributable(userId, info, isSharedDefaultCanvas(canvasId));
 }
 
 /** 节点检索：userId 必填（严格属主制，ADR-0016 口径），canvasId 可选（省略 = 检索本人全部画板） */
