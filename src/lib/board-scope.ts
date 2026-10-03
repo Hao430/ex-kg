@@ -80,6 +80,14 @@ export function metaDirtyKey(scope?: ScopeKey): string {
 export function foldersKey(scope?: ScopeKey): string {
   return scopedKey('folders', scope);
 }
+/** Spec R1：练习历史本地缓存（按 scope 隔离，离线可见） */
+export function quizCacheKey(scope?: ScopeKey): string {
+  return scopedKey('quiz_cache', scope);
+}
+/** Spec R1：未提交的作答草稿（sessionStorage 之外的跨刷新草稿；按 scope 隔离） */
+export function quizDraftKey(scope?: ScopeKey): string {
+  return scopedKey('quiz_draft', scope);
+}
 export function pendingCreateKey(scope?: ScopeKey): string {
   return scopedKey('pending_creates', scope);
 }

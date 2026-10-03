@@ -226,8 +226,11 @@ CREATE INDEX IF NOT EXISTS idx_quiz_attempts_user ON quiz_attempts(user_id, crea
 - 组件：`src/components/quiz/QuizPanel.tsx` + `quiz-store.ts`（照 `folder-store.ts` 范式：服务端为准 + 本地按 scope 缓存；**跨画板数据不进 board-store/sync-queue**——那些是画布内容链路）。
 - **入口落点：画板库（`BoardLibraryModal`）内新增「练习」tab**（用户 2026-10-03 认可）。
   - 理由：顶栏已有同步态/画板切换/新建/画板库/灵感开关/节点数/搜索/布局/居中/`更多`菜单/VIP/主题/用户菜单共 12 处，**再加第 6 个常驻按钮不自然**；而画板库已是「非画布内容的集中管理面」，练习是跨画板资产，归属同一心智。
-  - ⚠️ **实现代价（评审核实，勿低估）**：`src/components/ui/BoardLibraryModal.tsx`（455 行）**当前没有任何 tab 架构**，直接「加个 tab」实际是**先引入 tab 骨架**。范式照 `src/components/admin/AdminDashboardModal.tsx:64` 的 `useState<'overview'|…>` 联合类型 + 按钮切换写法。
+  - ⚠️ **实现代价（评审核实，勿低估）**：`src/components/ui/BoardLibraryModal.tsx`（455 行）**原本没有任何 tab 架构**，直接「加个 tab」实际是**先引入 tab 骨架**（`tab` state + 切换栏 + 练习态下隐藏文件夹侧栏与画板列表）。范式照 `src/components/admin/AdminDashboardModal.tsx:64` 的 `useState<'…'|'…'>` 写法。
   - 二期若练习要独立成更重的功能，可从画板库 tab 提升为独立顶栏入口——届时面板已是独立组件，迁移成本低。
+- ⚠️ **feature flag 的下发链路**（实现时补上的接缝）：本仓**没有**运行时配置下发机制（无 `VITE_` 注入、`/me` 也不带开关），前端无从得知后端 `QUIZ_ENABLED`。处置：由 **`GET /api/auth/me` 的 `user.features.quiz`** 下发（前端 `AuthContext.refreshUser` 是整体 `setUser(data.user)`，故自动透传），`BoardLibraryModal` 的 `quizEnabled` prop 据此隐藏入口。
+  - 后端 env 仍是权威，端点侧另有 `ensureQuizEnabled()` 兜底 404——前端漏判也只是入口露出点，不至于出现异常行为。
+- ⚠️ **草稿计时的一个易错点**（实现时修正）：每题 `elapsedMs` 若用「提交时刻 − 开卷时刻」或据此均分，**每题都等于总时长**，判断题的 `low_confidence`（3s）就永远判不出秒答、标记形同虚设。正确口径：**每题用时 = 本题首答时刻 − 上一题首答时刻**（首题用开卷时刻）。
 - 作答草稿：照 `chat-draft.ts` 先例存 sessionStorage，切走面板/刷新不丢；**提交成功后必须清除**。
 - scope 隔离：走 `src/lib/board-scope.ts` 的 `scopedKey` 家族，游客不显示入口。
 - 面向用户文案：不出现「多 Agent」「审核」「难度标签」「自审」等内部术语（先例：`src/lib/checklist.ts:23-28` 四步引导全是动词短语、零术语）。难度文案用「入门/进阶/困难」。

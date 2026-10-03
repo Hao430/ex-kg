@@ -1403,6 +1403,8 @@ function MainApp() {
           onCreateFolder={handleCreateFolder}
           onRenameFolder={handleRenameFolder}
           onDeleteFolder={handleDeleteFolder}
+          userId={user?.id ?? null}
+          quizEnabled={Boolean(user?.features?.quiz)}
         />
       )}
 
