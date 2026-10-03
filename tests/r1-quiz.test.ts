@@ -21,6 +21,8 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createApp } from '../server/app.js';
+import { saveAiModelConfig } from '../server/repositories/ai.repository.js';
+import { sampleAiAdvanced, sampleBiologyBeginner } from '../docs/spike/r1-quiz-prompt-validation.js';
 
 // ⚠️ 必须在导入 app 之前设置：feature flag 在模块导入期读取
 process.env.QUIZ_ENABLED = 'true';
@@ -34,6 +36,30 @@ const USER_EMAIL = 'user@deepdive.ai';
 const USER_PASSWORD = 'User123456!';
 const VIP_EMAIL = 'vip@deepdive.ai';
 const VIP_PASSWORD = 'Vip123456!';
+
+// ── fetch 分发器（照 tests/h2-grounding-chain.test.ts 既有范式）──
+// ⚠️ 出题是真实 AI 调用，测试环境无有效凭据（.env 的 key 是占位符），故打桩。
+// 桩数据直接复用 docs/spike/ 里那两份**已验证过**的真实样本（含 5 题 + 自审结论），
+// 它们通过了阶段 2 的确定性校验（题量/选项数/标签/答案对应关系）。
+const origFetch = globalThis.fetch;
+
+/** /responses 的非流式 JSON 响应（qwen/openai 兼容形态，extractResponseText 认 output[].content[].text） */
+function stubQuizResponse(): Response {
+  return new Response(
+    JSON.stringify({
+      output: [
+        {
+          type: 'message',
+          content: [
+            { type: 'output_text', text: JSON.stringify(sampleAiAdvanced.output) },
+          ],
+        },
+      ],
+      usage: { total_tokens: 1500 },
+    }),
+    { status: 200, headers: { 'content-type': 'application/json' } },
+  );
+}
 
 async function waitSeeds(tries = 50): Promise<void> {
   for (let i = 0; i < tries; i++) {
@@ -111,9 +137,29 @@ before(async () => {
   await waitSeeds();
   userCookie = await signIn(USER_EMAIL, USER_PASSWORD);
   vipCookie = await signIn(VIP_EMAIL, VIP_PASSWORD);
+
+  // 出题走 openai 兼容渠道 → 打桩 /responses。先例：h2 用 PUT /api/admin/model-config 改配置，
+  // 这里直接调仓储（内存模式下写入 systemSettings，跨请求生效）
+  await saveAiModelConfig({
+    provider: 'openai',
+    openai_base_url: 'https://example.invalid/v1',
+    openai_api_key: 'stub-key-for-tests',
+    openai_model: 'stub-model',
+    gemini_model: 'stub-model',
+    temperature: 0.7,
+    max_tokens: 4096,
+  });
+
+  // fetch 分发器：/responses → 出题桩；其余（本地 API 请求）透传
+  (globalThis as any).fetch = async (input: any, init?: any) => {
+    const url = typeof input === 'string' ? input : input?.url || String(input);
+    if (url.includes('/responses')) return stubQuizResponse();
+    return origFetch(input, init);
+  };
 });
 
 after(async () => {
+  (globalThis as any).fetch = origFetch;
   await new Promise<void>((resolve) => server.close(() => resolve()));
 });
 

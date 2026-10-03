@@ -570,3 +570,70 @@ export const adminFeedbackReadRateLimiter = rateLimit({
     code: 'RATE_LIMIT_EXCEEDED',
   },
 });
+
+// ─────────────────────── Spec R1：AI 练习限流器组 ───────────────────────
+
+/**
+ * 出题限流：20 req/min per user（Spec R1）。
+ *
+ * 独立实例（ADR-0007「每类流量独立实例」）——出题是 AI 调用，与读列表/判卷都不同类，
+ * 共桶会让翻历史把出题额度吃光。额度对齐 `autoTitleRateLimiter`（同为非流式 AI 小额调用）。
+ */
+export const quizGenerateRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => (req.user ? `user_${req.user.id}` : ipKeyGenerator(req.ip || 'anonymous')),
+  message: {
+    error: '出题请求过于频繁，请稍后再试',
+    code: 'RATE_LIMIT_EXCEEDED',
+  },
+});
+
+/**
+ * 24 小时练习次数闸门（Spec R1 §4.4）。
+ *
+ * ⚠️ **为什么不用 `assertCanInfer` 旁的新增分支**：那个函数在 `!canvasId` 时
+ * **直接 return 放行**（`quota.service.ts:58`），而练习不带 canvasId——
+ * 挂上去等于什么都不做，正是「看起来在配额、实际空转」的典型（参考实现的
+ * `difficulty_judge.py` 就是这么坏的）。故此处是**独立的时间窗口限流器**。
+ *
+ * ⚠️ `BOARD_LIMIT`/`NODE_LIMIT` 复用不了：两者都是**空间维度**计数，没有时间窗口概念。
+ *
+ * 已知代价（接受）：固定窗口非日历日、进程重启即失效。ADR-0007 已把
+ * 「in-memory 单实例」记为已知代价，且生产是单进程（无 cluster 配置），一期足够。
+ */
+export const quizDailyAttemptLimiter = rateLimit({
+  windowMs: 24 * 60 * 60 * 1000,
+  // VIP/Admin 不限（返回一个大数而非 Infinity，避免与 express-rate-limit 的断言冲突）
+  max: (req: Request) => (req.user?.role === 'vip' || req.user?.role === 'admin' ? 1_000_000 : 20),
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => (req.user ? `user_${req.user.id}` : ipKeyGenerator(req.ip || 'anonymous')),
+  handler: (req: Request, res: Response) => {
+    const role = req.user?.role || 'user';
+    res.status(429).json({
+      error: '今日练习次数已达上限，请明日再试',
+      code: 'QUIZ_DAILY_LIMIT_REACHED',
+      role,
+    });
+  },
+});
+
+/**
+ * 交卷/判卷与读列表限流：60 req/min per user（Spec R1）。
+ * 判卷是**确定性答案比对**（不调模型），故额度较宽；但仍独立实例，
+ * 避免「提交时被出题限流误伤」或反之。
+ */
+export const quizAttemptRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => (req.user ? `user_${req.user.id}` : ipKeyGenerator(req.ip || 'anonymous')),
+  message: {
+    error: '练习提交过于频繁，请稍后再试',
+    code: 'RATE_LIMIT_EXCEEDED',
+  },
+});

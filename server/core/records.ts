@@ -302,6 +302,12 @@ export interface QuizAttemptRecord {
   status: 'in_progress' | 'completed';
   /** ⚠️ 含 correct/explanation，**任何列表查询都不得 select/返回该列** */
   questions: QuizQuestionRecord[];
+  /**
+   * 题数（`questions` 的长度）。
+   * ⚠️ 存在的理由：`listAttempts` 刻意不 select `questions`（防答案泄漏），
+   * 故列表页算不出题数——需由 DB 侧 `jsonb_array_length` 或内存分支直接填充。
+   */
+  questionCount: number;
   /** null = 未提交；非 null = 已完成（判卷结果） */
   answers: QuizAnswerRecord[] | null;
   /** 出题自审结论（pedagogical_analysis 摘要、是否解析失败），供面板透明展示 */

@@ -96,7 +96,8 @@ export interface GenerateQuizMeta {
 }
 
 export interface GenerateQuizResult {
-  questions: GeneratedQuiz['questions'];
+  /** 已带上题级 id 并完成洗牌，可直接落库 */
+  questions: QuizQuestionRecord[];
   meta: GenerateQuizMeta;
 }
 

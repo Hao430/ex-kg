@@ -17,13 +17,16 @@ import type { QuizAttemptRecord, QuizAnswerRecord } from '../core/records.js';
  */
 
 function toAttemptRecord(row: any): QuizAttemptRecord {
+  const questions = Array.isArray(row.questions) ? row.questions : [];
   return {
     id: row.id,
     user_id: row.user_id,
     topic: row.topic,
     difficulty: row.difficulty,
     status: row.status,
-    questions: Array.isArray(row.questions) ? row.questions : [],
+    questions,
+    // 列表查询不 select questions，改由 DB 侧 jsonb_array_length 提供
+    questionCount: Number(row.question_count ?? questions.length) || 0,
     answers: Array.isArray(row.answers) ? row.answers : null,
     review: row.review && typeof row.review === 'object' ? row.review : {},
     created_at: new Date(row.created_at).toISOString(),
@@ -41,7 +44,8 @@ export async function listAttempts(userId: string, limit = 20): Promise<QuizAtte
   if (db) {
     try {
       const res = await db.query(
-        `SELECT id, user_id, topic, difficulty, status, review, created_at, completed_at
+        `SELECT id, user_id, topic, difficulty, status, review, created_at, completed_at,
+                jsonb_array_length(questions) AS question_count
          FROM quiz_attempts WHERE user_id = $1
          ORDER BY created_at DESC LIMIT $2`,
         [userId, limit]
@@ -58,7 +62,7 @@ export async function listAttempts(userId: string, limit = 20): Promise<QuizAtte
     .filter((a) => a.user_id === userId)
     .sort((a, b) => b.created_at.localeCompare(a.created_at))
     .slice(0, limit)
-    .map((a) => ({ ...a, questions: [], answers: null }));
+    .map((a) => ({ ...a, questions: [], answers: null, questionCount: a.questions.length }));
 }
 
 /** 单次详情（含题目与答案）。属主校验在 service 层，此处只按 id 取。 */
@@ -116,6 +120,7 @@ export async function createAttempt(data: {
     difficulty: data.difficulty,
     status: 'in_progress',
     questions: data.questions,
+    questionCount: data.questions.length,
     answers: null,
     review: data.review,
     created_at: now,
