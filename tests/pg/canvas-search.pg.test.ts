@@ -8,12 +8,14 @@
  * - ORDER BY depth/pos_y/pos_x 走真实列（pos_x/pos_y 是 DOUBLE PRECISION 列）
  * - n.status <> 'suggested' 过滤（countCanvasNodes 同口径）
  *
- * 运行方式（不进默认套件；9 个 pg 文件共用同一个库、各自在用例里跑迁移，务必串行）：
+ * 运行方式（不进默认套件；12 个 pg 文件共用同一个库、各自在用例里跑迁移，务必串行）：
  *   docker compose -f docker-compose.pg-smoke.yml up -d postgres
  *   PG_SMOKE=1 npx tsx --test --test-concurrency=1 'tests/pg/*.test.ts'
  * ⚠️ 用例注册固定邮箱（p-pg-search-*），复用写过的旧库会撞 EMAIL_EXISTS(409)，必须空库跑。
+ * ⚠️ 本文件起HTTP server，必须在 after() 里close —— 漏掉会让进程永不退出、
+ * PG 冒烟步骤挂到 GitHub 的 6 小时 job 上限（本文件曾因此导致 CI 连续三次挂死）。
  */
-import { test, describe } from 'node:test';
+import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -102,6 +104,11 @@ async function searchIds(cookie: string, id: string, q: string): Promise<string[
 }
 
 describe('O1 节点搜索 PG 真库', () => {
+  // ⚠️ 必须在 after 里关 server，否则本文件让 node:test 的事件循环永不空闲——
+  // 所有用例跑完后进程不退出，PG 冒烟步骤会一直挂到 GitHub 的6 小时 job 上限
+  // （2026-09-16 起 CI 连续三次 5h58m 挂死，根因即此文件缺失清理）。
+  after(() => new Promise<void>((resolve) => (server ? server.close(() => resolve()) : resolve())));
+
   t('连接与建表 + 探针数据落库', async () => {
     const app = createApp();
     server = http.createServer(app);

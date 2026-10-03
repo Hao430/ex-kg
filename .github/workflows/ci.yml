@@ -76,9 +76,14 @@ jobs:
       - name: 构建（vite build + esbuild 打包后端）
         run: npm run build
 
-      # --test-concurrency=1：这 6 个文件共用同一个库，且各自在 before() 里跑一遍迁移
+      # --test-concurrency=1：这 12 个文件共用同一个库，且各自在 before() 里跑一遍迁移
       # （DDL 取 ACCESS EXCLUSIVE 锁）。并行迁移只会互相等锁，首轮还可能因 5s 语句超时
       # 把迁移打成 return false——那是排障噪声，不是被测行为。串行跑让失败可归因。
+      #
+      # ⚠️ 每个起HTTP server 的用例文件都必须在 after() 里server.close()：漏掉会让
+      # node:test 的事件循环永不空闲（进程不退出），本步骤无限挂起直到 GitHub 的
+      # 6 小时 job 上限（2026-09-16 起曾连续三次 5h58m 挂死，根因是
+      # tests/pg/canvas-search.pg.test.ts 缺失清理）。加测试文件时照既有文件抄这段。
       - name: PG 真库冒烟（tests/pg/*.test.ts，PG_SMOKE 门控）
         run: PG_SMOKE=1 npx tsx --test --test-concurrency=1 'tests/pg/*.test.ts'
 

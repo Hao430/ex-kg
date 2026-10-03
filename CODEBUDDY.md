@@ -24,7 +24,7 @@ docker compose -f docker-compose.pg-smoke.yml up -d postgres && \
 #     npx tsx --test --test-concurrency=1 'tests/pg/*.test.ts'
 ```
 
-**测试框架是 node:test（`tsx --test`），不是 vitest**——用 vitest 跑会全部报「No test suite found」。默认套件（`tests/*.test.ts`）只跑 memory 模式且 **glob 不含 `tests/pg/`**；PG 真库覆盖在 `tests/pg/*.test.ts`（`PG_SMOKE=1` 门控，连不上即红不 skip），**9 个文件共用同一个库、各自在 `before()` 里跑迁移，故用 `--test-concurrency=1` 串行**（不写成文件清单，免得每次加文件都要改这一行）。
+**测试框架是 node:test（`tsx --test`），不是 vitest**——用 vitest 跑会全部报「No test suite found」。默认套件（`tests/*.test.ts`）只跑 memory 模式且 **glob 不含 `tests/pg/`**；PG 真库覆盖在 `tests/pg/*.test.ts`（`PG_SMOKE=1` 门控，连不上即红不skip），**12 个文件共用同一个库、各自在 `before()` 里跑迁移，故用 `--test-concurrency=1` 串行**（不写成文件清单，免得每次加文件都要改这一行）。⚠️ **新增 PG 用例文件若起了 `http.createServer`，必须在 `after()` 里 `server.close()`**——漏掉会让 node:test 的事件循环永不空闲、进程不退出，PG 冒烟步骤无限挂起直到 GitHub 的 6 小时 job 上限（2026-09-16 至09-18 连续三次 5h58m 挂死，根因是 `canvas-search.pg.test.ts` 缺失清理；新增文件照既有文件抄那段`after`）。
 
 ## 架构大图
 
