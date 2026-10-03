@@ -35,7 +35,7 @@ const { createApp } = await import('../../server/app.js');
 // 建表必须显式调用（ADR-0019：懒迁移已从仓储摘除）。动态 import：静态导入会被提升到
 // process.env.DATABASE_URL 赋值之前。
 const { initDbSchema } = await import('../../server/core/schema.js');
-const { runWithUser } = await import('../../server/core/db-context.js');
+const { runWithUser, runWithSystem } = await import('../../server/core/db-context.js');
 const { getOutboxForTest } = await import('../../server/lib/mailer.js');
 // 直查 PG 用自建 owner 池（照 tests/pg/rls-isolation.pg.test.ts 的既有范式）：
 // 策略元数据（pg_class / pg_policies）需以属主视角读，且不受 getMigrationPool 的部署期配置约束。
@@ -44,6 +44,24 @@ const OWNER_URL =
   process.env.DATABASE_ADMIN_URL ||
   'postgres://postgres:postgres@127.0.0.1:5433/arborize_test';
 const ownerPool = new Pool({ connectionString: OWNER_URL });
+
+/**
+ * 直查 PG（策略元数据 / 夹具核对）。
+ *
+ * ⚠️ **必须包 `runWithSystem`**（2026-10-03 CI 首跑踩坑）：本池在首遍
+ * （owner 单角色、未设 DATABASE_ADMIN_URL）会回落到 `PG_TEST_URL` = `arborize_app`
+ * ——也就是**与应用层同一个受 RLS 约束的池**，裸调会被 db-guard 抛
+ * `DB_SCOPE_MISSING`（"应用层漏了 runWithUser"），进而让后续所有查询回落内存、
+ * 整条用例链级联失败。包 `runWithSystem` 后两种跑法都成立。
+ *
+ * 既有范式：`tests/pg/rls-isolation.pg.test.ts` 用独立 OWNER_URL 绕开该问题，
+ * 但那种写法在「未配 owner 凭据」的首跑里会退化成受约束角色，故这里改用显式作用域。
+ */
+function ownerQuery<T = any>(sql: string, params?: unknown[]): Promise<{ rows: T[] }> {
+  return runWithSystem('R1 PG 用例：直查策略元数据与夹具核对', () =>
+    ownerPool.query(sql, params as any[]),
+  );
+}
 const {
   signupRateLimiter,
   sendRegisterCodeRateLimiter,
@@ -170,13 +188,20 @@ describe('R1 AI 练习 PG 真库', () => {
     bobId = (await me(bobCookie)).user.id;
 
     // 出题走 openai 兼容渠道 → 打桩 /responses
-    await saveAiModelConfig({
-      provider: 'openai',
-      openai_base_url: 'https://example.invalid/v1',
-      openai_api_key: 'stub-key',
-      openai_model: 'stub-model',
-      gemini_model: 'stub-model',
-    });
+    // 出题走 openai 兼容渠道 → 打桩 /responses。
+    // ⚠️ 必须包作用域：saveAiModelConfig 走 getDb()，裸调会被 db-guard 拦
+    // （DB_SCOPE_MISSING）而**静默回落内存**，于是 HTTP 路径读不到配置、
+    // 回落到 DEFAULT_AI_MODEL_CONFIG 的 gemini 分支 → 打桩不命中 → 报
+    // 「GEMINI_API_KEY is not configured」（这正是 2026-10-03 CI 首跑的实际现象）。
+    await runWithSystem('R1 PG 用例：写入出题模型桩配置', () =>
+      saveAiModelConfig({
+        provider: 'openai',
+        openai_base_url: 'https://example.invalid/v1',
+        openai_api_key: 'stub-key',
+        openai_model: 'stub-model',
+        gemini_model: 'stub-model',
+      }),
+    );
 
     (globalThis as any).fetch = async (input: any, init?: any) => {
       const url = typeof input === 'string' ? input : input?.url || String(input);
@@ -196,8 +221,7 @@ describe('R1 AI 练习 PG 真库', () => {
 
   t('quiz_attempts 表已建 + RLS 已启用且未 FORCE', async () => {
     await setup();
-    const pool = ownerPool;
-    const res = await pool.query(
+    const res = await ownerQuery(
       `SELECT relname, relrowsecurity, relforcerowsecurity
        FROM pg_class WHERE relname = 'quiz_attempts'`,
     );
@@ -211,8 +235,7 @@ describe('R1 AI 练习 PG 真库', () => {
   });
 
   t('RLS 策略谓词用 user_id = app.user_id，且带 WITH CHECK', async () => {
-    const pool = ownerPool;
-    const res = await pool.query(
+    const res = await ownerQuery(
       `SELECT cmd, qual, with_check FROM pg_policies
        WHERE tablename = 'quiz_attempts' AND policyname = 'tenant_isolation'`,
     );
@@ -241,8 +264,7 @@ describe('R1 AI 练习 PG 真库', () => {
     assert.equal(body.questions.length, 5);
 
     // 直查 PG：questions JSONB 应存有 5 题且含 correct/explanation（服务端独占列）
-    const pool = ownerPool;
-    const row = await pool.query(
+    const row = await ownerQuery(
       'SELECT questions, status FROM quiz_attempts WHERE id = $1',
       [body.attemptId],
     );
@@ -305,8 +327,7 @@ describe('R1 AI 练习 PG 真库', () => {
     assert.ok(graded.results.some((r: any) => r.answer), '② 应返回正确答案');
 
     // PG 侧确认 status 已翻转、answers 已落库
-    const pool = ownerPool;
-    const row = await pool.query(
+    const row = await ownerQuery(
       'SELECT status, answers, completed_at FROM quiz_attempts WHERE id = $1',
       [created.attemptId],
     );
@@ -379,10 +400,8 @@ describe('R1 AI 练习 PG 真库', () => {
   });
 
   t('仓储层：RLS 作用域下 runWithUser 只看得见本人行', async () => {
-    const pool = ownerPool;
-    assert.ok(pool);
     // 属主直查：alice 有行
-    const asOwner = await pool.query(
+    const asOwner = await ownerQuery(
       'SELECT COUNT(*)::int AS n FROM quiz_attempts WHERE user_id = $1',
       [aliceId],
     );
