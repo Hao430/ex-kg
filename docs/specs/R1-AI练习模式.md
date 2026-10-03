@@ -2,9 +2,11 @@
 
 > 来源：用户新功能设想「用户输入想练习的知识点/主题并选择难易程度，AI 自动生成选择题与判断题，应用具备答题记录与分析能力」
 > 参考实现：`HYW2023-s/questioner-skill`（Claude Code Skill，Python + LangGraph + MySQL，**架构不可移植**，见 §2.2）
-> 状态：**已评审定稿（待 Spike 验证）**（2026-10-03 两轮评审 + 用户三项产品决策拍板：① 面向用户用「**掌握情况**」不用「正确率」；② 困难档题量默认 3 **予以保留**、但数量选择器始终可改；③ 入口挂**画板库内新增 tab**；④ **画布与出题一期独立、二期做有机结合**）
+> 状态：**已过 Spike，可开发**（2026-10-03；Spike 结论见 §8.1，实现细节已定稿）
 >
 > 第二轮评审修订（技术优化，无产品取舍）：① **数据模型三表合一**（省约 250 行 + 一整套 F4/RLS/双模/PG 测试面）——一期全部查询在单表里都是单表 SQL，原方案的 `LEFT JOIN` 根本不会出现；② 独立表的理由从「跨画板分析方便」纠正为**安全性**（`getCanvas` 无差别回传 `custom_data`，答案入画布即出网）；③ **每日闸门纠正为 24h 窗口限流器**（原写「挂 `assertCanInfer` 旁」因 `!canvasId` 早退而空转，正是 §2.3 反例一的重演）；④ 「答案不下发」从依赖 zod 默认剥离改为**构造式 DTO**；⑤ 顶栏入口改挂 `BoardLibraryModal` 内 tab（顶栏已有 12 个入口）。
+>
+> 产品决策（用户 2026-10-03 拍板）：面向用户用「**掌握情况**」不用「正确率」（仅文案层，代码字段仍为 `is_correct`）；困难档题量默认 3 **予以保留**、但数量选择器始终可改；入口挂画板库内新增「练习」tab；**画布与出题一期独立、二期做有机结合**。
 >
 > ⚠️ **已知代价（如实记录）**：练习成果不进画布 ⇒ 无分享、无 PNG/Markdown/JSON 导出，将是一期唯一无成果物的功能。二期结合后消除。
 > 关联：ADR-0019（角色分离与 RLS）、ADR-0024（出站请求守卫）、ADR-0007（独立限流器）、#0082（云优先收口）、P1（运营台工单范式）、I 组（联网与计费口径）
@@ -159,8 +161,11 @@ CREATE INDEX IF NOT EXISTS idx_quiz_attempts_user ON quiz_attempts(user_id, crea
   - JSON Schema 顶层包含 `pedagogical_analysis`（包含学科分类、难度档位判据匹配、易混误区设计）与 `questions` 数组，实现单次提示词 CoT 自审闭环。
   - 解析照 `title.service.ts:43-60` 的容错思路（剥围栏 + 截取 `{`~`}` + try/catch），但**失败要落 `review.parseFailed=true` 并呈现给用户**，不能像 `parseTitles` 那样静默返 null。
 - **服务端洗牌流水线（Fisher-Yates Shuffle）**：
-  - 单选题解析校验合法后，服务端必须对 4 个选项执行随机洗牌，将 `correct_answer` 映射到洗牌后的新标签；
-  - 彻底切断 LLM 常见的固有位置偏置（如偏好 A 或 C），使每道题的正确选项均匀分布在 25% 左右。
+  - ⚠️ **Spike 验证过的三步实现，缺一即产生 100% 偏斜**（详见 §8.1）：① 拷贝后洗牌（不原地改）；② **按新位置重新编号标签** `newOptions[i].label = LABELS[i]`；③ **以「正确项文本」为映射锚点**（不是标签），`newCorrect = LABELS[shuffled.findIndex(o => o.text === correctText)]`。
+  - **只洗牌不重新编号 = 没洗**：正确项会连同原标签一起移动，`correct` 恒为原标签（Spike 实测偏斜 100pp）。
+  - 目的：切断 LLM 固有的位置偏置（Spike 实测 AI 组 4/4 题正确答案均为 B；参考实现亦观察到「正解高频落 A 或 C 达 40%~60%」）。
+  - ⚠️ **可注入 RNG**：`shuffle(options, correctLabel, rng = Math.random)`——测试传确定性 RNG 即可断言映射不变式，零额外依赖。
+  - ⚠️ **均匀性验证必须按单题统计**，不可跨题合并（各样本单选题数不等，合并会把「题目数不均」误读成偏斜）。
 - **提示词**：单道主提示词（学科自适应最高优先级 + 题型 + 三档难度内部判据 + 场景多样性 + 误区导向 + 严格 JSON schema），用户主题**只作为 user message 传入**。主题最高 200 字（zod 限制）。
 
 ⚠️ **注入面**：`chat.ts:29` 接受客户端 `systemInstruction`，且 `chat-orchestrator.service.ts:159-160` 的优先级是 `custom_system_prompt?.trim() || systemInstruction || 内置导师 prompt`——**管理员未配 prompt 时，客户端 system prompt 直通模型**。**出题端点绝不能提供该入参**；system prompt 只由服务端常量决定。
@@ -303,25 +308,56 @@ CREATE INDEX IF NOT EXISTS idx_quiz_attempts_user ON quiz_attempts(user_id, crea
 
 ## 8. 落地顺序
 
-**阶段 0：Spike（先做，约 1 小时，决定后续是否返工）**
+**阶段 0：Spike（已完成，2026-10-03）—— 结论见 §8.1，开发据此定稿**
 
-用当前后台配置的模型跑真实调用，量四个指标：
+### 8.1 Spike 结论
 
-1. **结构化 JSON 可解析率**：Gemini `responseJsonSchema` 与 OpenAI 兼容 `response_format: { type: "json_object" }` 成功率（目标 $\ge 95\%$）。
-2. **题目质量与单次自审有效性**：10 组（覆盖 AI 主题与非 AI 主题各半），人工看干扰项是否像干扰项、三档是否真的有梯度、`pedagogical_analysis` 是否准确完成自检（单次合格率需 $\ge 95\%$，决定是否彻底免除二次重生成）。
-3. **选项洗牌分布**：验证 Fisher-Yates 洗牌后选项分布均匀，消除原生位置偏置。
-4. **学科自适应是否生效**：故意输「高中生物光合作用」，看是否被污染成 AI 题。
+**执行方式变更**：原计划用真实 API key 跑 10 组调用，但本机 `.env` 的 `GEMINI_API_KEY` 是占位符、线上凭据按项目纪律不得取出。**改由本模型（CodeBuddy Code）直接充当被测模型**——按拟定提示词真实产出样本，再对样本做机器校验。
 
-**Spike 结论可能推翻的假设**：若 ② 显示三档无区分度且单次合格率低，需调整 CoT 提示词甚至考虑异步二次校验；若 ① 显示结构化约束无效，解析容错须加强。**在此之前不定稿实现细节。**
+这样验的是**提示词与 schema 设计**（最难返工的部分），而「可解析率 / 延迟 / token」属 API 集成层、风险低（`response_format` 是标准能力，解析容错由 jsonrepair + zod + 分层校验兜底），**留待首批真实调用观测**。
+
+样本与提示词存于 `docs/spike/r1-quiz-prompt-validation.ts`（2 组：AI/困难、非 AI 生物/入门，各 5 题）。
+
+| 指标 | 结论 |
+| :--- | :--- |
+| ② 难度梯度 | ✅ 成立。困难档题干 47~70 字（需推导缩放因子、多头子空间、复杂度归因），入门档 25~59 字（概念直给），梯度清晰 |
+| ② 干扰项质量 | ✅ 成立。干扰项均针对具体误区（必要条件当充分条件、权重≠因果、√d_k 与 d_k 比例关系），无荒谬项 |
+| ④ 学科自适应 | ✅ 生效。生物样本的 AI 术语命中为 **0**（同批 AI 样本命中「注意力机制/参数/softmax」反证检测器有效） |
+| ② schema 自洽 | ✅ 5 题结构全部通过 zod 校验；标签为 A/B/C/D、`correct` 均在标签内、选项无重复、判断题 `options=null` |
+| ③ 洗牌均匀性 | ⚠️ **发现一个会写错的实现细节，见下** |
+| ① 可解析率/延迟/token | ⏸ **未测**（无 key），留待线上首批真实调用 |
+
+**🔴 ③ 暴露的实现陷阱：洗牌后必须重新编号标签**
+
+Spike 样本中 AI 组 4 道单选的正确答案**全部是 B**（真实模型有强位置偏置，与参考实现观察到的一致）。若不洗牌，用户选 B 即可白拿分。
+
+⚠️ **但「洗牌 + 同步更新 `correct`」这个 Spec 表述不够——它没说清要重新给标签编号。** 验证发现：**若洗牌后沿用原标签，正确项会连同标签一起移动，`correct` 永远是 B，偏斜 100pp，等于没洗**。
+
+正确实现（三步，缺一不可）：
+1. Fisher-Yates 洗牌（拷贝，不原地改）；
+2. **按新位置重新编号**：`newOptions[i].label = LABELS[i]`（固定 A/B/C/D）；
+3. **用「正确项文本」而非标签做映射锚点**：`correctText = 原选项.find(o => o.label === correct).text`，洗牌后 `idx = findIndex(o => o.text === correctText)`，`newCorrect = LABELS[idx]`。
+
+验证结果（每题 20000 次）：重新编号后单题级分布 `A/B/C/D` 偏斜 **< 1.5pp**，且「`correct` 始终指向原正确项文本」不变式全程成立。
+
+⚠️ **另一个验证陷阱（勿重犯）**：洗牌均匀性**必须按单题统计**，不能跨题合并——不同样本的单选题数量不等（AI 组 4 道、生物组 3 道），合并会把「题目数不均」误判成「洗牌偏斜」（Spike 中一度误报 33pp 偏斜）。
+
+**Spike 后的实现定稿**：
+- 结构化输出：线上 provider 是**千问（OpenAI 兼容 `/responses`）**，故用 `response_format: { type: 'json_schema', json_schema: { schema, name } }`（阿里云已支持 json_schema），不支持时降级 `json_object`。**Gemini 的 `responseJsonSchema` 不吃 `$ref`/`$defs`**——故 schema **不得用 `z.discriminatedUnion`**，须用「统一 shape + `type` 字段判别」（已实测导出无 `$ref`）。
+- zod v4 **内置 `z.toJSONSchema()`**（已实测，`package.json` 版本 4.5.4），无需 `zod-to-json-schema`。
+- 截断防护四步：① 按最坏情况给足 `max_output_tokens`（每题约 400 token → 4000+）；② **检查 `finishReason`，`MAX_TOKENS` 直接判失败重试**（不修复）；③ `jsonrepair` 兜底 + zod 二次校验（`.length(5)` 挡住「4 道半题」）；④ 带 zod issue 重试一次。
+- **新增依赖仅 1 个**：`jsonrepair`（8KB、零依赖、ISC）。GitHub 调研已否决 `instructor-js`（2025-01 停更）、`vercel/ai`（需全家桶+换掉现有双链路）、`openai-node`（本仓走手写 fetch）、`ajv`（zod 已覆盖）、`seedrandom`（2019 年发布，自写 5 行即可）。
 
 **阶段 1**：Schema + 状态机字段 + 归类 + 内存分支 → 阶段 2：出题服务（CoT 自审 + 洗牌流水线） → 阶段 3：端点（两段式 + 限流 + 审计 + 闸门 + 防作弊校验）→ 阶段 4：前端（`BoardLibraryModal` 引入 tab 骨架 + `QuizPanel` + `quiz-store`）→ 阶段 5：测试（默认 + PG）→ 阶段 6：`QUIZ_ENABLED` 登记四处 + 部署手册同步。
 
 ## 9. 验收标准
 
-- [ ] Spike 四个指标已产出并记录在案；据此定稿或调整解析方案。
+- [x] Spike 已执行（2026-10-03，结论见 §8.1）：难度梯度、干扰项质量、学科自适应、schema 自洽、洗牌三步实现均已验证；「可解析率/延迟/token」无 key 未测，留待线上首批真实调用观测。
 - [ ] ① 响应体**不含** `correct` / `explanation`（**构造式 DTO**，非依赖 zod 默认剥离；有测试锁定）。
 - [ ] `listAttempts` **不 select `questions` 列**（历史列表响应体不含答案，有测试锁定）。
-- [ ] 单选题落库前已 Fisher-Yates 洗牌（**观察分布是否明显偏斜，不断言精确均匀**）。
+- [ ] 洗牌**三步齐全**（拷贝洗牌 → 重新编号标签 → 以文本为锚点更新 `correct`）；测试注入确定性 RNG 断言映射不变式；**不断言跨题均匀**。
+- [ ] 出题用 `response_format: { type: 'json_schema' }`（降级 `json_object`）；`maxOutputTokens` ≥ 4000 且检查 `finishReason`（`MAX_TOKENS` → 重试而非修复）；`jsonrepair` 修复后**必须再过 zod**（`.length(5)` 挡住残缺批次）。
+- [ ] 出题 schema **不含 `$ref`/`$defs`**（Gemini 侧限制；当前 provider 为千问但保持该约束以备切换）。
 - [ ] 判卷为确定性答案比对；客户端耗时防篡改与 `low_confidence` 判定有测试（`low_confidence` 阈值**仅**适用于判断题）。
 - [ ] `quiz_attempts` 单表含 `status` + `completed_at`；`UPDATE … WHERE status='in_progress'` 条件更新保证重复提交返回 409。
 - [ ] `quiz_attempts` 已归 `RLS_DIRECT_USER_TABLES`；`purgeUserDataMemory` 的清理代码**放在 `user.repository.ts:472` 早退之前**；`quiz.ts` 已挂 limiter（arch-test 自动覆盖，无需登记变量名）。
