@@ -80,6 +80,15 @@ const { sampleAiAdvanced } = await import('../../docs/spike/r1-quiz-prompt-valid
 
 const IP_KEY = ipKeyGenerator('127.0.0.1');
 
+/**
+ * 当前连接角色是否真受 RLS 约束。
+ * 首遍（owner 单角色）下**属主天然绕过 ENABLE 级 RLS**，「跨作用域读不到他人行」
+ * 这类断言没有判别力，须跳过；第二遍（arborize_app 为主角色）才有。
+ * 范式照 tests/pg/rls-isolation.pg.test.ts。
+ */
+let rlsActive = false;
+let appRole = '';
+
 let server: http.Server;
 let base = '';
 
@@ -182,6 +191,13 @@ describe('R1 AI 练习 PG 真库', () => {
     await registerViaCode(BOB_EMAIL, BOB_PW);
     aliceCookie = await signIn(ALICE_EMAIL, ALICE_PW);
     bobCookie = await signIn(BOB_EMAIL, BOB_PW);
+
+    // 探测角色是否真受 RLS 约束（决定「隔离生效」类断言是否适用）
+    const who = await runWithSystem('R1 PG 用例：探测当前角色', () =>
+      ownerPool.query('SELECT current_user AS role, row_security_active(\'quiz_attempts\') AS active'),
+    );
+    appRole = who.rows[0].role;
+    rlsActive = who.rows[0].active === true;
 
     const me = async (cookie: string) => (await (await fetch(`${base}/api/auth/me`, { headers: { cookie } })).json()) as any;
     aliceId = (await me(aliceCookie)).user.id;
@@ -419,7 +435,7 @@ describe('R1 AI 练习 PG 真库', () => {
     );
   });
 
-  t('仓储层：getAttempt 越权不泄漏（按 id 直取也只在本作用域内可见）', async () => {
+  t('仓储层：getAttempt 越权不泄漏（按 id 直取也只在本作用域内可见）', async (ctx) => {
     resetQuizLimiters();
     const created = await (await fetch(`${base}/api/quiz/attempts`, {
       method: 'POST',
@@ -427,11 +443,16 @@ describe('R1 AI 练习 PG 真库', () => {
       body: JSON.stringify({ topic: 'Transformer 自注意力', difficulty: 'advanced', count: 5 }),
     })).json() as any;
 
-    const asBob = await runWithUser(bobId, () => getAttempt(created.attemptId));
-    if (asBob) {
-      // 若底层角色受 RLS 约束则应查不到；不受约束时由 service 层属主校验兜底（返回非空也不影响正确性）
-      assert.notEqual(asBob.user_id, aliceId, 'bob 作用域内不应拿到 alice 的行');
+    // ⚠️ 属主（首遍）天然绕过 ENABLE 级 RLS，故「bob 读不到 alice」在首遍不成立——
+    // 这不是漏洞而是角色差异。照 tests/pg/rls-isolation.pg.test.ts 的既有范式：
+    // 探测角色是否真受 RLS 约束，不受则跳过该断言（第二遍双角色跑法才会有判别力）。
+    if (!rlsActive) {
+      return ctx.skip(`当前角色 ${appRole} 不受 RLS 约束（属主/BYPASSRLS）：隔离断言仅在双角色跑法下适用`);
     }
+
+    const asBob = await runWithUser(bobId, () => getAttempt(created.attemptId));
+    assert.equal(asBob, null, 'bob 作用域内不应拿到 alice 的行（RLS 应过滤为不可见）');
+
     const asAlice = await runWithUser(aliceId, () => getAttempt(created.attemptId));
     assert.ok(asAlice, 'alice 应能取到自己的行');
     assert.equal(asAlice!.user_id, aliceId);
