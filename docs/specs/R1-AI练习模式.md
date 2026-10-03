@@ -345,7 +345,9 @@ Spike 样本中 AI 组 4 道单选的正确答案**全部是 B**（真实模型�
 **Spike 后的实现定稿**：
 - 结构化输出：线上 provider 是**千问（OpenAI 兼容 `/responses`）**，故用 `response_format: { type: 'json_schema', json_schema: { schema, name } }`（阿里云已支持 json_schema），不支持时降级 `json_object`。**Gemini 的 `responseJsonSchema` 不吃 `$ref`/`$defs`**——故 schema **不得用 `z.discriminatedUnion`**，须用「统一 shape + `type` 字段判别」（已实测导出无 `$ref`）。
 - zod v4 **内置 `z.toJSONSchema()`**（已实测，`package.json` 版本 4.5.4），无需 `zod-to-json-schema`。
-- 截断防护四步：① 按最坏情况给足 `max_output_tokens`（每题约 400 token → 4000+）；② **检查 `finishReason`，`MAX_TOKENS` 直接判失败重试**（不修复）；③ `jsonrepair` 兜底 + zod 二次校验（`.length(5)` 挡住「4 道半题」）；④ 带 zod issue 重试一次。
+- 截断防护五步：① 按最坏情况给足 `max_output_tokens`（每题约 400 token → 4000+）；② **检查 `finishReason`，`MAX_TOKENS` 直接判失败重试**（不修复）；③ **先截出 JSON 本体**（`extractJsonBlock`）；④ `jsonrepair` 兜底 + zod 二次校验（`.length(5)` 挡住「4 道半题」）；⑤ 带 zod issue 重试一次。
+  - ⚠️ **③ 为什么必要（实测）**：`jsonrepair` 遇到「自然语言 + JSON」时会把整段**包成一个数组** —— 实测输入 `好的，这是您要的题目：\n{…}\n希望对您有帮助！` 得到可 parse 的 `{0:…, 1:…, 2:…}`。它**能 parse 但 zod 拒绝**。`response_format: json_schema` 已从协议层消除该场景，但提示词仍只是「请求」模型不输出解释文字，故仍需这道防线。
+  - ⚠️ **④ 为什么必要（实测）**：jsonrepair 对截断输出**只保证「能 parse」**——实测 72% 截断的样本修复后仍剩 4 题（被截掉的内容变 null），单靠它会放行残缺批次，**必须再过 `.length(5)`**。
 - **新增依赖仅 1 个**：`jsonrepair`（8KB、零依赖、ISC）。GitHub 调研已否决 `instructor-js`（2025-01 停更）、`vercel/ai`（需全家桶+换掉现有双链路）、`openai-node`（本仓走手写 fetch）、`ajv`（zod 已覆盖）、`seedrandom`（2019 年发布，自写 5 行即可）。
 
 **阶段 1**：Schema + 状态机字段 + 归类 + 内存分支 → 阶段 2：出题服务（CoT 自审 + 洗牌流水线） → 阶段 3：端点（两段式 + 限流 + 审计 + 闸门 + 防作弊校验）→ 阶段 4：前端（`BoardLibraryModal` 引入 tab 骨架 + `QuizPanel` + `quiz-store`）→ 阶段 5：测试（默认 + PG）→ 阶段 6：`QUIZ_ENABLED` 登记四处 + 部署手册同步。
