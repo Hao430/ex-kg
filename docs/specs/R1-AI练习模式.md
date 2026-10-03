@@ -369,7 +369,7 @@ Spike 样本中 AI 组 4 道单选的正确答案**全部是 B**（真实模型�
 - [x] 24h 次数闸门生效（体验版，VIP 不限）；**出题服务自行实现了 token 闸门检查**（不依赖 `streamChat` 内部的判定）；独立限流均生效。
 - [x] 出题端点**不提供** `systemInstruction` 入参。
 - [x] `npx tsc --noEmit` 通过；`npm test` 全绿（665/665）；`arch-tests` 全绿（34/34）；`npm run build` 通过。
-- [ ] **PG 冒烟两遍绿**（含新增 `tests/pg/r1-quiz.pg.test.ts`）——⛔ **本机无 docker，全程未实测**，须 CI 验证。注意：新增 PG 用例文件**不得**把装配放 `before()` 钩子（不受 `PG_SMOKE` 门控 → 无 PG 时白等 30s），且必须同时 `server.close()` 与 `ownerPool.end()`（两处都是「常开连接 → 事件循环永不空闲」的挂死源）。
+- [x] **PG 冒烟两遍绿**（含 `tests/pg/r1-quiz.pg.test.ts`）——CI run `37125602035` 13/13 步骤全绿。首遍（owner 单角色）R1 用例 10 通过 + 1 例按预期 skip（属主不受 RLS 约束）；**双角色遍 11 例全通过**，其中「getAttempt 越权不泄漏」在 `arborize_app` 角色下**真正执行**并通过（`asBob === null`），证明 RLS 策略放行得通。
 - [x] `QUIZ_ENABLED` 默认 false 并完成四处登记；`docs/数据库建表脚本.sql` 同步（`schema.ts` 仍为唯一事实源）。
 - [x] 面板入口在游客态不渲染；面向用户文案无内部术语，**面向用户一律说「掌握情况」不说「正确率」**（代码字段仍为 `is_correct`，勿混用两套指标）。
 - [x] 画板库已引入 tab 骨架并挂载「练习」tab（`BoardLibraryModal.tsx` 改动不破坏既有画板/分组功能）。

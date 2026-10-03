@@ -87,6 +87,8 @@
 
 - [ ] 生产环境模拟 PG 宕机：写请求 503 而非 200；`/api/db/status` degraded=true（j1 测试）
 - [ ] `npm test` 全绿 + PG 冒烟**两遍**全绿（ADR-0019）：第一遍 owner 单角色、第二遍以 `arborize_app` 为主角色（`docker compose -f docker-compose.pg-smoke.yml up -d postgres`；CI 已内建，命令见部署手册 §6）
+- [ ] **新增 PG 用例时**（2026-10-03 三跑踩坑，代价都是 CI 红）：① 装配**不得**放 `before()` 钩子——它不受 `PG_SMOKE` 门控，用例全 skip 时仍会执行并白等 30s；照既有范式放进第一个 `t()` 用例内部。② 收尾**必须同时** `server.close()` 与**自建池的 `.end()`**（前者漏了是 2026-09-16 三次 5h58m 挂死的根因，后者同样让事件循环永不空闲）。③ **自建直查池在首遍会回落到受 RLS 约束的 app 池**（`DATABASE_ADMIN_URL` 首遍不设），裸查被 db-guard 抛 `DB_SCOPE_MISSING` 且**静默回落内存** → 级联失败；一律用 `runWithSystem(reason)` 包。
+- [ ] **「隔离真的生效」类断言必须先探测角色、且探测用应用层池**（`DATABASE_URL` 那个，不是 ownerPool——`row_security_active()` 反映的是当前连接角色）：否则会出现**假绿**——首遍与双角色跑的是同一条断言，受约束角色下从未真正验证（2026-10-03 实际踩到，CI 全绿但隔离断言被误判跳过）。范式见 `tests/pg/rls-isolation.pg.test.ts` 的 `skipReason` + `appPool` 组合。⚠️ **CI 全绿不等于验证到位**，关键判别力是否真被跑到要逐条核对日志（`✔` vs `﹣ #skip`）。
 - [ ] `tsc --noEmit` 通过
 
 ## 8. 变更方法与同源（ADR-0020，#0013）
