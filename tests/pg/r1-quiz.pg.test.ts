@@ -166,8 +166,8 @@ describe('R1 AI 练习 PG 真库', () => {
     bobCookie = await signIn(BOB_EMAIL, BOB_PW);
 
     const me = async (cookie: string) => (await (await fetch(`${base}/api/auth/me`, { headers: { cookie } })).json()) as any;
-    aliceId = me(aliceCookie).user.id;
-    bobId = me(bobCookie).user.id;
+    aliceId = (await me(aliceCookie)).user.id;
+    bobId = (await me(bobCookie)).user.id;
 
     // 出题走 openai 兼容渠道 → 打桩 /responses
     await saveAiModelConfig({
@@ -206,7 +206,7 @@ describe('R1 AI 练习 PG 真库', () => {
     assert.equal(
       res.rows[0].relforcerowsecurity,
       false,
-      '⛔ 不得 FORCE ROW LEVEL SECURITY（会让 canvas_probe 静默失效，ADR-0019）',
+      '⛔ 不得 FORCE ROW LEVEL SECURITY（会让归属探针静默失效，ADR-0019）',
     );
   });
 

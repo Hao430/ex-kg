@@ -2,7 +2,7 @@
 
 > 来源：用户新功能设想「用户输入想练习的知识点/主题并选择难易程度，AI 自动生成选择题与判断题，应用具备答题记录与分析能力」
 > 参考实现：`HYW2023-s/questioner-skill`（Claude Code Skill，Python + LangGraph + MySQL，**架构不可移植**，见 §2.2）
-> 状态：**已过 Spike，可开发**（2026-10-03；Spike 结论见 §8.1，实现细节已定稿）
+> 状态：**已实现（阶段 1-6 完成，待 CI 验证 PG 冒烟）**（2026-10-03；Spike 结论见 §8.1，实现细节已定稿；测试 14/14 绿、全量 665/665 绿、arch-tests 34/34 绿）
 >
 > 第二轮评审修订（技术优化，无产品取舍）：① **数据模型三表合一**（省约 250 行 + 一整套 F4/RLS/双模/PG 测试面）——一期全部查询在单表里都是单表 SQL，原方案的 `LEFT JOIN` 根本不会出现；② 独立表的理由从「跨画板分析方便」纠正为**安全性**（`getCanvas` 无差别回传 `custom_data`，答案入画布即出网）；③ **每日闸门纠正为 24h 窗口限流器**（原写「挂 `assertCanInfer` 旁」因 `!canvasId` 早退而空转，正是 §2.3 反例一的重演）；④ 「答案不下发」从依赖 zod 默认剥离改为**构造式 DTO**；⑤ 顶栏入口改挂 `BoardLibraryModal` 内 tab（顶栏已有 12 个入口）。
 >
@@ -358,19 +358,20 @@ Spike 样本中 AI 组 4 道单选的正确答案**全部是 B**（真实模型�
 ## 9. 验收标准
 
 - [x] Spike 已执行（2026-10-03，结论见 §8.1）：难度梯度、干扰项质量、学科自适应、schema 自洽、洗牌三步实现均已验证；「可解析率/延迟/token」无 key 未测，留待线上首批真实调用观测。
-- [ ] ① 响应体**不含** `correct` / `explanation`（**构造式 DTO**，非依赖 zod 默认剥离；有测试锁定）。
-- [ ] `listAttempts` **不 select `questions` 列**（历史列表响应体不含答案，有测试锁定）。
-- [ ] 洗牌**三步齐全**（拷贝洗牌 → 重新编号标签 → 以文本为锚点更新 `correct`）；测试注入确定性 RNG 断言映射不变式；**不断言跨题均匀**。
-- [ ] 出题用 `response_format: { type: 'json_schema' }`（降级 `json_object`）；`maxOutputTokens` ≥ 4000 且检查 `finishReason`（`MAX_TOKENS` → 重试而非修复）；`jsonrepair` 修复后**必须再过 zod**（`.length(5)` 挡住残缺批次）。
-- [ ] 出题 schema **不含 `$ref`/`$defs`**（Gemini 侧限制；当前 provider 为千问但保持该约束以备切换）。
-- [ ] 判卷为确定性答案比对；客户端耗时防篡改与 `low_confidence` 判定有测试（`low_confidence` 阈值**仅**适用于判断题）。
-- [ ] `quiz_attempts` 单表含 `status` + `completed_at`；`UPDATE … WHERE status='in_progress'` 条件更新保证重复提交返回 409。
-- [ ] `quiz_attempts` 已归 `RLS_DIRECT_USER_TABLES`；`purgeUserDataMemory` 的清理代码**放在 `user.repository.ts:472` 早退之前**；`quiz.ts` 已挂 limiter（arch-test 自动覆盖，无需登记变量名）。
-- [ ] 24h 次数闸门生效（体验版，VIP 不限）；**出题服务自行实现了 token 闸门检查**（不依赖 `streamChat` 内部的判定）；独立限流均生效。
-- [ ] 出题端点**不提供** `systemInstruction` 入参。
-- [ ] `npx tsc --noEmit` 通过；`npm test` 全绿（含新增用例）；`arch-tests` 全绿；PG 冒烟两遍绿。
-- [ ] `QUIZ_ENABLED` 默认 false 并完成四处登记；`docs/数据库建表脚本.sql` 同步（`schema.ts` 仍为唯一事实源）。
-- [ ] 面板入口在游客态不渲染；面向用户文案无内部术语，**面向用户一律说「掌握情况」不说「正确率」**（代码字段仍为 `is_correct`，勿混用两套指标）。
-- [ ] 画板库已引入 tab 骨架并挂载「练习」tab（`BoardLibraryModal.tsx` 改动不破坏既有画板/分组功能）。
-- [ ] 困难档默认题量 3，但**数量选择器在任意难度下均可见可改**。
-- [ ] **一期不向画布写入任何数据**（`canvas.repository.ts` 无新增写入路径、`nodeTypes` 三处未改动）——为二期结合留出干净的边界。
+- [x] ① 响应体**不含** `correct` / `explanation`（**构造式 DTO**，非依赖 zod 默认剥离；有测试锁定）。
+- [x] `listAttempts` **不 select `questions` 列**（历史列表响应体不含答案，有测试锁定）。
+- [x] 洗牌**三步齐全**（拷贝洗牌 → 重新编号标签 → 以文本为锚点更新 `correct`）；测试注入确定性 RNG 断言映射不变式；**不断言跨题均匀**。
+- [x] 出题用 `response_format: { type: 'json_schema' }`（降级 `json_object`）；`maxOutputTokens` ≥ 4000 且检查 `finishReason`（`MAX_TOKENS` → 重试而非修复）；`jsonrepair` 修复后**必须再过 zod**（`.length(5)` 挡住残缺批次）。
+- [x] 出题 schema **不含 `$ref`/`$defs`**（Gemini 侧限制；当前 provider 为千问但保持该约束以备切换）。
+- [x] 判卷为确定性答案比对；客户端耗时防篡改与 `low_confidence` 判定有测试（`low_confidence` 阈值**仅**适用于判断题）。
+- [x] `quiz_attempts` 单表含 `status` + `completed_at`；`UPDATE … WHERE status='in_progress'` 条件更新保证重复提交返回 409。
+- [x] `quiz_attempts` 已归 `RLS_DIRECT_USER_TABLES`；`purgeUserDataMemory` 的清理代码**放在 `user.repository.ts:472` 早退之前**；`quiz.ts` 已挂 limiter（arch-test 自动覆盖，无需登记变量名）。
+- [x] 24h 次数闸门生效（体验版，VIP 不限）；**出题服务自行实现了 token 闸门检查**（不依赖 `streamChat` 内部的判定）；独立限流均生效。
+- [x] 出题端点**不提供** `systemInstruction` 入参。
+- [x] `npx tsc --noEmit` 通过；`npm test` 全绿（665/665）；`arch-tests` 全绿（34/34）；`npm run build` 通过。
+- [ ] **PG 冒烟两遍绿**（含新增 `tests/pg/r1-quiz.pg.test.ts`）——⛔ **本机无 docker，全程未实测**，须 CI 验证。注意：新增 PG 用例文件**不得**把装配放 `before()` 钩子（不受 `PG_SMOKE` 门控 → 无 PG 时白等 30s），且必须同时 `server.close()` 与 `ownerPool.end()`（两处都是「常开连接 → 事件循环永不空闲」的挂死源）。
+- [x] `QUIZ_ENABLED` 默认 false 并完成四处登记；`docs/数据库建表脚本.sql` 同步（`schema.ts` 仍为唯一事实源）。
+- [x] 面板入口在游客态不渲染；面向用户文案无内部术语，**面向用户一律说「掌握情况」不说「正确率」**（代码字段仍为 `is_correct`，勿混用两套指标）。
+- [x] 画板库已引入 tab 骨架并挂载「练习」tab（`BoardLibraryModal.tsx` 改动不破坏既有画板/分组功能）。
+- [x] 困难档默认题量 3，但**数量选择器在任意难度下均可见可改**。
+- [x] **一期不向画布写入任何数据**（`canvas.repository.ts` 无新增写入路径、`nodeTypes` 三处未改动）——为二期结合留出干净的边界。
