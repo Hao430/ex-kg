@@ -23,6 +23,8 @@ export const RLS_DIRECT_USER_TABLES = [
   'user_audit_logs',
   'event_logs',
   'oauth_identities',
+  // Spec R1：AI 练习记录（跨画板的用户资产，直接按 user_id 归属）
+  'quiz_attempts',
 ] as const;
 
 /** 账号表本身：`id = app.user_id` */
@@ -533,6 +535,27 @@ export async function initDbSchema(): Promise<boolean> {
       CREATE INDEX IF NOT EXISTS idx_oauth_identities_user ON oauth_identities(user_id);
     `);
 
+    // 7.5 Quiz Attempts (Spec R1：AI 练习记录，跨画板的用户资产)
+    // ⚠️ 单表而非三表（questions/answers 内联为 JSONB）：一期全部查询只有
+    // 历史列表 / 单次详情 / 统计三种，在单表里都是单表 SQL，无需跨表 JOIN。
+    // ⚠️ questions 含正确答案与解析，**任何列表查询都不得 SELECT 该列**——
+    // 「答案不下发」靠接口边界（投影 DTO）保证，不依赖表形状。
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS quiz_attempts (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        topic VARCHAR(200) NOT NULL,
+        difficulty VARCHAR(16) NOT NULL CHECK (difficulty IN ('beginner','intermediate','advanced')),
+        status VARCHAR(16) NOT NULL DEFAULT 'in_progress'
+          CHECK (status IN ('in_progress','completed')),
+        questions JSONB NOT NULL,
+        answers JSONB,
+        review JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        completed_at TIMESTAMPTZ
+      );
+    `);
+
     // 8. Indices
 
     // 新增 PM 视角优化索引
@@ -565,6 +588,8 @@ export async function initDbSchema(): Promise<boolean> {
       await client.query(`CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications(user_id, is_read, created_at DESC);`);
       await client.query(`CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);`);
       await client.query(`CREATE INDEX IF NOT EXISTS idx_feedbacks_status ON feedbacks(status, created_at DESC);`);
+    // Spec R1：练习历史列表按用户 + 时间倒序分页
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_quiz_attempts_user ON quiz_attempts(user_id, created_at DESC);`);
 
     await client.query(`
       -- 软删画布/节点高频查询改为 partial 索引（重建替换旧的全量索引）

@@ -462,6 +462,14 @@ function purgeUserDataMemory(userId: string): void {
     if (identity.user_id === userId) inMemoryStore.oauthIdentities.delete(key);
   }
 
+  // ⚠️ **必须放在下面 `removedCanvasIds.size === 0` 的早退之前**（Spec R1）：
+  // 练习记录与画板无任何关联，注销「从未建过画板」的用户时 removedCanvasIds 为空，
+  // 若把清理放在早退之后，这批用户的 quizAttempts 永远清不掉 → 内存与 PG 分叉
+  // （PG 侧靠 FK ON DELETE CASCADE 在**物理删除**时才生效，而注销是软删）。
+  for (const [attemptId, attempt] of inMemoryStore.quizAttempts.entries()) {
+    if (attempt.user_id === userId) inMemoryStore.quizAttempts.delete(attemptId);
+  }
+
   const removedCanvasIds = new Set<string>();
   for (const [canvasId, canvas] of inMemoryStore.canvases.entries()) {
     if (canvas.user_id === userId) {

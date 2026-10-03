@@ -29,6 +29,12 @@ export const inMemoryStore = {
    * 两路必须对齐（先例见 cleanupDeletedUsers 的 purgeUserDataMemory）。
    */
   oauthIdentities: new Map<string, import('./records.js').OAuthIdentityRecord>(),
+  /**
+   * Spec R1：AI 练习记录（id 为 key）。
+   * `user_id` 上的清理靠 `purgeUserDataMemory`——PG 侧是 FK `ON DELETE CASCADE`，
+   * 但**注销是软删、CASCADE 不会触发**，故内存必须显式清、两路对齐。
+   */
+  quizAttempts: new Map<string, import('./records.js').QuizAttemptRecord>(),
 };
 
 /** 审计日志内存上限：最新在前，超出裁剪最旧记录 */
