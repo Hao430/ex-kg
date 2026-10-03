@@ -237,6 +237,10 @@ authRouter.get('/me', authMiddleware, asyncHandler(async (req: Request, res: Res
       wechat_bound: wechat.bound,
       wechat_nickname: wechat.nickname,
       entitlements,
+      // Spec R1：功能开关随 /me 下发（前端据此隐藏练习入口）。
+      // ⚠️ 后端 env 才是权威——这里只是把结论告知前端；端点侧另有 ensureQuizEnabled 兜底，
+      // 即便前端漏判也不至于 404 之外的怪异表现。
+      features: { quiz: process.env.QUIZ_ENABLED === 'true' },
     },
   });
 }));

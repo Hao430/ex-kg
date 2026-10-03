@@ -1,9 +1,13 @@
 -- ==============================================================================
 -- 枝想 Arborize 企业级生产数据库全量建表与索引脚本 (PostgreSQL 14+)
--- 架构版本: v3.2.0-production (画板级灵感开关：canvases.suggestions_enabled)
--- 表总数: 20 张 (其中 8 张为一期预留空壳，二期激活；算力点数体系已废弃移除)
+-- 架构版本: v3.3.0-production (AI 练习模式：quiz_attempts)
+-- 表总数: 22 张 (其中 8 张为一期预留空壳，二期激活；算力点数体系已废弃移除)
+--          ⚠️ `server/core/schema.ts` 实为 24 张——本设计稿尚未收录 `event_logs`
+--          （Spec I 业务埋点）与 `oauth_identities`（ADR-0022 第三方登录身份），
+--          两者**以 schema.ts 为准**。
 -- 支持特性: 强制登录多租户、多轮推演画布、服务端配额校验、订阅订单 (Mock 支付)、
---          邮箱验证与找回密码、注销软删除 30 天冷却、全链路审计与 GIN 全文检索
+--          邮箱验证与找回密码、注销软删除 30 天冷却、全链路审计与 GIN 全文检索、
+--          主题出题 + 作答判卷 + 掌握情况统计 (Spec R1，画布外独立功能)
 -- 事实源声明: 运行时建表以 server/core/schema.ts 为准（启动时自动执行含增量迁移），
 --          本文档为同源设计稿；两者如有出入以 schema.ts 为准。
 -- ==============================================================================
@@ -369,6 +373,39 @@ CREATE TABLE IF NOT EXISTS system_settings (
   updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
+-- 5.4 AI 练习记录表 (Quiz Attempts - Spec R1，2026-10-03)
+-- ⚠️ **单表而非三表**：一期全部查询只有「历史列表 / 单次详情 / 统计」三种，
+--    在本表里都是单表 SQL（无跨表 JOIN）。原设计的三张表（sessions/questions/answers）
+--    在评审中被合为一张，省约 250 行与一整套 F4/RLS/双模/PG 测试面。
+-- ⚠️ questions 内联 JSONB 而非独立行：题目是「一次生成的固定内容」，无需独立生命周期；
+--    二期做间隔重复(SRS)时才迁到行表（ALTER TABLE ADD COLUMN，幂等增量迁移）。
+-- ⚠️ **questions 含正确答案与解析，服务端独占**。任何列表查询都**不得 SELECT 该列**；
+--    题量请用 jsonb_array_length(questions) 取（内存分支同款），否则列表会显示「0 题」。
+--    「答案不下发」由接口层的投影 DTO 保证（不依赖表形状）。
+-- ⛔ 本表归 RLS 直归属（user_id = app.user_id），策略由 schema.ts 的 initDbSchema() 生成
+--    并以 ENABLE（非 FORCE）方式启用；本设计稿不写策略，与全文其他表一致。
+CREATE TABLE IF NOT EXISTS quiz_attempts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  topic VARCHAR(200) NOT NULL,                                -- 用户输入的练习主题（自然语言）
+  difficulty VARCHAR(16) NOT NULL
+    CHECK (difficulty IN ('beginner','intermediate','advanced')),  -- 入门/进阶/困难
+  status VARCHAR(16) NOT NULL DEFAULT 'in_progress'
+    CHECK (status IN ('in_progress','completed')),
+    -- 题目（含 correct/explanation，服务端独占；单选 options 已在落库前洗牌并重编号标签）
+    -- 结构：[{ id, type: 'single'|'true_false', stem, options: [{label,text}]|null,
+    --          correct, explanation, knowledge_point }]
+  questions JSONB NOT NULL,
+  -- 作答与判卷结果；NULL = 未提交。结构：
+  -- [{ question_id, choice, is_correct, elapsed_ms, low_confidence }]
+  -- ⚠️ low_confidence 的 3s 阈值**仅**适用于判断题（猜对概率 50%），单选不适用
+  answers JSONB,
+  -- 出题自审摘要（学科判定/难度匹配/误区设计/模型名/是否解析失败），供面板透明展示
+  review JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+  completed_at TIMESTAMPTZ
+);
+
 -- ==============================================================================
 -- 模块六：高性能生产索引集群 (Indexes & GIN Full-Text Search)
 -- ==============================================================================
@@ -413,6 +450,8 @@ CREATE INDEX IF NOT EXISTS idx_ai_logs_user ON ai_request_logs(user_id, created_
 CREATE INDEX IF NOT EXISTS idx_ai_logs_canvas ON ai_request_logs(canvas_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications(user_id, is_read, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_feedbacks_status ON feedbacks(status, created_at DESC);
+-- Spec R1：练习历史列表按用户 + 时间倒序分页（题量用 jsonb_array_length，不另建列）
+CREATE INDEX IF NOT EXISTS idx_quiz_attempts_user ON quiz_attempts(user_id, created_at DESC);
 
 -- BRIN 时间索引：日志表为追加型，供按 created_at 范围的留存清理任务使用，避免全表扫描
 CREATE INDEX IF NOT EXISTS idx_ai_logs_created_brin ON ai_request_logs USING BRIN(created_at);

@@ -254,6 +254,68 @@ export interface DbStatus {
   degraded?: boolean;
 }
 
+// ─────────────────────────── Spec R1：AI 练习模式 ───────────────────────────
+
+/**
+ * 单个选项。`label` 恒为洗牌后的新标签（'A'|'B'|'C'|'D'）——
+ * **不是模型原始输出的标签**，服务端洗牌时会按新位置重新编号。
+ */
+export interface QuizOptionRecord {
+  label: string;
+  text: string;
+}
+
+/** 出题中的一道题（存储形态）。⚠️ `correct`/`explanation` 为服务端独占字段，不得下发客户端。 */
+export interface QuizQuestionRecord {
+  id: string;
+  type: 'single' | 'true_false';
+  stem: string;
+  /** 单选 4 项；判断题恒为 null */
+  options: QuizOptionRecord[] | null;
+  /** 单选为 'A'|'B'|'C'|'D'；判断题为 'true'|'false' */
+  correct: string;
+  explanation: string;
+  /** 二期薄弱知识点分析的原料，一期即须落库 */
+  knowledge_point: string;
+}
+
+/** 一次作答与判卷结果。`low_confidence` 阈值**仅**适用于判断题（50% 猜对率）。 */
+export interface QuizAnswerRecord {
+  question_id: string;
+  choice: string;
+  is_correct: boolean;
+  elapsed_ms: number;
+  low_confidence: boolean;
+}
+
+/**
+ * Spec R1 练习记录（`quiz_attempts` 双模映射）。
+ *
+ * 形态说明（原三表合一的理由）：一期全部查询只有历史列表 / 单次详情 / 统计三种，
+ * 在单表里都是单表 SQL，无需 LEFT JOIN 或跨表聚合。
+ */
+export interface QuizAttemptRecord {
+  id: string;
+  user_id: string;
+  topic: string;
+  difficulty: 'beginner' | 'intermediate' | 'advanced';
+  status: 'in_progress' | 'completed';
+  /** ⚠️ 含 correct/explanation，**任何列表查询都不得 select/返回该列** */
+  questions: QuizQuestionRecord[];
+  /**
+   * 题数（`questions` 的长度）。
+   * ⚠️ 存在的理由：`listAttempts` 刻意不 select `questions`（防答案泄漏），
+   * 故列表页算不出题数——需由 DB 侧 `jsonb_array_length` 或内存分支直接填充。
+   */
+  questionCount: number;
+  /** null = 未提交；非 null = 已完成（判卷结果） */
+  answers: QuizAnswerRecord[] | null;
+  /** 出题自审结论（pedagogical_analysis 摘要、是否解析失败），供面板透明展示 */
+  review: Record<string, unknown>;
+  created_at: string;
+  completed_at: string | null;
+}
+
 export interface AiModelConfig {
   provider: 'gemini' | 'openai';
   openai_base_url: string;

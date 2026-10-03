@@ -123,6 +123,10 @@ export interface AuthUser {
     boardLimit: number | null;
     nodeLimit: number | null;
   };
+  /** Spec R1：功能开关随 /me 下发（后端 env 为权威，前端据此隐藏入口） */
+  features?: {
+    quiz?: boolean;
+  };
 }
 
 export type FeedbackType = 'suggestion' | 'bug' | 'ux' | 'other';

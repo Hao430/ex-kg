@@ -11,6 +11,7 @@ import { subscriptionsRouter } from './routes/subscriptions.js';
 import { quotaRouter } from './routes/quota.js';
 import { sharesRouter } from './routes/shares.js';
 import { foldersRouter } from './routes/folders.js';
+import { quizRouter } from './routes/quiz.js';
 import { errorHandler } from './middleware/error-handler.js';
 import { sameOriginGuard } from './middleware/same-origin.js';
 import { checkDbStatus } from './core/db-status.js';
@@ -129,6 +130,9 @@ export function createApp(): express.Express {
   app.use('/api/quota', quotaRouter);
   app.use('/api/shares', sharesRouter);
   app.use('/api/folders', foldersRouter);
+  // Spec R1：AI 练习（画布外独立功能）。⚠️ 必须挂在 sameOriginGuard 之下
+  // （ADR-0020：变更类方法受同源校验），且受 QUIZ_ENABLED 开关控制（关闭时端点 404）。
+  app.use('/api/quiz', quizRouter);
 
   // SEO 基础文件：`/robots.txt` 与 `/sitemap.xml`。
   // 动态生成而非塞进 public/ —— 仓库里就不必硬编码生产域名，且 sitemap 的 loc 与
