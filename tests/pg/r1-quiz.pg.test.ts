@@ -192,12 +192,19 @@ describe('R1 AI 练习 PG 真库', () => {
     aliceCookie = await signIn(ALICE_EMAIL, ALICE_PW);
     bobCookie = await signIn(BOB_EMAIL, BOB_PW);
 
-    // 探测角色是否真受 RLS 约束（决定「隔离生效」类断言是否适用）
-    const who = await runWithSystem('R1 PG 用例：探测当前角色', () =>
-      ownerPool.query('SELECT current_user AS role, row_security_active(\'quiz_attempts\') AS active'),
+    // 探测角色是否真受 RLS 约束（决定「隔离生效」类断言是否适用）。
+    // ⚠️ **必须用应用层那个池（DATABASE_URL）探测**，不能用 ownerPool——
+    // `row_security_active()` 反映的是**当前连接角色**的状态，而仓储走的是
+    // getDb()（即 DATABASE_URL 那个池）。用 ownerPool 探测在双角色跑法下仍会读到
+    // 属主，导致隔离断言被误判为「不适用」而跳过（2026-10-03 CI 三跑的实际教训）。
+    // 范式照 tests/pg/rls-isolation.pg.test.ts:57,115-118。
+    const appPool = new Pool({ connectionString: process.env.DATABASE_URL });
+    const who = await appPool.query(
+      "SELECT current_user AS role, row_security_active('quiz_attempts') AS active",
     );
     appRole = who.rows[0].role;
     rlsActive = who.rows[0].active === true;
+    await appPool.end();
 
     const me = async (cookie: string) => (await (await fetch(`${base}/api/auth/me`, { headers: { cookie } })).json()) as any;
     aliceId = (await me(aliceCookie)).user.id;
