@@ -26,9 +26,7 @@ import {
   FolderPlus,
   Inbox,
   Folder as FolderIcon,
-  Brain,
 } from 'lucide-react';
-import { QuizPanel } from '../quiz/QuizPanel';
 import type { DeepDiveBoardMeta } from '../../types';
 import type { FolderMeta } from '../../lib/folder-store';
 import { SHARED_BOARD_IDS } from '../../lib/board-scope';
@@ -90,8 +88,6 @@ export const BoardLibraryModal: React.FC<BoardLibraryModalProps> = ({
   const [showArchived, setShowArchived] = useState(false);
   const [favOnly, setFavOnly] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
-  /** Spec R1：画板 / 练习两个 tab（练习是跨画板资产，与画板列表同一管理面） */
-  const [tab, setTab] = useState<'boards' | 'quiz'>('boards');
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -202,42 +198,6 @@ export const BoardLibraryModal: React.FC<BoardLibraryModalProps> = ({
           </button>
         </div>
 
-        {/* Tabs（Spec R1：画板库兼作「非画布内容」的集中管理面）*/}
-        <div className="flex items-center gap-1 px-5 py-2 border-b border-slate-800/60 shrink-0">
-          <button
-            id="board-library-tab-boards"
-            onClick={() => setTab('boards')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg transition ${
-              tab === 'boards'
-                ? 'bg-slate-800 text-slate-100'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-            }`}
-          >
-            <LayoutGrid className="w-3.5 h-3.5" />
-            画板
-          </button>
-          {quizEnabled && (
-            <button
-              id="board-library-tab-quiz"
-              onClick={() => setTab('quiz')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg transition ${
-                tab === 'quiz'
-                  ? 'bg-slate-800 text-slate-100'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-              }`}
-            >
-              <Brain className="w-3.5 h-3.5" />
-              练习
-            </button>
-          )}
-        </div>
-
-        {tab === 'quiz' ? (
-          <div className="flex-1 min-h-0 overflow-y-auto">
-            <QuizPanel userId={userId} />
-          </div>
-        ) : (
-          <>
         <div className="flex-1 flex min-h-0">
           {/* Folder sidebar */}
           <aside className="w-40 shrink-0 border-r border-slate-800/60 p-2 space-y-0.5 overflow-y-auto">
@@ -495,8 +455,6 @@ export const BoardLibraryModal: React.FC<BoardLibraryModalProps> = ({
             </div>
           </div>
         </div>
-          </>
-        )}
       </motion.div>
     </div>
   );

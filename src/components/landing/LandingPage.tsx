@@ -32,6 +32,7 @@ import {
   Crown,
   LogIn,
   User,
+  Brain,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { trackEvent } from '../../lib/analytics';
@@ -49,6 +50,7 @@ import { SampleBoardViewer } from '../sample/SampleBoardViewer';
 
 interface LandingPageProps {
   onEnterCanvas: (presetTopic?: string) => void;
+  onEnterPractice?: (presetTopic?: string) => void;
 }
 
 /**
@@ -74,6 +76,7 @@ const HIGHLIGHT_CLASSES = [
 
 export const LandingPage: React.FC<LandingPageProps> = ({
   onEnterCanvas,
+  onEnterPractice,
 }) => {
   const { user, isVip, openAuthModal, openRechargeModal } = useAuth();
   const [activeScenario, setActiveScenario] = useState<number>(0);
@@ -225,23 +228,34 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           支持<b>划词深挖、递归分支推演、学术级 LaTeX 公式、便签双轨论证与全自动拓扑排版</b>。
         </p>
 
-        {/* Action Buttons */}
+        {/* Action Buttons: 双产品入口 */}
         <div className="mt-8 sm:mt-10 flex flex-wrap items-center justify-center gap-3 sm:gap-4">
           <button
             onClick={() => onEnterCanvas()}
             className="flex items-center gap-2.5 px-6 sm:px-8 py-3.5 rounded-2xl text-sm font-semibold text-white bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500 hover:from-blue-500 hover:to-indigo-500 shadow-xl shadow-blue-600/30 border border-blue-400/40 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer"
           >
             <Compass className="w-4 h-4 text-cyan-200" />
-            <span>立即开启探索 (进入画板)</span>
+            <span>进入思维画布</span>
             <ArrowRight className="w-4 h-4 text-blue-200" />
           </button>
+
+          {onEnterPractice && (
+            <button
+              onClick={() => onEnterPractice()}
+              className="flex items-center gap-2.5 px-6 sm:px-8 py-3.5 rounded-2xl text-sm font-semibold text-white bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-500 hover:from-purple-500 hover:to-indigo-500 shadow-xl shadow-purple-600/30 border border-purple-400/40 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer"
+            >
+              <Brain className="w-4 h-4 text-purple-200" />
+              <span>进入 AI 练习模式</span>
+              <ArrowRight className="w-4 h-4 text-purple-200" />
+            </button>
+          )}
 
           <a
             href="#interactive-demo"
             className="flex items-center gap-2 px-5 sm:px-6 py-3.5 rounded-2xl text-sm font-medium text-slate-200 bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.1] hover:text-white backdrop-blur-md transition-all"
           >
             <Zap className="w-4 h-4 text-amber-400" />
-            <span>体验交互演练</span>
+            <span>特性演示</span>
           </a>
         </div>
 

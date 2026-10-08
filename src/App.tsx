@@ -53,6 +53,7 @@ import { UserProfileModal } from './components/ui/UserProfileModal';
 import { MySharesModal } from './components/ui/MySharesModal';
 import { FeedbackModal } from './components/ui/FeedbackModal';
 import { BoardLibraryModal } from './components/ui/BoardLibraryModal';
+import { PracticeWorkspace } from './components/practice/PracticeWorkspace';
 import { useAppModals } from './hooks/useAppModals';
 
 /**
@@ -85,12 +86,14 @@ const isDefaultBoardName = (name: string): boolean =>
   DEFAULT_BOARD_NAMES.includes(name) || /^探索课题 #\d+$/.test(name);
 
 function MainApp() {
-  const [viewMode, setViewMode] = useState<'landing' | 'canvas'>(() => {
+  const [viewMode, setViewMode] = useState<'landing' | 'canvas' | 'practice'>(() => {
     try {
       const params = new URLSearchParams(window.location.search);
       if (params.get('view') === 'canvas') return 'canvas';
+      if (params.get('view') === 'practice' || params.get('view') === 'quiz') return 'practice';
       const storedView = sessionStorage.getItem('deepdive_active_view');
       if (storedView === 'canvas') return 'canvas';
+      if (storedView === 'practice' || storedView === 'quiz') return 'practice';
     } catch (e) {
       // ignore
     }
@@ -988,9 +991,51 @@ function MainApp() {
     setViewMode('canvas');
   };
 
+  const handleSwitchProduct = (product: 'canvas' | 'practice') => {
+    if (product === 'canvas') {
+      try {
+        sessionStorage.setItem('deepdive_active_view', 'canvas');
+      } catch (e) {}
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.set('view', 'canvas');
+        window.history.replaceState({}, '', url.toString());
+      } catch (e) {}
+      setViewMode('canvas');
+    } else {
+      flushPendingCanvasSave();
+      try {
+        sessionStorage.setItem('deepdive_active_view', 'practice');
+      } catch (e) {}
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.set('view', 'practice');
+        window.history.replaceState({}, '', url.toString());
+      } catch (e) {}
+      setViewMode('practice');
+    }
+  };
+
+  const handleEnterPractice = (presetTopic?: string) => {
+    try {
+      sessionStorage.setItem('deepdive_active_view', 'practice');
+    } catch (e) {}
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('view', 'practice');
+      window.history.replaceState({}, '', url.toString());
+    } catch (e) {}
+    setViewMode('practice');
+  };
+
   const handleGoToLanding = () => {
     try {
       sessionStorage.setItem('deepdive_active_view', 'landing');
+    } catch (e) {}
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('view');
+      window.history.replaceState({}, '', url.toString());
     } catch (e) {}
     setViewMode('landing');
   };
@@ -1235,7 +1280,36 @@ function MainApp() {
 
   if (viewMode === 'landing') {
     return (
-      <LandingPage onEnterCanvas={handleEnterCanvas} />
+      <LandingPage
+        onEnterCanvas={handleEnterCanvas}
+        onEnterPractice={handleEnterPractice}
+      />
+    );
+  }
+
+  // Spec R1：AI 练习独立产品工作台
+  if (viewMode === 'practice') {
+    return (
+      <div className="w-screen h-screen overflow-hidden bg-slate-50 dark:bg-[#070b14] text-slate-900 dark:text-slate-100 flex flex-col font-sans select-none transition-colors duration-200">
+        <PracticeWorkspace
+          userId={user?.id ?? null}
+          user={user}
+          theme={theme}
+          onToggleTheme={toggleTheme}
+          activeProduct="practice"
+          onSwitchProduct={handleSwitchProduct}
+          onGoToLanding={handleGoToLanding}
+          onExploreInCanvas={(presetTopic) => {
+            handleEnterCanvas(presetTopic);
+          }}
+        />
+        {/* Floating Status Toast */}
+        {toastMessage && (
+          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900/90 text-white px-4 py-2 rounded-full text-xs font-medium shadow-2xl backdrop-blur-md border border-slate-700/80 animate-in fade-in slide-in-from-bottom-2 duration-200">
+            {toastMessage}
+          </div>
+        )}
+      </div>
     );
   }
 
@@ -1340,6 +1414,9 @@ function MainApp() {
         suggestionsEnabled={suggestionsEnabled}
         suggestionsToggleDisabled={currentBoardIsShared}
         onToggleSuggestions={toggleSuggestions}
+        activeProduct="canvas"
+        onSwitchProduct={handleSwitchProduct}
+        quizEnabled={Boolean(user?.features?.quiz ?? true)}
       />
 
       {/* Main Infinite Canvas Viewport */}
@@ -1403,8 +1480,6 @@ function MainApp() {
           onCreateFolder={handleCreateFolder}
           onRenameFolder={handleRenameFolder}
           onDeleteFolder={handleDeleteFolder}
-          userId={user?.id ?? null}
-          quizEnabled={Boolean(user?.features?.quiz)}
         />
       )}
 

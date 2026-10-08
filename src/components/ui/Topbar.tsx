@@ -43,6 +43,7 @@ import {
   Search,
   X,
   Loader2,
+  Brain,
 } from 'lucide-react';
 import { DeepDiveBoardMeta } from '../../types';
 import type { FolderMeta } from '../../lib/folder-store';
@@ -116,6 +117,12 @@ interface TopbarProps {
    */
   suggestionsToggleDisabled?: boolean;
   onToggleSuggestions?: () => void;
+  /** Spec R1：当前产品模式 ('canvas' | 'practice') */
+  activeProduct?: 'canvas' | 'practice';
+  /** 切换产品 */
+  onSwitchProduct?: (product: 'canvas' | 'practice') => void;
+  /** 是否开启练习功能 */
+  quizEnabled?: boolean;
 }
 
 export const Topbar: React.FC<TopbarProps> = ({
@@ -149,6 +156,9 @@ export const Topbar: React.FC<TopbarProps> = ({
   suggestionsEnabled = true,
   suggestionsToggleDisabled = false,
   onToggleSuggestions,
+  activeProduct = 'canvas',
+  onSwitchProduct,
+  quizEnabled = true,
 }) => {
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(boardName);
@@ -370,6 +380,38 @@ export const Topbar: React.FC<TopbarProps> = ({
         </Tooltip>
 
         <div className="h-4 w-[1px] bg-slate-200 dark:bg-slate-800" />
+
+        {/* Spec R1: 双产品切换胶囊（思维画布 ↔ AI 练习） */}
+        {quizEnabled && (
+          <div className="flex items-center bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-xl border border-slate-200/70 dark:border-slate-700/60 text-xs font-medium shrink-0">
+            <button
+              type="button"
+              onClick={() => onSwitchProduct?.('canvas')}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                activeProduct === 'canvas'
+                  ? 'bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm font-semibold'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+              }`}
+            >
+              <Compass className="w-3.5 h-3.5 text-indigo-500" />
+              <span className="hidden md:inline">思维画布</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onSwitchProduct?.('practice')}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                activeProduct === 'practice'
+                  ? 'bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm font-semibold'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+              }`}
+            >
+              <Brain className="w-3.5 h-3.5 text-purple-500" />
+              <span className="hidden md:inline">AI 练习</span>
+            </button>
+          </div>
+        )}
+
+        <div className="h-4 w-[1px] bg-slate-200 dark:bg-slate-800 hidden sm:block" />
 
         {/* Sync Status Indicator (Spec A5)：云图标态 —— 斜杠云=本地模式，灰云=待同步，绿云=已同步，红云=失败/冲突/离线 */}
         <Tooltip
