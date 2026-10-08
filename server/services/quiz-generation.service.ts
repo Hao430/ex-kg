@@ -162,6 +162,40 @@ function parseAndValidate(raw: string, count: number): GeneratedQuiz {
 }
 
 /**
+ * 描述模型原始输出的**结构**（不含任何题目内容）。
+ *
+ * ⚠️ 只记形状不记内容：`ai_request_logs` 与错误文案都不该落题面/用户主题
+ * （同「节点内容不进日志」的纪律）。但仅凭 `expected object, received array`
+ * 无法判断模型到底吐了什么——2026-10-03 那次排查正是卡在这里：
+ * 既不知道是数组、也不知道是几元素、也不知道是否被截断。
+ * 故把**元信息**（顶层类型 / 长度 / 字节数）拼进错误文案：
+ * `shape=array len=5 bytes=1834` 一眼就能区分「漏信封」「双份输出」「被截断」。
+ */
+function describeShape(raw: string): string {
+  const text = raw.trim();
+  const bytes = Buffer.byteLength(text, 'utf8');
+  if (!text) return 'shape=empty bytes=0';
+
+  let shape: string;
+  try {
+    const parsed: unknown = JSON.parse(jsonrepair(extractJsonBlock(text)));
+    if (Array.isArray(parsed)) {
+      shape = `array len=${parsed.length}`;
+    } else if (parsed && typeof parsed === 'object') {
+      const keys = Object.keys(parsed as Record<string, unknown>);
+      // 信封是否缺失是本次故障的关键信号，故把顶层键名带出来（键名是结构不是内容）
+      shape = `object keys=${keys.slice(0, 5).join(',') || '(none)'}`;
+    } else {
+      shape = `scalar ${parsed === null ? 'null' : typeof parsed}`;
+    }
+  } catch {
+    // 连repair 都救不回来 = 输出根本不是 JSON（如纯散文或空响应）
+    shape = `unparsable firstChar=${JSON.stringify(text[0])}`;
+  }
+  return `shape=${shape} bytes=${bytes}`;
+}
+
+/**
  * 从可能夹杂自然语言的输出里截出 JSON 本体。
  * 优先取第一个 `{` 到最后一个 `}`；找不到再退化到首个 `[`（容错，正常不会走到）。
  */
@@ -248,6 +282,41 @@ function toRecords(quiz: GeneratedQuiz): QuizQuestionRecord[] {
   });
 }
 
+/**
+ * 出站调用与解析的**统一记账点**（Spec R1 观测缺口修复）。
+ *
+ * ⚠️ 为什么不能沿用「先记 success，再解析」的写法：解析失败会抛给外层 catch，
+ * 而那条 success 记录**已经落库且无法撤回**——于是「出题失败」在
+ * `ai_request_logs` 里显示为 `status=success`、`error_message` 为空，
+ * 运营台看上去一切正常，排查时**唯一线索只存在于 HTTP 响应体里**（出进程即丢）。
+ * 2026-10-03线上那批 `invalid_type: expected object, received array` 就是这么查不出来的。
+ *
+ * 故改为：先解析出结果，再按**真实结局**记一条（成功 success / 失败 error + 原因）。
+ * `errorMessage` 落**截断后的 zod 摘要**（与前端 review.error 同一份文本），
+ * 不落模型原文——题面内容不进日志，与画布保存观测同一纪律。
+ */
+async function recordQuizCall(input: {
+  userId: string;
+  provider: 'openai' | 'gemini';
+  modelName: string;
+  start: number;
+  totalTokens: number;
+  ok: boolean;
+  errorMessage?: string;
+}): Promise<void> {
+  await recordAiRequestLog({
+    userId: input.userId,
+    canvasId: null,
+    nodeId: null,
+    modelName: input.modelName,
+    totalTokens: input.totalTokens,
+    latencyMs: Date.now() - input.start,
+    status: input.ok ? 'success' : 'error',
+    errorMessage: input.errorMessage ? input.errorMessage.slice(0, 500) : null,
+    provider: input.provider,
+  });
+}
+
 /** 失败时构造的空结果（元信息里带 parseFailed 与原因，如实告知前端） */
 function failedResult(
   provider: 'openai' | 'gemini',
@@ -255,19 +324,21 @@ function failedResult(
   start: number,
   error: unknown,
   attempts: number,
+  totalTokens = 0,
 ): GenerateQuizResult {
+  const message = String((error as Error)?.message || error).slice(0, 200);
   return {
     questions: [],
     meta: {
       ok: false,
       modelName,
       provider,
-      totalTokens: 0,
+      totalTokens,
       latencyMs: Date.now() - start,
       review: {
         parseFailed: true,
         attempts,
-        error: String((error as Error)?.message || error).slice(0, 200),
+        error: message,
       },
     },
   };
@@ -297,6 +368,9 @@ export async function generateQuiz(
     const modelName = config.openai_model || 'deepseek-chat';
     // ADR-0024：出站守卫，与 chat 共用解析函数，避免两处校验漂移
     const endpoint = resolveOpenAiEndpoint(config, '/responses');
+    // 本路径已记账的标志：外层 catch 只在**未记账**时补记，
+    // 否则「已记 success 后又抛错」会与下面的 error 记录重复成两条
+    let logged = false;
     try {
       const res = await fetch(endpoint, {
         method: 'POST',
@@ -319,26 +393,35 @@ export async function generateQuiz(
       });
       if (!res.ok) {
         const errText = (await res.text()).slice(0, 200);
-        return failedResult('openai', modelName, start, new Error(`HTTP ${res.status}: ${errText}`), 1);
+        const err = new Error(`HTTP ${res.status}: ${errText}`);
+        await recordQuizCall({ userId, provider: 'openai', modelName, start, totalTokens: 0, ok: false, errorMessage: String(err.message) });
+        logged = true;
+        return failedResult('openai', modelName, start, err, 1);
       }
       const json: any = await res.json();
+      const totalTokens = typeof json?.usage?.total_tokens === 'number' ? json.usage.total_tokens : 0;
       // 截断判定：MAX_TOKENS 直接判失败，**不修复**（修复只会得到残缺批次）
       if (isTruncated(json)) {
-        return failedResult('openai', modelName, start, new Error('输出被 max_output_tokens 截断，请减少题量或重试'), 1);
+        const err = new Error('输出被 max_output_tokens 截断，请减少题量或重试');
+        await recordQuizCall({ userId, provider: 'openai', modelName, start, totalTokens, ok: false, errorMessage: String(err.message) });
+        logged = true;
+        return failedResult('openai', modelName, start, err, 1, totalTokens);
       }
       const text = extractResponseText(json);
-      const totalTokens = typeof json?.usage?.total_tokens === 'number' ? json.usage.total_tokens : 0;
-      await recordAiRequestLog({
-        userId,
-        canvasId: null,
-        nodeId: null,
-        modelName,
-        totalTokens,
-        latencyMs: Date.now() - start,
-        status: 'success',
-        provider: 'openai',
-      });
-      const quiz = parseAndValidate(text, input.count);
+
+      // ⚠️ 解析在记账**之内**：失败要落 status=error（见 recordQuizCall 的注释）
+      let quiz: GeneratedQuiz;
+      try {
+        quiz = parseAndValidate(text, input.count);
+      } catch (e) {
+        const diag = `${String((e as Error)?.message || e)} | ${describeShape(text)}`;
+        await recordQuizCall({ userId, provider: 'openai', modelName, start, totalTokens, ok: false, errorMessage: diag });
+        logged = true;
+        return failedResult('openai', modelName, start, new Error(diag), 1, totalTokens);
+      }
+
+      await recordQuizCall({ userId, provider: 'openai', modelName, start, totalTokens, ok: true });
+      logged = true;
       return {
         questions: toRecords(quiz),
         meta: {
@@ -356,12 +439,18 @@ export async function generateQuiz(
         },
       };
     } catch (e) {
+      // 未记账才补记：网络异常/出站守卫拒绝等在上面的分支之外抛出，
+      // 若不补记则这次出题在运营台**完全没有痕迹**（比记成 success 更糟）
+      if (!logged) {
+        await recordQuizCall({ userId, provider: 'openai', modelName, start, totalTokens: 0, ok: false, errorMessage: String((e as Error)?.message || e) });
+      }
       return failedResult('openai', modelName, start, e, 1);
     }
   }
 
   // PATH B：gemini 非流式
   const modelName = config.gemini_model || 'gemini-3.8-flash';
+  let geminiLogged = false;
   try {
     const ai = getGenAI();
     const resp = await ai.models.generateContent({
@@ -378,17 +467,20 @@ export async function generateQuiz(
       } as any,
     });
     const totalTokens = (resp as any)?.usageMetadata?.totalTokenCount || 0;
-    await recordAiRequestLog({
-      userId,
-      canvasId: null,
-      nodeId: null,
-      modelName,
-      totalTokens,
-      latencyMs: Date.now() - start,
-      status: 'success',
-      provider: 'gemini',
-    });
-    const quiz = parseAndValidate(resp.text || '', input.count);
+
+    // ⚠️ 解析在记账**之内**：失败要落 status=error（见 recordQuizCall 的注释）
+    let quiz: GeneratedQuiz;
+    try {
+      quiz = parseAndValidate(resp.text || '', input.count);
+    } catch (e) {
+      const diag = `${String((e as Error)?.message || e)} | ${describeShape(resp.text || '')}`;
+      await recordQuizCall({ userId, provider: 'gemini', modelName, start, totalTokens, ok: false, errorMessage: diag });
+      geminiLogged = true;
+      return failedResult('gemini', modelName, start, new Error(diag), 1, totalTokens);
+    }
+
+    await recordQuizCall({ userId, provider: 'gemini', modelName, start, totalTokens, ok: true });
+    geminiLogged = true;
     return {
       questions: toRecords(quiz),
       meta: {
@@ -406,6 +498,10 @@ export async function generateQuiz(
       },
     };
   } catch (e) {
+    // 同PATH A：SDK 抛错（凭据缺失/网络）时补记，否则运营台无痕迹
+    if (!geminiLogged) {
+      await recordQuizCall({ userId, provider: 'gemini', modelName, start, totalTokens: 0, ok: false, errorMessage: String((e as Error)?.message || e) });
+    }
     return failedResult('gemini', modelName, start, e, 1);
   }
 }

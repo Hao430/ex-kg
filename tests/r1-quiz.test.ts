@@ -16,12 +16,12 @@
  * - lowConfidence 阈值 3s **仅**适用于判断题（50% 猜对率），单选不套用
  * - 一期不做重做：同一 attempt 只能提交一次
  */
-import { test, describe, before, after } from 'node:test';
+import { test, describe, before, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createApp } from '../server/app.js';
-import { saveAiModelConfig } from '../server/repositories/ai.repository.js';
+import { saveAiModelConfig, getAiRequestLogsForTest } from '../server/repositories/ai.repository.js';
 import { sampleAiAdvanced, sampleBiologyBeginner } from '../docs/spike/r1-quiz-prompt-validation.js';
 
 // ⚠️ 必须在导入 app 之前设置：feature flag 在模块导入期读取
@@ -43,15 +43,30 @@ const VIP_PASSWORD = 'Vip123456!';
 // 它们通过了阶段 2 的确定性校验（题量/选项数/标签/答案对应关系）。
 const origFetch = globalThis.fetch;
 
+/**
+ * 出题桩的模型原始输出文本；null = 用 spike 已验证样本。
+ * 真实 provider 的输出形状不可控（裸数组/散文/截断都出现过），
+ * 故把形状做成可注入变量，让解析层与观测层的行为能被行为断言。
+ */
+let rawModelOutput: string | null = null;
+/** 上游状态码覆盖（≠200 时桩返回该状态，用于覆盖「上游 4xx」这条失败路径） */
+let httpStatusOverride = 200;
+
 /** /responses 的非流式 JSON 响应（qwen/openai 兼容形态，extractResponseText 认 output[].content[].text） */
 function stubQuizResponse(): Response {
+  if (httpStatusOverride !== 200) {
+    return new Response('upstream rejected the request', {
+      status: httpStatusOverride,
+      headers: { 'content-type': 'text/plain' },
+    });
+  }
   return new Response(
     JSON.stringify({
       output: [
         {
           type: 'message',
           content: [
-            { type: 'output_text', text: JSON.stringify(sampleAiAdvanced.output) },
+            { type: 'output_text', text: rawModelOutput ?? JSON.stringify(sampleAiAdvanced.output) },
           ],
         },
       ],
@@ -347,5 +362,106 @@ describe('R1 feature flag', () => {
     // 故只断言端点在 flag 开启时存在（关闭态由部署期与 checklist 保证）。
     const { status } = await createAttempt(userCookie);
     assert.equal(status, 200, 'flag 开启时出题可用');
+  });
+});
+
+/**
+ * 出题调用的**记账纪律**（2026-10-03线上故障后补的观测缺口）。
+ *
+ * 故障现象：解析失败时 `ai_request_logs` 里那条记录显示 `status=success`、
+ * `error_message` 为空——因为 `recordAiRequestLog` 写在 `parseAndValidate` **之前**，
+ * 已经落库无法撤回。运营台看上去一切正常，唯一线索只在HTTP 响应体里（出进程即丢）。
+ *
+ * 固定契约：
+ * - 一次出题调用**恰好一条**日志，且status 与真实结局一致（不重复、不倒挂）
+ * - 失败必带 `error_message`，且含**形状元信息**（shape=/len=/bytes=），
+ *   这样下次不必靠猜——但**不含任何题目内容**
+ */
+describe('R1 出题观测：失败必须留痕', () => {
+  /** 取该用户最近一条出题日志 */
+  function latestLog() {
+    const logs = getAiRequestLogsForTest();
+    assert.ok(logs.length > 0, '本次调用应留下日志');
+    return logs[0];
+  }
+
+  afterEach(() => {
+    rawModelOutput = null;
+    httpStatusOverride = 200;
+  });
+
+  test('解析失败 → status=error 且带形状诊断（不再是 success）', async () => {
+    // 裸题目数组（缺外层信封）——2026-10-03 线上实际遇到的形状
+    rawModelOutput = JSON.stringify(
+      Array.from({ length: 5 }, (_, i) => sampleAiAdvanced.output.questions[i]),
+    );
+    const { status, body } = await createAttempt(vipCookie);
+    assert.equal(status, 502);
+
+    const log = latestLog();
+    assert.equal(log.status, 'error', '解析失败不得记成 success（否则运营台看不出异常）');
+    assert.equal(log.provider, 'openai', 'provider 应可用于判断走的是哪条路径');
+    assert.equal(log.model_name, 'stub-model', 'model_name 应可用于判断模型是否听约束');
+    assert.ok(
+      String(log.error_message).includes('received array'),
+      `error_message 应含 zod 摘要，实际：${log.error_message}`,
+    );
+    // 形状元信息：正是它让「模型吐了裸数组」一眼可辨
+    assert.ok(
+      /shape=array len=5/.test(String(log.error_message)),
+      `error_message 应含形状元信息，实际：${log.error_message}`,
+    );
+    assert.ok(
+      /bytes=\d+/.test(String(log.error_message)),
+      '应记字节数（区分截断/ 完整输出）',
+    );
+    assert.equal(body.review.parseFailed, true, '前端仍应拿到如实告知');
+  });
+
+  test('形状诊断只含结构，不含题目内容', async () => {
+    rawModelOutput = '这不是 JSON，只是一段自然语言。';
+    const { status } = await createAttempt(vipCookie);
+    assert.equal(status, 502);
+
+    const log = latestLog();
+    assert.equal(log.status, 'error');
+    // 题面/ 用户主题一律不进日志：断言日志里查不到样本题干
+    const firstStem = String(sampleAiAdvanced.output.questions[0].stem);
+    assert.ok(
+      !String(log.error_message).includes(firstStem),
+      '日志不得包含题目内容',
+    );
+    assert.ok(
+      /shape=scalar string/.test(String(log.error_message)),
+      // jsonrepair 会把纯散文"修"成一个 JSON 字符串，故形状是 scalar string 而非 unparsable
+      `散文输出应标为 scalar string，实际：${log.error_message}`,
+    );
+  });
+
+  test('出题成功 → status=success 且无 error_message', async () => {
+    const { status } = await createAttempt(vipCookie);
+    assert.equal(status, 200);
+    const log = latestLog();
+    assert.equal(log.status, 'success', '成功应记success');
+    assert.ok(!log.error_message, '成功不应带 error_message');
+  });
+
+  test('一次调用只记一条日志（不因补记而重复）', async () => {
+    const before = getAiRequestLogsForTest().length;
+    await createAttempt(vipCookie);
+    const after = getAiRequestLogsForTest().length;
+    assert.equal(after - before, 1, '一次出题调用应恰好新增一条日志');
+  });
+
+  test('上游 HTTP 4xx → 记error 且带 HTTP 状态', async () => {
+    // 上游拒绝是另一类失败：此前**完全不落日志**（只有 success 分支有记账）
+    httpStatusOverride = 400;
+    const { status } = await createAttempt(vipCookie);
+    httpStatusOverride = 200;
+
+    assert.equal(status, 502);
+    const log = latestLog();
+    assert.equal(log.status, 'error', '上游 4xx 应记error');
+    assert.ok(/HTTP 400/.test(String(log.error_message)), `应带 HTTP 状态，实际：${log.error_message}`);
   });
 });
