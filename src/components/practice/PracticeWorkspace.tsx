@@ -37,17 +37,17 @@ import {
 } from 'lucide-react';
 import * as quizStore from '../../lib/quiz-store';
 import { scopeKeyFor } from '../../lib/board-scope';
-import type { QuizAttemptView, QuizDifficulty, QuizGradeResult, QuizSubmission } from '../../lib/quiz-store';
+import type { QuizAttemptView, QuizDifficulty, QuizGradeResult, QuizHistoryItem, QuizQuestion, QuizSubmission } from '../../lib/quiz-store';
 import { useAuth } from '../../context/AuthContext';
 import { Tooltip } from '../ui/Tooltip';
 
-const DIFFICULTY_LABELS: Record<QuizDifficulty, string> = {
+export const DIFFICULTY_LABELS: Record<QuizDifficulty, string> = {
   beginner: '入门',
   intermediate: '进阶',
   advanced: '困难',
 };
 
-const DIFFICULTY_DESCS: Record<QuizDifficulty, { title: string; desc: string; detail: string }> = {
+export const DIFFICULTY_DESCS: Record<QuizDifficulty, { title: string; desc: string; detail: string }> = {
   beginner: {
     title: '入门 · 概念辨识',
     desc: '核心概念、定义直给与基础记忆',
@@ -66,14 +66,14 @@ const DIFFICULTY_DESCS: Record<QuizDifficulty, { title: string; desc: string; de
 };
 
 /** 困难档题量默认 3，入门与进阶默认 5（选择器始终可改） */
-const DEFAULT_COUNT: Record<QuizDifficulty, number> = {
+export const DEFAULT_COUNT: Record<QuizDifficulty, number> = {
   beginner: 5,
   intermediate: 5,
   advanced: 3,
 };
 
 /** 推荐练习主题 Pills */
-const RECOMMENDED_TOPICS = [
+export const RECOMMENDED_TOPICS = [
   'Transformer 多头注意力机制',
   'TCP 三次握手与状态流转',
   '高中生物光合作用光反应',
@@ -84,7 +84,7 @@ const RECOMMENDED_TOPICS = [
   '边际效用递减与机会成本',
 ];
 
-interface PracticeWorkspaceProps {
+export interface PracticeWorkspaceProps {
   userId: string | null;
   user: any;
   theme: 'light' | 'dark';
@@ -94,14 +94,86 @@ interface PracticeWorkspaceProps {
   onGoToLanding: () => void;
   onExploreInCanvas?: (topic: string) => void;
   initialTopic?: string;
+  initialPhase?: Phase;
+  initialChoices?: Record<string, string>;
 }
 
-type Phase =
+export type Phase =
   | { kind: 'form' }
   | { kind: 'loading' }
   | { kind: 'answering'; attempt: QuizAttemptView; startedAt: number }
   | { kind: 'graded'; attempt: QuizAttemptView; results: QuizGradeResult[]; summary: { correct: number; total: number } }
   | { kind: 'error'; message: string };
+
+export interface MasteryStats {
+  totalAttempted: number;
+  totalCorrect: number;
+  totalQuestions: number;
+  rate: number;
+}
+
+/** 逐题耗时计算（首题相对开卷时刻，其余相对上一题首答时刻，兜底 100ms） */
+export function calculateDifferentialTiming(
+  questions: QuizQuestion[],
+  startRef: Record<string, number>,
+  startedAt: number,
+  now: number,
+  choices: Record<string, string>,
+): QuizSubmission[] {
+  const stamps = questions
+    .map((q) => startRef[q.id])
+    .filter((v): v is number => typeof v === 'number')
+    .sort((a, b) => a - b);
+  const byQuestion = new Map<string, number>();
+  for (let i = 0; i < questions.length; i++) {
+    const q = questions[i];
+    const stamp = startRef[q.id];
+    if (typeof stamp !== 'number') {
+      byQuestion.set(q.id, now - startedAt);
+      continue;
+    }
+    let prev = startedAt;
+    for (const s of stamps) {
+      if (s < stamp) prev = s;
+    }
+    byQuestion.set(q.id, stamp - prev);
+  }
+  return questions.map((q) => ({
+    questionId: q.id,
+    choice: choices[q.id] ?? choices[q.id.replace(/^q_att_/, 'q_')] ?? '',
+    elapsedMs: Math.max(100, byQuestion.get(q.id) ?? 1000),
+  }));
+}
+
+/** 历史练习掌握度大盘统计 */
+export function computeMasteryStats(items: QuizHistoryItem[]): MasteryStats {
+  const completed = items.filter((h) => h.status === 'completed' && h.correctCount !== null);
+  const totalAttempted = items.length;
+  const totalCorrect = completed.reduce((acc, h) => acc + (h.correctCount || 0), 0);
+  const totalQuestions = completed.reduce((acc, h) => acc + h.total, 0);
+  const rate = totalQuestions > 0 ? Math.round((totalCorrect / totalQuestions) * 100) : 0;
+  return { totalAttempted, totalCorrect, totalQuestions, rate };
+}
+
+export function normalizeChoices(
+  raw: Record<string, string> | undefined,
+  questions?: QuizQuestion[],
+): Record<string, string> {
+  if (!raw) return {};
+  const res: Record<string, string> = { ...raw };
+  if (questions) {
+    for (const q of questions) {
+      const stripped = q.id.replace(/^q_att_/, 'q_');
+      if (res[stripped] !== undefined && res[q.id] === undefined) {
+        res[q.id] = res[stripped];
+      }
+      if (res[q.id] !== undefined && res[stripped] === undefined) {
+        res[stripped] = res[q.id];
+      }
+    }
+  }
+  return res;
+}
 
 export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
   userId,
@@ -113,13 +185,24 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
   onGoToLanding,
   onExploreInCanvas,
   initialTopic = '',
+  initialPhase,
+  initialChoices,
 }) => {
   const [topic, setTopic] = useState(initialTopic);
   const [difficulty, setDifficulty] = useState<QuizDifficulty>('beginner');
   const [count, setCount] = useState(5);
-  const [phase, setPhase] = useState<Phase>({ kind: 'form' });
-  const [choices, setChoices] = useState<Record<string, string>>({});
-  const historyView = useSyncExternalStore(quizStore.subscribe, quizStore.getHistoryView);
+  const [phase, setPhase] = useState<Phase>(initialPhase ?? { kind: 'form' });
+  const [choices, setChoices] = useState<Record<string, string>>(() =>
+    normalizeChoices(
+      initialChoices,
+      initialPhase?.kind === 'answering' ? initialPhase.attempt.questions : undefined,
+    ),
+  );
+  const historyView = useSyncExternalStore(
+    quizStore.subscribe,
+    quizStore.getHistoryView,
+    quizStore.getHistoryView,
+  );
   const startRef = useRef<Record<string, number>>({});
   const phaseRef = useRef<Phase>(phase);
   useEffect(() => { phaseRef.current = phase; }, [phase]);
@@ -177,30 +260,13 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
     const { attempt } = phase;
     const now = Date.now();
 
-    // 逐题耗时计算（首题相对开卷时刻，其余相对上一题首答时刻）
-    const stamps = attempt.questions
-      .map((q) => startRef.current[q.id])
-      .filter((v): v is number => typeof v === 'number')
-      .sort((a, b) => a - b);
-    const byQuestion = new Map<string, number>();
-    for (let i = 0; i < attempt.questions.length; i++) {
-      const q = attempt.questions[i];
-      const stamp = startRef.current[q.id];
-      if (typeof stamp !== 'number') {
-        byQuestion.set(q.id, now - phase.startedAt);
-        continue;
-      }
-      let prev = phase.startedAt;
-      for (const s of stamps) {
-        if (s < stamp) prev = s;
-      }
-      byQuestion.set(q.id, stamp - prev);
-    }
-    const answers: QuizSubmission[] = attempt.questions.map((q) => ({
-      questionId: q.id,
-      choice: choices[q.id] ?? '',
-      elapsedMs: Math.max(100, byQuestion.get(q.id) ?? 1000),
-    }));
+    const answers = calculateDifferentialTiming(
+      attempt.questions,
+      startRef.current,
+      phase.startedAt,
+      now,
+      choices,
+    );
 
     const outcome = await quizStore.submitAnswers(attempt.attemptId, answers);
     if (!outcome.ok) {
@@ -220,7 +286,8 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
   const pickChoice = useCallback((questionId: string, choice: string) => {
     if (!startRef.current[questionId]) startRef.current[questionId] = Date.now();
     setChoices((prev) => {
-      const next = { ...prev, [questionId]: choice };
+      const stripped = questionId.replace(/^q_att_/, 'q_');
+      const next = { ...prev, [questionId]: choice, [stripped]: choice };
       if (phaseRef.current?.kind === 'answering') {
         quizStore.saveDraft(phaseRef.current.attempt.attemptId, {
           ...Object.fromEntries(Object.entries(next).map(([qid, c]) => [
@@ -233,19 +300,17 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
   }, []);
 
   const answeredCount = useMemo(
-    () => (phase.kind === 'answering' ? phase.attempt.questions.filter((q) => choices[q.id]).length : 0),
+    () =>
+      phase.kind === 'answering'
+        ? phase.attempt.questions.filter(
+            (q) => choices[q.id] || choices[q.id.replace(/^q_att_/, 'q_')],
+          ).length
+        : 0,
     [phase, choices],
   );
 
   // 历史练习总计
-  const masteryStats = useMemo(() => {
-    const completed = historyView.items.filter((h) => h.status === 'completed' && h.correctCount !== null);
-    const totalAttempted = historyView.items.length;
-    const totalCorrect = completed.reduce((acc, h) => acc + (h.correctCount || 0), 0);
-    const totalQuestions = completed.reduce((acc, h) => acc + h.total, 0);
-    const rate = totalQuestions > 0 ? Math.round((totalCorrect / totalQuestions) * 100) : 0;
-    return { totalAttempted, totalCorrect, totalQuestions, rate };
-  }, [historyView.items]);
+  const masteryStats = useMemo(() => computeMasteryStats(historyView.items), [historyView.items]);
 
   const handleStartNewWithTopic = (t: string, d?: QuizDifficulty) => {
     setTopic(t);
@@ -697,7 +762,8 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
                     {q.type === 'single' && q.options ? (
                       <div className="flex flex-col gap-2 pt-1 pl-8">
                         {q.options.map((o) => {
-                          const isPicked = choices[q.id] === o.label;
+                          const pickedVal = choices[q.id] ?? choices[q.id.replace(/^q_att_/, 'q_')];
+                          const isPicked = pickedVal === o.label;
                           return (
                             <button
                               key={o.label}
@@ -732,7 +798,8 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
                           ['true', '✓ 正确'],
                           ['false', '✕ 错误'],
                         ].map(([val, label]) => {
-                          const isPicked = choices[q.id] === val;
+                          const pickedVal = choices[q.id] ?? choices[q.id.replace(/^q_att_/, 'q_')];
+                          const isPicked = pickedVal === val;
                           return (
                             <button
                               key={val}

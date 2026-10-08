@@ -111,7 +111,7 @@ function rebuild(): void {
 
 function persist(): void {
   try {
-    localStorage.setItem(scope.quizCacheKey(), JSON.stringify(history));
+    localStorage.setItem(scope.quizCacheKey(boundScope ?? undefined), JSON.stringify(history));
   } catch {
     // 存储不可用时静默降级（练习记录在服务端，本地缓存只是优化）
   }
@@ -262,7 +262,7 @@ export async function refreshHistory(): Promise<void> {
 /** 清除已提交的作答草稿（照 chat-draft 先例：成功后必须清） */
 export function clearDraft(attemptId: string): void {
   try {
-    localStorage.removeItem(`${scope.quizCacheKey()}:draft:${attemptId}`);
+    localStorage.removeItem(`${scope.quizCacheKey(boundScope ?? undefined)}:draft:${attemptId}`);
   } catch {
     // 忽略
   }
@@ -272,7 +272,7 @@ export function clearDraft(attemptId: string): void {
 export function saveDraft(attemptId: string, answers: Record<string, QuizSubmission>): void {
   try {
     localStorage.setItem(
-      `${scope.quizCacheKey()}:draft:${attemptId}`,
+      `${scope.quizCacheKey(boundScope ?? undefined)}:draft:${attemptId}`,
       JSON.stringify(answers),
     );
   } catch {
@@ -282,7 +282,7 @@ export function saveDraft(attemptId: string, answers: Record<string, QuizSubmiss
 
 export function loadDraft(attemptId: string): Partial<Record<string, QuizSubmission>> {
   try {
-    const raw = localStorage.getItem(`${scope.quizCacheKey()}:draft:${attemptId}`);
+    const raw = localStorage.getItem(`${scope.quizCacheKey(boundScope ?? undefined)}:draft:${attemptId}`);
     if (!raw) return {};
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === 'object' ? parsed : {};
