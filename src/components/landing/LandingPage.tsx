@@ -35,6 +35,7 @@ import {
   Brain,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { useModal } from '../../context/ModalContext';
 import { trackEvent } from '../../lib/analytics';
 import { SCENARIO_SAMPLE_INDEX, SAMPLE_BOARDS } from '../../lib/sample-boards';
 import {
@@ -78,7 +79,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   onEnterCanvas,
   onEnterPractice,
 }) => {
-  const { user, isVip, openAuthModal, openRechargeModal } = useAuth();
+  const { user, isVip } = useAuth();
+  const { openAuthModal, openRechargeModal } = useModal();
   const [activeScenario, setActiveScenario] = useState<number>(0);
   const [demoExpanded, setDemoExpanded] = useState<boolean>(false);
   const [demoStep, setDemoStep] = useState<number>(1);

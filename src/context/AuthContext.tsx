@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { AuthUser, FeedbackPayload, MyFeedback } from '../types';
+import { AuthUser } from '../types';
 import { trackEvent } from '../lib/analytics';
 
 interface AuthContextType {
@@ -13,32 +13,6 @@ interface AuthContextType {
   updateProfile: (data: { name?: string; avatar?: string }) => Promise<{ success: boolean; error?: string }>;
   changePassword: (oldPassword: string, newPassword: string) => Promise<{ success: boolean; error?: string }>;
   resendVerification: () => Promise<{ success: boolean; message?: string; error?: string }>;
-  submitFeedback: (data: FeedbackPayload) => Promise<{ success: boolean; message?: string; error?: string }>;
-  /** Spec P1：我的反馈（需登录；匿名提交的工单不在其中，服务端也无从归属） */
-  listMyFeedbacks: () => Promise<{ success: boolean; feedbacks?: MyFeedback[]; error?: string }>;
-  // Modals state
-  authModalOpen: boolean;
-  authModalMode: 'signin' | 'signup';
-  openAuthModal: (mode?: 'signin' | 'signup') => void;
-  closeAuthModal: () => void;
-  userProfileModalOpen: boolean;
-  openUserProfileModal: () => void;
-  closeUserProfileModal: () => void;
-  feedbackModalOpen: boolean;
-  openFeedbackModal: () => void;
-  closeFeedbackModal: () => void;
-  rechargeModalOpen: boolean;
-  /** 触发升级时的画板上下文（Spec K7：用于拉取当前画板节点余量） */
-  rechargeCanvasId: string | null;
-  upgradeModalReason: string | null;
-  openRechargeModal: (reason?: string, canvasId?: string) => void;
-  closeRechargeModal: () => void;
-  adminModalOpen: boolean;
-  openAdminModal: () => void;
-  closeAdminModal: () => void;
-  mySharesModalOpen: boolean;
-  openMySharesModal: () => void;
-  closeMySharesModal: () => void;
   refreshUser: () => Promise<void>;
 }
 
@@ -59,18 +33,6 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
-
-  // Modals
-  const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [authModalMode, setAuthModalMode] = useState<'signin' | 'signup'>('signin');
-  const [userProfileModalOpen, setUserProfileModalOpen] = useState(false);
-  const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
-  const [rechargeModalOpen, setRechargeModalOpen] = useState(false);
-  // Spec K7：升级触发时的画板上下文（配额墙触发点传入，弹窗据此展示节点余量）
-  const [rechargeCanvasId, setRechargeCanvasId] = useState<string | null>(null);
-  const [upgradeModalReason, setUpgradeModalReason] = useState<string | null>(null);
-  const [adminModalOpen, setAdminModalOpen] = useState(false);
-  const [mySharesModalOpen, setMySharesModalOpen] = useState(false);
 
   // Determine VIP active status
   const isVip = Boolean(
@@ -123,7 +85,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(data.user);
       void refreshUser(); // 拉取 entitlements（Spec B3/B4）
       trackEvent('login_success'); // K4 事件 4：登录成功（不携带任何账号标识）
-      setAuthModalOpen(false);
       return { success: true };
     } catch (e: any) {
       return { success: false, error: e?.message || '网络连接异常' };
@@ -146,7 +107,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(data.user);
       void refreshUser(); // 拉取 entitlements（Spec B3/B4）
       trackEvent('register_success'); // K4 事件 3：注册成功（漏斗关键节点）
-      setAuthModalOpen(false);
       return { success: true };
     } catch (e: any) {
       return { success: false, error: e?.message || '网络连接异常' };
@@ -231,37 +191,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const submitFeedback = async (payload: FeedbackPayload) => {
-    try {
-      const res = await fetch('/api/auth/feedback', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        return { success: false, error: data.error || '提交反馈失败' };
-      }
-      return { success: true, message: data.message };
-    } catch (e: any) {
-      return { success: false, error: e?.message || '网络连接异常' };
-    }
-  };
-
-  const listMyFeedbacks = async () => {
-    try {
-      const res = await fetch('/api/feedback', { credentials: 'include' });
-      const data = await res.json();
-      if (!res.ok) {
-        return { success: false, error: data.error || '获取反馈记录失败' };
-      }
-      return { success: true, feedbacks: (data.feedbacks || []) as MyFeedback[] };
-    } catch (e: any) {
-      return { success: false, error: e?.message || '网络连接异常' };
-    }
-  };
-
   const logout = async () => {
     try {
       await fetch('/api/auth/sign-out', {
@@ -271,59 +200,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch {}
     setUser(null);
   };
-
-  const openAuthModal = useCallback((mode: 'signin' | 'signup' = 'signin') => {
-    setAuthModalMode(mode);
-    setAuthModalOpen(true);
-  }, []);
-
-  const closeAuthModal = useCallback(() => {
-    setAuthModalOpen(false);
-  }, []);
-
-  const openUserProfileModal = useCallback(() => {
-    setUserProfileModalOpen(true);
-  }, []);
-
-  const closeUserProfileModal = useCallback(() => {
-    setUserProfileModalOpen(false);
-  }, []);
-
-  const openFeedbackModal = useCallback(() => {
-    setFeedbackModalOpen(true);
-  }, []);
-
-  const closeFeedbackModal = useCallback(() => {
-    setFeedbackModalOpen(false);
-  }, []);
-
-  const openRechargeModal = useCallback((reason?: string, canvasId?: string) => {
-    setUpgradeModalReason(reason || null);
-    setRechargeCanvasId(canvasId || null);
-    setRechargeModalOpen(true);
-  }, []);
-
-  const closeRechargeModal = useCallback(() => {
-    setRechargeModalOpen(false);
-    setRechargeCanvasId(null);
-    setUpgradeModalReason(null);
-  }, []);
-
-  const openAdminModal = useCallback(() => {
-    setAdminModalOpen(true);
-  }, []);
-
-  const closeAdminModal = useCallback(() => {
-    setAdminModalOpen(false);
-  }, []);
-
-  const openMySharesModal = useCallback(() => {
-    setMySharesModalOpen(true);
-  }, []);
-
-  const closeMySharesModal = useCallback(() => {
-    setMySharesModalOpen(false);
-  }, []);
 
   return (
     <AuthContext.Provider
@@ -338,29 +214,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         updateProfile,
         changePassword,
         resendVerification,
-        submitFeedback,
-        listMyFeedbacks,
-        authModalOpen,
-        authModalMode,
-        openAuthModal,
-        closeAuthModal,
-        userProfileModalOpen,
-        openUserProfileModal,
-        closeUserProfileModal,
-        feedbackModalOpen,
-        openFeedbackModal,
-        closeFeedbackModal,
-        rechargeModalOpen,
-        rechargeCanvasId,
-        upgradeModalReason,
-        openRechargeModal,
-        closeRechargeModal,
-        adminModalOpen,
-        openAdminModal,
-        closeAdminModal,
-        mySharesModalOpen,
-        openMySharesModal,
-        closeMySharesModal,
         refreshUser,
       }}
     >

@@ -11,7 +11,6 @@
  *   后者是禁删、与模式无关，两者刻意不共用一个判据。
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import { motion } from 'motion/react';
 import {
   X,
   Search,
@@ -27,6 +26,7 @@ import {
   Inbox,
   Folder as FolderIcon,
 } from 'lucide-react';
+import { Modal } from './base/Modal';
 import type { DeepDiveBoardMeta } from '../../types';
 import type { FolderMeta } from '../../lib/folder-store';
 import { SHARED_BOARD_IDS } from '../../lib/board-scope';
@@ -35,7 +35,9 @@ type FolderSel = 'all' | 'none' | string;
 type SortKey = 'recent' | 'name';
 type OpResult = { ok: boolean; error?: string };
 
-interface BoardLibraryModalProps {
+export interface BoardLibraryModalProps {
+  /** 可选受控显隐，默认 true（兼容现有条件渲染与受控渲染） */
+  isOpen?: boolean;
   boards: DeepDiveBoardMeta[];
   folders: FolderMeta[];
   foldersOffline?: boolean;
@@ -64,6 +66,7 @@ function formatUpdatedAt(ts: number): string {
 }
 
 export const BoardLibraryModal: React.FC<BoardLibraryModalProps> = ({
+  isOpen = true,
   boards,
   folders,
   foldersOffline = false,
@@ -88,14 +91,6 @@ export const BoardLibraryModal: React.FC<BoardLibraryModalProps> = ({
   const [showArchived, setShowArchived] = useState(false);
   const [favOnly, setFavOnly] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
-
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onClose]);
 
   // 分组被删除后选中项失效 → 回落到「全部」
   useEffect(() => {
@@ -164,20 +159,14 @@ export const BoardLibraryModal: React.FC<BoardLibraryModalProps> = ({
     }`;
 
   return (
-    <div
-      id="board-library-backdrop"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      size="2xl"
+      showCloseButton={false}
+      className="relative w-full max-w-3xl max-h-[82vh] flex flex-col bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl text-slate-100 p-0 overflow-hidden"
     >
-      <motion.div
-        id="board-library-container"
-        initial={{ opacity: 0, scale: 0.95, y: 10 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        transition={{ duration: 0.2 }}
-        className="relative w-full max-w-3xl max-h-[82vh] flex flex-col bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl text-slate-100"
-      >
+      <div id="board-library-container" className="flex flex-col w-full h-full min-h-0 overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800/80 shrink-0">
           <div className="flex items-center gap-2">
@@ -455,7 +444,7 @@ export const BoardLibraryModal: React.FC<BoardLibraryModalProps> = ({
             </div>
           </div>
         </div>
-      </motion.div>
-    </div>
+      </div>
+    </Modal>
   );
 };

@@ -38,6 +38,7 @@ import { canCreate, markPendingCreate } from '../../lib/quota-store';
 import { extractSuggestions, getFallbackSuggestions, collectSuggestedLeafIds } from '../../lib/suggestions';
 import { NodeActionsContext, NodeActionsContextValue } from '../../context/NodeActionsContext';
 import { useAuth } from '../../context/AuthContext';
+import { useModal } from '../../context/ModalContext';
 import { useRenderMonitor } from '../../hooks/useRenderMonitor';
 import { trackEvent, trackOnce } from '../../lib/analytics';
 import { markChecklistStep } from '../../lib/checklist';
@@ -159,7 +160,8 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
   } | null>(null);
   const renderWarning = useRenderMonitor('DeepDiveCanvas');
   const reactFlowInstance = useReactFlow();
-  const { isVip, openAuthModal, openRechargeModal } = useAuth();
+  const { isVip } = useAuth();
+  const { openAuthModal, openRechargeModal } = useModal();
 
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);

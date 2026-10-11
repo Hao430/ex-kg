@@ -39,6 +39,7 @@ import * as quizStore from '../../lib/quiz-store';
 import { scopeKeyFor } from '../../lib/board-scope';
 import type { QuizAttemptView, QuizDifficulty, QuizGradeResult, QuizHistoryItem, QuizQuestion, QuizSubmission } from '../../lib/quiz-store';
 import { useAuth } from '../../context/AuthContext';
+import { useModal } from '../../context/ModalContext';
 import { Tooltip } from '../ui/Tooltip';
 
 export const DIFFICULTY_LABELS: Record<QuizDifficulty, string> = {
@@ -207,7 +208,8 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
   const phaseRef = useRef<Phase>(phase);
   useEffect(() => { phaseRef.current = phase; }, [phase]);
 
-  const { isVip, openAuthModal, openRechargeModal, openUserProfileModal } = useAuth();
+  const { isVip } = useAuth();
+  const { openAuthModal, openRechargeModal, openUserProfileModal } = useModal();
 
   // 账号切换 scope 绑定
   useEffect(() => {

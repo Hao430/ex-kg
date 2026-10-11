@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion } from 'motion/react';
 import {
   X,
   MessageSquarePlus,
@@ -15,7 +15,10 @@ import {
   Inbox,
   Clock,
 } from 'lucide-react';
+import { Modal } from './base/Modal';
 import { useAuth } from '../../context/AuthContext';
+import { useModal } from '../../context/ModalContext';
+import { submitFeedback, listMyFeedbacks } from '../../services/feedback';
 import { FeedbackType, MyFeedback } from '../../types';
 
 const FEEDBACK_TYPES: { id: FeedbackType; label: string; icon: any; desc: string }[] = [
@@ -39,8 +42,18 @@ function formatTime(value: string): string {
   return d.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-export const FeedbackModal: React.FC = () => {
-  const { user, feedbackModalOpen, closeFeedbackModal, submitFeedback, listMyFeedbacks } = useAuth();
+export interface FeedbackModalProps {
+  isOpen?: boolean;
+  onClose?: () => void;
+}
+
+export const FeedbackModal: React.FC<FeedbackModalProps> = ({
+  isOpen: propIsOpen,
+  onClose: propOnClose,
+}) => {
+  const { user } = useAuth();
+  const { feedbackModalOpen, closeFeedbackModal } = useModal();
+  const isOpen = propIsOpen ?? feedbackModalOpen;
 
   const [view, setView] = useState<'submit' | 'mine'>('submit');
   const [type, setType] = useState<FeedbackType>('suggestion');
@@ -57,7 +70,7 @@ export const FeedbackModal: React.FC = () => {
   const [mineError, setMineError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!feedbackModalOpen || view !== 'mine' || !user) return;
+    if (!isOpen || view !== 'mine' || !user) return;
     let cancelled = false;
     setMineLoading(true);
     setMineError(null);
@@ -70,19 +83,18 @@ export const FeedbackModal: React.FC = () => {
     return () => { cancelled = true; };
     // listMyFeedbacks 每次渲染都是新函数引用，不能进依赖（会把 effect 变成每帧重拉）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [feedbackModalOpen, view, user]);
-
-  if (!feedbackModalOpen) return null;
+  }, [isOpen, view, user]);
 
   const handleClose = () => {
-    closeFeedbackModal();
+    if (propOnClose) propOnClose();
+    else closeFeedbackModal();
     // Reset state after transition
     setTimeout(() => {
       setSuccess(false);
       setContent('');
       setErrorMsg(null);
       setView('submit');
-    }, 300);
+    }, 250);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -114,23 +126,15 @@ export const FeedbackModal: React.FC = () => {
   };
 
   return (
-    <AnimatePresence>
-      <div
-        id="feedback-modal-backdrop"
-        className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm"
-        onClick={(e) => {
-          if (e.target === e.currentTarget) handleClose();
-        }}
-      >
-        <motion.div
-          id="feedback-modal-container"
-          initial={{ opacity: 0, scale: 0.95, y: 10 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.95, y: 10 }}
-          transition={{ duration: 0.2 }}
-          className="relative w-full max-w-lg bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden text-slate-100"
-        >
-          {/* Header */}
+    <Modal
+      isOpen={isOpen}
+      onClose={handleClose}
+      size="lg"
+      showCloseButton={false}
+      className="relative w-full max-w-lg bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden text-slate-100 p-0"
+    >
+      <div id="feedback-modal-container" className="flex flex-col w-full h-full">
+        {/* Header */}
           <div className="flex items-center justify-between p-6 border-b border-slate-800/80 bg-slate-900/50">
             <div className="flex items-center gap-2.5">
               <div className="w-9 h-9 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
@@ -383,8 +387,7 @@ export const FeedbackModal: React.FC = () => {
               </div>
             </form>
           )}
-        </motion.div>
       </div>
-    </AnimatePresence>
+    </Modal>
   );
 };

@@ -7,49 +7,16 @@
  * - 打开时上报 K4 事件 sample_view（data.persona 人群标签，非 PII）。
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import { ReactFlow, Background, BackgroundVariant, ReactFlowProvider, type Node, type Edge } from '@xyflow/react';
 import { X } from 'lucide-react';
 import { SAMPLE_BOARDS, type SampleBoard } from '../../lib/sample-boards';
-import { ChatCardNode } from '../nodes/ChatCardNode';
-import { NoteCardNode } from '../nodes/NoteCardNode';
-import { withErrorBoundary } from '../ErrorBoundary';
-import { NodeActionsContext, readOnlyNodeActions } from '../../context/NodeActionsContext';
+import { ReadOnlyCanvas } from '../canvas/ReadOnlyCanvas';
 import { trackEvent } from '../../lib/analytics';
 
-interface SampleBoardViewerProps {
+export interface SampleBoardViewerProps {
   /** 初始展示的示例下标（缺省 0） */
   initialIndex?: number;
   onClose: () => void;
 }
-
-/** 与主画布同款节点组件（技术债 #0032：同样经 withErrorBoundary 包裹），仅禁交互 */
-const readOnlyNodeTypes = {
-  chat: withErrorBoundary(ChatCardNode),
-  note: withErrorBoundary(NoteCardNode),
-};
-
-/** 只读画布：轻量包装，切 tab 时用 key 重挂载以重置 fitView */
-const ReadOnlyFlow: React.FC<{ nodes: Node[]; edges: Edge[] }> = ({ nodes, edges }) => (
-  <NodeActionsContext.Provider value={readOnlyNodeActions}>
-    <ReactFlow
-      nodes={nodes}
-      edges={edges}
-      nodeTypes={readOnlyNodeTypes}
-      nodesDraggable={false}
-      nodesConnectable={false}
-      elementsSelectable={false}
-      edgesFocusable={false}
-      zoomOnDoubleClick={false}
-      proOptions={{ hideAttribution: true }}
-      fitView
-      fitViewOptions={{ padding: 0.15 }}
-      minZoom={0.1}
-      maxZoom={1.5}
-    >
-      <Background variant={BackgroundVariant.Dots} gap={28} size={1.5} />
-    </ReactFlow>
-  </NodeActionsContext.Provider>
-);
 
 export const SampleBoardViewer: React.FC<SampleBoardViewerProps> = ({ initialIndex = 0, onClose }) => {
   const [index, setIndex] = useState(() => Math.min(Math.max(initialIndex, 0), SAMPLE_BOARDS.length - 1));
@@ -117,9 +84,12 @@ export const SampleBoardViewer: React.FC<SampleBoardViewerProps> = ({ initialInd
 
         {/* 只读画布 */}
         <div className="flex-1 min-h-0">
-          <ReactFlowProvider>
-            <ReadOnlyFlow key={board.id} nodes={nodes} edges={edges} />
-          </ReactFlowProvider>
+          <ReadOnlyCanvas
+            key={board.id}
+            nodes={nodes}
+            edges={edges}
+            fitViewPadding={0.15}
+          />
         </div>
 
         {/* 底部说明 */}

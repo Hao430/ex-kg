@@ -30,7 +30,9 @@ import * as quotaStore from './lib/quota-store';
 import * as syncQueue from './lib/sync-queue';
 import * as folderStore from './lib/folder-store';
 import { useBoards, useFolders } from './hooks/useBoards';
+import { useTheme } from './hooks/useTheme';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { ModalProvider, useModal } from './context/ModalContext';
 import { trackEvent } from './lib/analytics';
 import { getBoardEditLock } from './lib/board-edit-lock';
 import { markChecklistStep } from './lib/checklist';
@@ -124,33 +126,15 @@ function MainApp() {
    */
   const [boardEditOwner, setBoardEditOwner] = useState(true);
 
-  const { isVip, openRechargeModal, user, resendVerification, loading: authLoading } = useAuth();
+  const { isVip, user, resendVerification, loading: authLoading } = useAuth();
+  const { openRechargeModal } = useModal();
 
-  // Global Dark Mode state ('light' | 'dark')
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    try {
-      const savedTheme = localStorage.getItem('deepdive_theme');
-      if (savedTheme === 'light' || savedTheme === 'dark') return savedTheme;
-      if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-        return 'dark';
-      }
-    } catch (e) {
-      // ignore
-    }
-    return 'light';
+  // Unified Dark Mode hook ('light' | 'dark')
+  const { theme, toggleTheme } = useTheme({
+    onToggleNotice: (next) => {
+      showToast(next === 'dark' ? '已开启深色模式 · 适配深夜深度思考' : '已切换为明亮模式');
+    },
   });
-
-  // Synchronize 'dark' class on <html> documentElement
-  useEffect(() => {
-    if (theme === 'dark') {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-    try {
-      localStorage.setItem('deepdive_theme', theme);
-    } catch (e) {}
-  }, [theme]);
 
   // Spec Q1：探索灵感开关是**画板级**属性，**服务端唯一真源**（`canvases.suggestions_enabled`
   // 经 PATCH /api/canvases/:id/meta 读写，与 isFavorite/isArchived/folderId 同一条 meta 通道）。
@@ -176,14 +160,6 @@ function MainApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [currentBoardId]
   );
-
-  const toggleTheme = useCallback(() => {
-    setTheme((prev) => {
-      const next = prev === 'light' ? 'dark' : 'light';
-      showToast(next === 'dark' ? '已开启深色模式 · 适配深夜深度思考' : '已切换为明亮模式');
-      return next;
-    });
-  }, []);
 
   // Trigger refs for Canvas actions
   const triggerAutoLayoutRef = useRef<(() => void) | null>(null);
@@ -1506,13 +1482,15 @@ function MainApp() {
 export default function App() {
   return (
     <AuthProvider>
-      <MainApp />
-      <AuthModal />
-      <UserProfileModal />
-      <MySharesModal />
-      <FeedbackModal />
-      <RechargeModal />
-      <AdminDashboardModal />
+      <ModalProvider>
+        <MainApp />
+        <AuthModal />
+        <UserProfileModal />
+        <MySharesModal />
+        <FeedbackModal />
+        <RechargeModal />
+        <AdminDashboardModal />
+      </ModalProvider>
     </AuthProvider>
   );
 }

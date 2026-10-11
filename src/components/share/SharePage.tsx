@@ -8,10 +8,6 @@
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  ReactFlow,
-  Background,
-  BackgroundVariant,
-  ReactFlowProvider,
   type Node,
   type Edge,
 } from '@xyflow/react';
@@ -19,49 +15,12 @@ import { motion } from 'framer-motion';
 import { Sparkles, ArrowRight, Sun, Moon } from 'lucide-react';
 import { trackEvent } from '../../lib/analytics';
 import { recordCloneIntent } from '../../lib/share-clone';
-import { ChatCardNode } from '../nodes/ChatCardNode';
-import { NoteCardNode } from '../nodes/NoteCardNode';
-import { withErrorBoundary } from '../ErrorBoundary';
-import { NodeActionsContext, readOnlyNodeActions } from '../../context/NodeActionsContext';
-import { AuthProvider } from '../../context/AuthContext';
-import '@xyflow/react/dist/style.css';
+import { ReadOnlyCanvas } from '../canvas/ReadOnlyCanvas';
+import { useTheme } from '../../hooks/useTheme';
 
-/** 与主画布同款节点组件（技术债 #0032：同样经 withErrorBoundary 包裹），仅禁交互 */
-const readOnlyNodeTypes = {
-  chat: withErrorBoundary(ChatCardNode),
-  note: withErrorBoundary(NoteCardNode),
-};
-
-
-/**
- * 主题状态：优先读 localStorage（与主应用共用 deepdive_theme 键，访客进入主应用后偏好延续），
- * 无记录时跟随系统；切换即持久化并同步 html.dark class（与 App.tsx 同口径）。
- */
-function useShareTheme(): { theme: 'light' | 'dark'; toggleTheme: () => void } {
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    try {
-      const saved = localStorage.getItem('deepdive_theme');
-      if (saved === 'light' || saved === 'dark') return saved;
-      if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-        return 'dark';
-      }
-    } catch {}
-    return 'light';
-  });
-
-  useEffect(() => {
-    document.documentElement.classList.toggle('dark', theme === 'dark');
-    try {
-      localStorage.setItem('deepdive_theme', theme);
-    } catch {}
-  }, [theme]);
-
-  const toggleTheme = () => setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
-  return { theme, toggleTheme };
-}
 
 const SharePageInner: React.FC<{ shareCode: string }> = ({ shareCode }) => {
-  const { theme, toggleTheme } = useShareTheme();
+  const { theme, toggleTheme } = useTheme();
   const [state, setState] = useState<
     { status: 'loading' } | { status: 'error'; message: string } | { status: 'ready'; title: string; nodes: Node[]; edges: Edge[]; viewCount: number }
   >({ status: 'loading' });
@@ -179,31 +138,12 @@ const SharePageInner: React.FC<{ shareCode: string }> = ({ shareCode }) => {
           </div>
           {/* flex-1 + min-h-0：画布占满剩余高度（移动端不引入 480px 硬兜底导致的页面滚动） */}
           <div className="flex-1 min-h-0">
-            {/* AuthProvider：ChatCardNode 内部 useAuth 需要；访客态 user=null 即可 */}
-            <AuthProvider>
-              <NodeActionsContext.Provider value={readOnlyNodeActions}>
-                <ReactFlowProvider>
-                  <ReactFlow
-                    nodes={state.nodes}
-                    edges={state.edges}
-                    nodeTypes={readOnlyNodeTypes}
-                    nodesDraggable={false}
-                    nodesConnectable={false}
-                    elementsSelectable={false}
-                    edgesFocusable={false}
-                    zoomOnDoubleClick={false}
-                    // 移动端手势：React Flow 默认支持单指拖拽平移 + 双指捏合缩放（zoomOnPinch）
-                    proOptions={{ hideAttribution: true }}
-                    fitView
-                    fitViewOptions={{ padding: 0.2 }}
-                    minZoom={0.1}
-                    maxZoom={1.5}
-                  >
-                    <Background variant={BackgroundVariant.Dots} gap={28} size={1.5} />
-                  </ReactFlow>
-                </ReactFlowProvider>
-              </NodeActionsContext.Provider>
-            </AuthProvider>
+            <ReadOnlyCanvas
+              nodes={state.nodes}
+              edges={state.edges}
+              fitViewPadding={0.2}
+              ensureAuthProvider={true}
+            />
           </div>
           {/* 底部品牌传播条：CTA 点击记录克隆意图（Spec K6/B1），注册/登录后自动克隆该画布 */}
           <footer className="px-4 sm:px-5 py-3 border-t border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/80 backdrop-blur flex items-center justify-between gap-3">

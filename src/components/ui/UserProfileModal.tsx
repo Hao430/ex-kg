@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion } from 'motion/react';
 import {
   X,
   User,
@@ -26,7 +26,9 @@ import {
   Shield,
   BadgeCheck,
 } from 'lucide-react';
+import { Modal } from './base/Modal';
 import { useAuth } from '../../context/AuthContext';
+import { useModal } from '../../context/ModalContext';
 import { copyTextToClipboard } from '../../lib/clipboard.js';
 
 // Curated intellectual & aesthetic emoji avatar presets
@@ -47,18 +49,25 @@ const PRESET_AVATARS = [
 
 type ActiveTab = 'profile' | 'membership' | 'security';
 
-export const UserProfileModal: React.FC = () => {
+export interface UserProfileModalProps {
+  isOpen?: boolean;
+  onClose?: () => void;
+}
+
+export const UserProfileModal: React.FC<UserProfileModalProps> = ({
+  isOpen: propIsOpen,
+  onClose: propOnClose,
+}) => {
+  const { user, isVip, updateProfile, changePassword, logout } = useAuth();
   const {
-    user,
-    isVip,
     userProfileModalOpen,
     closeUserProfileModal,
-    updateProfile,
-    changePassword,
     openRechargeModal,
     openMySharesModal,
-    logout,
-  } = useAuth();
+  } = useModal();
+
+  const isOpen = (propIsOpen ?? userProfileModalOpen) && Boolean(user);
+  const onClose = propOnClose ?? closeUserProfileModal;
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('profile');
   const [name, setName] = useState('');
@@ -85,8 +94,6 @@ export const UserProfileModal: React.FC = () => {
       setStatusMsg(null);
     }
   }, [user, userProfileModalOpen]);
-
-  if (!userProfileModalOpen || !user) return null;
 
   const handleCopy = async (text: string, fieldName: string) => {
     const success = await copyTextToClipboard(text);
@@ -203,14 +210,15 @@ export const UserProfileModal: React.FC = () => {
     }
   };
 
-  const remainingVipDays =
-    user.role === 'admin'
-      ? '永久有效'
-      : user.vip_expires_at
-      ? Math.max(0, Math.ceil((new Date(user.vip_expires_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
-      : 0;
+  const remainingVipDays = !user
+    ? 0
+    : user.role === 'admin'
+    ? '永久有效'
+    : user.vip_expires_at
+    ? Math.max(0, Math.ceil((new Date(user.vip_expires_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
+    : 0;
 
-  const vipExpDate = user.vip_expires_at
+  const vipExpDate = user?.vip_expires_at
     ? new Date(user.vip_expires_at).toLocaleDateString('zh-CN', {
         year: 'numeric',
         month: 'long',
@@ -218,7 +226,7 @@ export const UserProfileModal: React.FC = () => {
       })
     : null;
 
-  const joinDate = user.created_at
+  const joinDate = user?.created_at
     ? new Date(user.created_at).toLocaleDateString('zh-CN', {
         year: 'numeric',
         month: 'long',
@@ -229,43 +237,37 @@ export const UserProfileModal: React.FC = () => {
   const isCustomAvatar = selectedAvatar.startsWith('data:') || selectedAvatar.startsWith('http');
 
   return (
-    <AnimatePresence>
-      <div
-        id="user-profile-modal-backdrop"
-        className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 backdrop-blur-md"
-        onClick={(e) => {
-          if (e.target === e.currentTarget) closeUserProfileModal();
-        }}
-      >
-        <motion.div
-          id="user-profile-modal-container"
-          initial={{ opacity: 0, scale: 0.96, y: 8 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.96, y: 8 }}
-          transition={{ duration: 0.18, ease: 'easeOut' }}
-          className="relative w-full max-w-2xl bg-white dark:bg-[#0f172a] border border-slate-200/90 dark:border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] text-slate-900 dark:text-slate-100"
-        >
-          {/* Header Bar */}
-          <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800/80 bg-slate-50/70 dark:bg-slate-900/40">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-medium">
-                <User className="w-4 h-4" />
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      size="2xl"
+      showCloseButton={false}
+      className="relative w-full max-w-2xl bg-white dark:bg-[#0f172a] border border-slate-200/90 dark:border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] text-slate-900 dark:text-slate-100 p-0"
+    >
+      <div id="user-profile-modal-container" className="flex flex-col w-full h-full min-h-0 overflow-hidden">
+        {user && (
+          <>
+            {/* Header Bar */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800/80 bg-slate-50/70 dark:bg-slate-900/40">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-medium">
+                  <User className="w-4 h-4" />
+                </div>
+                <div>
+                  <h2 className="text-base font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+                    用户个人中心
+                  </h2>
+                  <p className="text-[12px] text-slate-500 dark:text-slate-400">
+                    管理您的个人偏好、身份标识与账户安全
+                  </p>
+                </div>
               </div>
-              <div>
-                <h2 className="text-base font-semibold tracking-tight text-slate-900 dark:text-slate-100">
-                  用户个人中心
-                </h2>
-                <p className="text-[12px] text-slate-500 dark:text-slate-400">
-                  管理您的个人偏好、身份标识与账户安全
-                </p>
-              </div>
-            </div>
-            <button
-              id="user-profile-close-btn"
-              onClick={closeUserProfileModal}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-              title="关闭"
-            >
+              <button
+                id="user-profile-close-btn"
+                onClick={onClose}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                title="关闭"
+              >
               <X className="w-4 h-4" />
             </button>
           </div>
@@ -942,7 +944,7 @@ export const UserProfileModal: React.FC = () => {
               <button
                 type="button"
                 id="user-profile-cancel-btn"
-                onClick={closeUserProfileModal}
+                onClick={onClose}
                 className="px-4 py-2 text-xs font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-colors"
               >
                 取消
@@ -970,8 +972,9 @@ export const UserProfileModal: React.FC = () => {
               )}
             </div>
           </div>
-        </motion.div>
-      </div>
-    </AnimatePresence>
-  );
+        </>
+      )}
+    </div>
+  </Modal>
+);
 };

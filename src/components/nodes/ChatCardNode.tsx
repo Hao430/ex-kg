@@ -31,7 +31,7 @@ import {
 } from 'lucide-react';
 import { ChatNodeData } from '../../types';
 import { useNodeActions } from '../../context/NodeActionsContext';
-import { useAuth } from '../../context/AuthContext';
+import { useModal } from '../../context/ModalContext';
 import { Tooltip } from '../ui/Tooltip';
 import { useRenderMonitor } from '../../hooks/useRenderMonitor';
 import { getChatDraft, setChatDraft, clearChatDraft } from '../../lib/chat-draft.js';
@@ -157,7 +157,7 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
   // 只读模式（分享页/示例画布）：隐藏交互控件，仅保留展示；动作经 readOnlyNodeActions 桩兜底
   const readOnly = Boolean(nodeData.readOnly);
   const nodeActions = useNodeActions();
-  const { openAuthModal, openRechargeModal } = useAuth();
+  const { openAuthModal, openRechargeModal } = useModal();
 
   // 输入的初值取自未提交草稿（sessionStorage，按节点 + 输入框种类）：
   // 提问框在提交前只是组件 state，切走画板/重挂载就没了——用户体感是「我打的字消失了」。

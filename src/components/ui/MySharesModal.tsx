@@ -11,9 +11,9 @@
  * 独立 fetch（credentials include），不经 App 的 shareDialog/boards 状态。
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { motion } from 'motion/react';
 import { X, Share2, Copy, Check, RefreshCw, Link2Off, Loader2, Eye } from 'lucide-react';
-import { useAuth } from '../../context/AuthContext';
+import { Modal } from './base/Modal';
+import { useModal } from '../../context/ModalContext';
 import { copyTextToClipboard } from '../../lib/clipboard';
 
 interface ShareItem {
@@ -35,8 +35,18 @@ function formatDate(iso: string): string {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('zh-CN');
 }
 
-export const MySharesModal: React.FC = () => {
-  const { mySharesModalOpen, closeMySharesModal } = useAuth();
+export interface MySharesModalProps {
+  isOpen?: boolean;
+  onClose?: () => void;
+}
+
+export const MySharesModal: React.FC<MySharesModalProps> = ({
+  isOpen: propIsOpen,
+  onClose: propOnClose,
+}) => {
+  const modal = useModal();
+  const isOpen = propIsOpen ?? modal.mySharesModalOpen;
+  const onClose = propOnClose ?? modal.closeMySharesModal;
 
   const [items, setItems] = useState<ShareItem[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -71,15 +81,13 @@ export const MySharesModal: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (mySharesModalOpen) {
+    if (isOpen) {
       setItems(null);
       setConfirmRevokeId(null);
       setCopiedId(null);
       void fetchList();
     }
-  }, [mySharesModalOpen, fetchList]);
-
-  if (!mySharesModalOpen) return null;
+  }, [isOpen, fetchList]);
 
   const handleCopy = async (item: ShareItem) => {
     if (await copyTextToClipboard(item.url)) {
@@ -156,20 +164,14 @@ export const MySharesModal: React.FC = () => {
   };
 
   return (
-    <div
-      id="my-shares-modal-backdrop"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) closeMySharesModal();
-      }}
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      size="lg"
+      showCloseButton={false}
+      className="relative w-full max-w-lg max-h-[80vh] flex flex-col bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl text-slate-100 p-0 overflow-hidden"
     >
-      <motion.div
-        id="my-shares-modal-container"
-        initial={{ opacity: 0, scale: 0.95, y: 10 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        transition={{ duration: 0.2 }}
-        className="relative w-full max-w-lg max-h-[80vh] flex flex-col bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl text-slate-100"
-      >
+      <div id="my-shares-modal-container" className="flex flex-col w-full h-full min-h-0 overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800/80 shrink-0">
           <div className="flex items-center gap-2">
@@ -183,7 +185,7 @@ export const MySharesModal: React.FC = () => {
           </div>
           <button
             id="my-shares-close-btn"
-            onClick={closeMySharesModal}
+            onClick={onClose}
             aria-label="关闭"
             className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800/60 transition"
           >
@@ -315,7 +317,7 @@ export const MySharesModal: React.FC = () => {
             </>
           )}
         </div>
-      </motion.div>
-    </div>
+      </div>
+    </Modal>
   );
 };

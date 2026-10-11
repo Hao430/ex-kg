@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { useModal } from '../../context/ModalContext';
 import { Crown, Check, Sparkles, X, ShieldCheck, Flame, Infinity, Layers, Network, Calendar, AlertCircle, Loader2 } from 'lucide-react';
+import { Modal } from './base/Modal';
 import { SubscriptionPlan, SubscriptionPlanId } from '../../types';
 
 /** GET /api/quota 返回的余量形状（Spec J2/K7，仅取本弹窗所需字段） */
@@ -42,8 +44,25 @@ const PLANS: SubscriptionPlan[] = [
   },
 ];
 
-export const RechargeModal: React.FC = () => {
-  const { user, isVip, rechargeModalOpen, rechargeCanvasId, closeRechargeModal, upgradeModalReason, refreshUser } = useAuth();
+export interface RechargeModalProps {
+  isOpen?: boolean;
+  onClose?: () => void;
+  rechargeCanvasId?: string;
+  upgradeModalReason?: string;
+}
+
+export const RechargeModal: React.FC<RechargeModalProps> = ({
+  isOpen: propIsOpen,
+  onClose: propOnClose,
+  rechargeCanvasId: propRechargeCanvasId,
+  upgradeModalReason: propUpgradeModalReason,
+}) => {
+  const { user, isVip, refreshUser } = useAuth();
+  const modal = useModal();
+  const isOpen = propIsOpen ?? modal.rechargeModalOpen;
+  const onClose = propOnClose ?? modal.closeRechargeModal;
+  const rechargeCanvasId = propRechargeCanvasId ?? modal.rechargeCanvasId;
+  const upgradeModalReason = propUpgradeModalReason ?? modal.upgradeModalReason;
   const [selectedPlan, setSelectedPlan] = useState<SubscriptionPlanId>('monthly');
   // Spec K7（D3）：真实权益数据——打开弹窗时拉取 /api/quota（余量与配额口径同源），
   // 触发点带画板上下文时一并返回当前画板节点余量；失败时为 null，
@@ -65,9 +84,9 @@ export const RechargeModal: React.FC = () => {
 
   // 弹窗关闭即停止轮询
   useEffect(() => {
-    if (!rechargeModalOpen) stopPolling();
+    if (!isOpen) stopPolling();
     return stopPolling;
-  }, [rechargeModalOpen]);
+  }, [isOpen]);
 
   const pollOrderStatus = (orderNo: string) => {
     stopPolling();
@@ -128,7 +147,7 @@ export const RechargeModal: React.FC = () => {
   };
 
   React.useEffect(() => {
-    if (!rechargeModalOpen) return;
+    if (!isOpen) return;
     let cancelled = false;
     setQuota(null);
     (async () => {
@@ -147,9 +166,7 @@ export const RechargeModal: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [rechargeModalOpen, rechargeCanvasId]);
-
-  if (!rechargeModalOpen) return null;
+  }, [isOpen, rechargeCanvasId]);
 
   // 免费版权益数值：优先服务端真实口径，接口失败回退常量
   const boardLimit = quota?.board.limit ?? FALLBACK_BOARD_LIMIT;
@@ -170,11 +187,14 @@ export const RechargeModal: React.FC = () => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-      <div
-        className="relative w-full max-w-xl bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      size="xl"
+      showCloseButton={false}
+      className="relative w-full max-w-xl bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden p-0"
+    >
+      <div id="recharge-modal-container" className="flex flex-col w-full">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 bg-gradient-to-r from-amber-500/10 via-indigo-500/5 to-transparent dark:from-amber-500/20 dark:via-indigo-500/10">
           <div className="flex items-center gap-2.5">
@@ -198,7 +218,7 @@ export const RechargeModal: React.FC = () => {
             </div>
           </div>
           <button
-            onClick={closeRechargeModal}
+            onClick={onClose}
             className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
           >
             <X className="w-4 h-4" />
@@ -402,7 +422,7 @@ export const RechargeModal: React.FC = () => {
           </div>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 };
 

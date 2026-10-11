@@ -1,9 +1,29 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { useModal } from '../../context/ModalContext';
 import { LogIn, UserPlus, Sparkles, Key, Mail, AlertCircle, X, CheckCircle2, ArrowLeft, ShieldCheck } from 'lucide-react';
+import { Modal } from '../ui/base/Modal';
 
-export const AuthModal: React.FC = () => {
-  const { authModalOpen, authModalMode, closeAuthModal, login, register, sendRegisterCode, openAuthModal } = useAuth();
+export interface AuthModalProps {
+  isOpen?: boolean;
+  onClose?: () => void;
+  authModalMode?: 'signin' | 'signup';
+  onSuccess?: () => void;
+}
+
+export const AuthModal: React.FC<AuthModalProps> = ({
+  isOpen: propIsOpen,
+  onClose: propOnClose,
+  authModalMode: propAuthModalMode,
+  onSuccess,
+}) => {
+  const auth = useAuth();
+  const modal = useModal();
+  const isOpen = propIsOpen ?? modal.authModalOpen;
+  const onClose = propOnClose ?? modal.closeAuthModal;
+  const authModalMode = propAuthModalMode ?? modal.authModalMode;
+  const { login, register, sendRegisterCode } = auth;
+  const { openAuthModal } = modal;
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
@@ -18,7 +38,7 @@ export const AuthModal: React.FC = () => {
   const [forgotSent, setForgotSent] = useState(false);
 
   useEffect(() => {
-    if (authModalOpen) {
+    if (isOpen) {
       setView('auth');
       setForgotSent(false);
       setError(null);
@@ -26,7 +46,7 @@ export const AuthModal: React.FC = () => {
       setCode('');
       setCooldown(0);
     }
-  }, [authModalOpen, authModalMode]);
+  }, [isOpen, authModalMode]);
 
   // 60s 重发倒计时
   useEffect(() => {
@@ -34,8 +54,6 @@ export const AuthModal: React.FC = () => {
     const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
     return () => clearTimeout(t);
   }, [cooldown]);
-
-  if (!authModalOpen) return null;
 
   const isSignUp = authModalMode === 'signup';
 
@@ -93,6 +111,9 @@ export const AuthModal: React.FC = () => {
       setSubmitting(false);
       if (!res.success) {
         setError(res.error || '注册失败');
+      } else {
+        onSuccess?.();
+        onClose();
       }
     } else {
       const res = await login(email, password);
@@ -102,16 +123,22 @@ export const AuthModal: React.FC = () => {
         if (res.remainingMinutes) {
           setLockoutMinutes(res.remainingMinutes);
         }
+      } else {
+        onSuccess?.();
+        onClose();
       }
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-      <div
-        className="relative w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      size="md"
+      showCloseButton={false}
+      className="relative w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden p-0"
+    >
+      <div id="auth-modal-container" className="flex flex-col w-full">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
           <div className="flex items-center gap-2.5">
@@ -128,7 +155,7 @@ export const AuthModal: React.FC = () => {
             </div>
           </div>
           <button
-            onClick={closeAuthModal}
+            onClick={onClose}
             className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
           >
             <X className="w-4 h-4" />
@@ -389,6 +416,6 @@ export const AuthModal: React.FC = () => {
           )}
         </div>
       </div>
-    </div>
+    </Modal>
   );
 };

@@ -9,14 +9,17 @@
  */
 import React, { useEffect, useState } from 'react';
 import { X, Copy, Check, Link2, AlertTriangle } from 'lucide-react';
+import { Modal } from './base/Modal';
 import { copyTextToClipboard } from '../../lib/clipboard';
 
-interface ShareLinkModalProps {
+export interface ShareLinkModalProps {
   url: string;
   /** 撤销后重建生成了新链接（旧链接已失效） */
   recreated: boolean;
   onRevoke: () => void;
   onClose: () => void;
+  /** 可选受控显隐，默认 true（兼容现有条件渲染与受控渲染） */
+  isOpen?: boolean;
 }
 
 export const ShareLinkModal: React.FC<ShareLinkModalProps> = ({
@@ -24,6 +27,7 @@ export const ShareLinkModal: React.FC<ShareLinkModalProps> = ({
   recreated,
   onRevoke,
   onClose,
+  isOpen = true,
 }) => {
   const [copied, setCopied] = useState(false);
   const [revoking, setRevoking] = useState(false);
@@ -51,14 +55,14 @@ export const ShareLinkModal: React.FC<ShareLinkModalProps> = ({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm"
-      onClick={onClose}
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      size="sm"
+      showCloseButton={false}
+      className="w-[min(480px,calc(100vw-32px))] bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-2xl p-0 overflow-hidden"
     >
-      <div
-        className="w-[min(480px,calc(100vw-32px))] bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
+      <div id="share-link-modal-container" className="flex flex-col w-full">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
           <div className="flex items-center gap-2">
             <Link2 className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
@@ -136,6 +140,6 @@ export const ShareLinkModal: React.FC<ShareLinkModalProps> = ({
           </button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 };
