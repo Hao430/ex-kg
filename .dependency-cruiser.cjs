@@ -234,6 +234,50 @@ module.exports = {
       from: { path: '^(src|server)/' },
       to: { path: '^tests/' },
     },
+
+    // ---------- 10. 前端 src 分层架构依赖约束（Milestone P2 R2） ----------
+    {
+      name: 'ui-base-cannot-depend-on-domain-components',
+      severity: 'error',
+      comment:
+        '基础 UI 原语（src/components/ui/base/）严禁反向依赖上层业务域组件（admin, canvas, nodes, 业务弹窗等）',
+      from: { path: '^src/components/ui/base/' },
+      to: {
+        path: '^src/components/',
+        pathNot: '^src/components/ui/base/',
+      },
+    },
+    {
+      name: 'ui-base-cannot-depend-on-contexts-or-hooks',
+      severity: 'error',
+      comment:
+        '基础 UI 原语（src/components/ui/base/）严禁依赖业务 Context 与 React Hooks（保持纯 UI 原语特性）',
+      from: { path: '^src/components/ui/base/' },
+      to: {
+        path: '^src/(context|hooks)/',
+      },
+    },
+    {
+      name: 'utils-cannot-depend-on-ui-or-context',
+      severity: 'error',
+      comment:
+        '纯工具函数层（src/utils/ 与 src/lib/）严禁依赖 UI 组件（src/components/）与 React Context（src/context/）',
+      from: { path: '^src/(utils|lib)/' },
+      to: {
+        path: '^src/(components|context)/',
+      },
+    },
+    {
+      name: 'context-hooks-cannot-depend-on-business-modals',
+      severity: 'error',
+      comment:
+        '业务 Context 与 Hooks（src/context/, src/hooks/）严禁反向依赖业务 UI 弹窗组件（如 admin, 业务 Modals）',
+      from: { path: '^src/(context|hooks)/' },
+      to: {
+        path: '^src/components/(admin|auth/.*Modal|ui/.*Modal)',
+        pathNot: '^src/components/ui/base/',
+      },
+    },
   ],
 
   // 输出选项
