@@ -10,6 +10,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { X } from 'lucide-react';
 import { SAMPLE_BOARDS, type SampleBoard } from '../../lib/sample-boards';
 import { ReadOnlyCanvas } from '../canvas/ReadOnlyCanvas';
+import { Modal } from '../ui/base/Modal';
 import { trackEvent } from '../../lib/analytics';
 
 export interface SampleBoardViewerProps {
@@ -26,32 +27,21 @@ export const SampleBoardViewer: React.FC<SampleBoardViewerProps> = ({ initialInd
     trackEvent('sample_view', { persona: board.persona });
   }, [board.persona]);
 
-  // Esc 关闭；浮层打开时锁定背景滚动
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prevOverflow;
-    };
-  }, [onClose]);
+  // Esc 关闭与背景滚动锁定由 base/Modal 提供（引用计数，与弹窗叠开兼容）
 
   const nodes = useMemo(() => board.nodes, [board]);
   const edges = useMemo(() => board.edges, [board]);
 
   return (
-    <div
-      className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-3 sm:p-6"
-      onClick={onClose}
+    <Modal
+      isOpen={true}
+      onClose={onClose}
+      zIndex="z-[80]"
+      overlayClassName="p-3 sm:p-6"
+      showCloseButton={false}
+      className="max-w-5xl h-[85vh]"
+      ariaLabel={`示例画布：${board.title}`}
     >
-      <div
-        className="w-full max-w-5xl h-[85vh] rounded-3xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#0b1120] shadow-2xl overflow-hidden flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
         {/* 头部：标题 + 示例切换 tab + 关闭 */}
         <header className="flex items-center gap-2 px-4 sm:px-5 py-3 border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/80 backdrop-blur">
           <div className="min-w-0 mr-2">
@@ -96,7 +86,6 @@ export const SampleBoardViewer: React.FC<SampleBoardViewerProps> = ({ initialInd
         <footer className="px-4 sm:px-5 py-2.5 border-t border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/80 backdrop-blur text-[11px] text-slate-400 truncate">
           {board.desc}
         </footer>
-      </div>
-    </div>
+    </Modal>
   );
 };

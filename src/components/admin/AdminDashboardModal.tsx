@@ -16,6 +16,7 @@ import {
   X,
 } from 'lucide-react';
 import { Tooltip } from '../ui/Tooltip';
+import { Modal } from '../ui/base/Modal';
 import { StatusBanner } from '../ui/base/StatusBanner';
 import { AdminTabType } from './types';
 import { AdminOverviewTab } from './tabs/AdminOverviewTab';
@@ -67,29 +68,17 @@ export const AdminDashboardModal: React.FC = () => {
       .catch((e) => console.error('Prefetch ticket counts error:', e));
   }, [adminModalOpen]);
 
-  // Escape key support
-  useEffect(() => {
-    if (!adminModalOpen) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        closeAdminModal();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [adminModalOpen, closeAdminModal]);
-
   if (!adminModalOpen) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200"
-      onClick={closeAdminModal}
+    <Modal
+      isOpen={adminModalOpen}
+      onClose={closeAdminModal}
+      zIndex="z-50"
+      showCloseButton={false}
+      className="max-w-5xl h-[88vh]"
+      ariaLabel="枝想 运营管理与模型控制台"
     >
-      <div
-        className="relative w-full max-w-5xl h-[88vh] bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
-      >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/80 shrink-0">
           <div className="flex items-center gap-3">
@@ -229,7 +218,6 @@ export const AdminDashboardModal: React.FC = () => {
             />
           )}
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 };

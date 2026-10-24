@@ -872,6 +872,16 @@ function MainApp() {
     return () => window.removeEventListener('deepdive:board-autotitle', handler);
   }, [currentBoardId, boardName]);
 
+  // App 树外的组件（如 UserProfileModal）请求全局 toast：沿用 deepdive:* 自定义事件先例
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const message = (e as CustomEvent<{ message?: string }>).detail?.message;
+      if (message) showToast(message);
+    };
+    window.addEventListener('deepdive:toast', handler);
+    return () => window.removeEventListener('deepdive:toast', handler);
+  }, [showToast]);
+
   const handleSwitchBoard = async (targetId: string) => {
     if (targetId === currentBoardId) return;
     // 风险态下（离线/停止重试/冲突）先让用户确认：此时切走 = 永久丢掉那部分改动

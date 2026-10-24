@@ -183,7 +183,12 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
       setConfirmPassword('');
       closeUserProfileModal();
       await logout();
-      alert('密码已修改，请使用新密码重新登录');
+      // App 树内拿不到 toast 实例，走 deepdive:toast 事件（替代原 alert，风格统一）
+      window.dispatchEvent(
+        new CustomEvent('deepdive:toast', {
+          detail: { message: '密码已修改，请使用新密码重新登录' },
+        }),
+      );
     } else {
       setStatusMsg({ type: 'error', text: res.error || '修改密码失败，请重试' });
     }
