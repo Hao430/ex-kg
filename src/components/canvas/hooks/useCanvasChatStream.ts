@@ -199,7 +199,7 @@ export function useCanvasChatStream(options: UseCanvasChatStreamOptions) {
 
       const timeoutId = setTimeout(() => {
         if (!isCompleted) {
-          setApiWarning('AI 模型响应较慢，由于云端推理排队或并发较高，请您耐心等待...');
+          setApiWarning('AI 模型响应较慢，由于云端推理排队或并发较高，请您耐心等待…');
           setTimeout(() => setApiWarning(null), 5000);
         }
       }, 10000);

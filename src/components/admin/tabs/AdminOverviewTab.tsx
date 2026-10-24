@@ -111,7 +111,7 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
           </span>
         </div>
         <p className="text-xs text-slate-600 dark:text-slate-300 mb-3">
-          {dbInfo?.message || '正在检测存储状态...'}
+          {dbInfo?.message || '正在检测存储状态…'}
         </p>
         <div className="grid grid-cols-3 gap-3 text-xs">
           <div className="p-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700/80">

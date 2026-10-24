@@ -97,7 +97,7 @@ export const NoteCardNode: React.FC<NodeProps> = ({ id, data, selected }) => {
               onChange={(e) => setTitle(e.target.value)}
               onBlur={handleBlur}
               onKeyDown={handleKeyDown}
-              placeholder="输入便签标题..."
+              placeholder="输入便签标题…"
               className="nodrag text-xs font-semibold text-amber-950 dark:text-amber-100 bg-transparent outline-none w-full truncate placeholder:text-amber-700/50 dark:placeholder:text-amber-400/40"
             />
           )}

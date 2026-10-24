@@ -92,7 +92,7 @@ export const AdminOrdersTab: React.FC = () => {
             {loadingOrders ? (
               <tr>
                 <td colSpan={7} className="py-8 text-center text-slate-400">
-                  正在加载订单列表...
+                  正在加载订单列表…
                 </td>
               </tr>
             ) : orders.length === 0 ? (

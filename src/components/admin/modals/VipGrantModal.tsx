@@ -134,7 +134,7 @@ export const VipGrantModal: React.FC<VipGrantModalProps> = ({
               disabled={submittingVip}
               className="px-4 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-medium shadow-sm transition-all cursor-pointer disabled:opacity-50"
             >
-              {submittingVip ? '授权中...' : '确认授予特权天数'}
+              {submittingVip ? '授权中…' : '确认授予特权天数'}
             </button>
           </div>
         </form>

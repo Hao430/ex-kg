@@ -868,7 +868,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                       {changingPassword ? (
                         <>
                           <Spinner size="sm" />
-                          正在更新密码...
+                          正在更新密码…
                         </>
                       ) : (
                         <>
@@ -915,7 +915,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                     {deleting ? (
                       <>
                         <Spinner size="sm" />
-                        注销中...
+                        注销中…
                       </>
                     ) : (
                       <>
@@ -983,7 +983,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                   {saving ? (
                     <>
                       <Spinner size="sm" />
-                      保存中...
+                      保存中…
                     </>
                   ) : (
                     <>

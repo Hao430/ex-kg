@@ -231,7 +231,7 @@ export const VerifyEmailPage: React.FC = () => {
           {status === 'pending' && <Spinner size="xl" className="text-indigo-400 mx-auto" />}
           {status === 'success' && <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto" />}
           {status === 'error' && <AlertCircle className="w-10 h-10 text-rose-500 mx-auto" />}
-          <p className="text-sm text-slate-300">{message || '正在验证邮箱...'}</p>
+          <p className="text-sm text-slate-300">{message || '正在验证邮箱…'}</p>
           {status === 'error' && (
             <div className="space-y-2">
               {resendState !== 'sent' ? (

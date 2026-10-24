@@ -763,12 +763,12 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
               <div className="flex flex-col gap-1.5 py-1.5 px-2.5 bg-indigo-50/70 dark:bg-indigo-950/50 rounded-lg w-fit border border-transparent dark:border-indigo-900/40">
                 <div className="flex items-center gap-2 text-xs text-indigo-600 dark:text-indigo-400 font-medium">
                   <Spinner size="sm" />
-                  <span>深度思考与推演中...</span>
+                  <span>深度思考与推演中…</span>
                 </div>
                 {nodeData.enableWebSearch && (
                   <div className="flex items-center gap-1 text-[10px] text-indigo-500/90 dark:text-indigo-400/90">
                     <Globe className="w-3 h-3" />
-                    <span>实时联网搜索中，正在索引权威知识源...</span>
+                    <span>实时联网搜索中，正在索引权威知识源…</span>
                   </div>
                 )}
               </div>
@@ -832,7 +832,7 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
                   }}
                   placeholder={
                     nodeData.status === 'generating'
-                      ? 'AI 正在深度思考与推演中，请稍候...'
+                      ? 'AI 正在深度思考与推演中，请稍候…'
                       : '针对此解答继续追问（回车将衍生新分支节点）...'
                   }
                   disabled={nodeData.status === 'generating'}

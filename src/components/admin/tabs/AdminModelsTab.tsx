@@ -459,7 +459,7 @@ export const AdminModelsTab: React.FC<AdminModelsTabProps> = ({
               onChange={(e) =>
                 setModelConfig((prev) => ({ ...prev, custom_system_prompt: e.target.value }))
               }
-              placeholder="留空则使用内置苏格拉底式启发导师提示词..."
+              placeholder="留空则使用内置苏格拉底式启发导师提示词…"
               className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 leading-relaxed"
             />
           </div>
@@ -513,7 +513,7 @@ export const AdminModelsTab: React.FC<AdminModelsTabProps> = ({
             {testingModelConnection ? (
               <>
                 <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-600" />
-                <span>正在进行接口联调测试...</span>
+                <span>正在进行接口联调测试…</span>
               </>
             ) : (
               <>
@@ -531,7 +531,7 @@ export const AdminModelsTab: React.FC<AdminModelsTabProps> = ({
             {savingModelConfig ? (
               <>
                 <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                <span>正在保存...</span>
+                <span>正在保存…</span>
               </>
             ) : (
               <>

@@ -115,7 +115,7 @@ export const AdminUsersTab: React.FC<AdminUsersTabProps> = ({
               setUserSearch(e.target.value);
               setUserPage(1);
             }}
-            placeholder="按邮箱或昵称搜索用户..."
+            placeholder="按邮箱或昵称搜索用户…"
             className="w-full bg-transparent text-xs text-slate-800 dark:text-slate-100 focus:outline-none placeholder-slate-400"
           />
         </div>
@@ -173,7 +173,7 @@ export const AdminUsersTab: React.FC<AdminUsersTabProps> = ({
             {loadingUsers ? (
               <tr>
                 <td colSpan={6} className="py-8 text-center text-slate-400">
-                  正在加载用户列表...
+                  正在加载用户列表…
                 </td>
               </tr>
             ) : users.length === 0 ? (

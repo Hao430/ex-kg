@@ -188,7 +188,7 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
               {mineLoading && (
                 <div className="py-10 text-center text-slate-400 text-xs flex items-center justify-center gap-2">
                   <Spinner size="md" />
-                  加载中...
+                  加载中…
                 </div>
               )}
 
@@ -324,7 +324,7 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
                   onChange={(e) => setContent(e.target.value)}
                   maxLength={2000}
                   rows={4}
-                  placeholder="请详细描述您遇到的问题、期望的功能或体验改进建议..."
+                  placeholder="请详细描述您遇到的问题、期望的功能或体验改进建议…"
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 resize-none transition"
                 />
               </div>
@@ -381,7 +381,7 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
                   {submitting ? (
                     <>
                       <Spinner size="sm" />
-                      提交中...
+                      提交中…
                     </>
                   ) : (
                     <>

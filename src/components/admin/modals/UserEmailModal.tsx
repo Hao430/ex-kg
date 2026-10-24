@@ -103,7 +103,7 @@ export const UserEmailModal: React.FC<UserEmailModalProps> = ({
               disabled={submittingEmail}
               className="px-4 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium shadow-sm transition-all cursor-pointer disabled:opacity-50"
             >
-              {submittingEmail ? '提交中...' : '确认修改邮箱'}
+              {submittingEmail ? '提交中…' : '确认修改邮箱'}
             </button>
           </div>
         </form>
