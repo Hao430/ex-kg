@@ -231,7 +231,7 @@ export const Topbar: React.FC<TopbarProps> = ({
               !user
                 ? 'text-slate-400 dark:text-slate-500'
                 : offline || syncState === 'error' || syncState === 'conflict'
-                ? 'text-red-500'
+                ? 'text-rose-500'
                 : syncState === 'pending'
                 ? 'text-slate-400 dark:text-slate-500'
                 : 'text-emerald-500'

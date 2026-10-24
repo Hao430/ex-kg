@@ -189,7 +189,7 @@ export const BoardSelectorDropdown: React.FC<BoardSelectorDropdownProps> = ({
                             setShowBoardMenu(false);
                           }}
                           aria-label={`删除画板 ${b.name}`}
-                          className="p-1 rounded-lg text-slate-300 dark:text-slate-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer"
+                          className="p-1 rounded-lg text-slate-300 dark:text-slate-600 hover:text-rose-500 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>

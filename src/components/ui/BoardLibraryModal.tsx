@@ -235,7 +235,7 @@ export const BoardLibraryModal: React.FC<BoardLibraryModalProps> = ({
                   id={`board-library-folder-delete-${f.id}`}
                   onClick={() => void handleDeleteFolder(f)}
                   aria-label={`删除分组 ${f.name}`}
-                  className="p-1 mr-1 text-slate-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                  className="p-1 mr-1 text-slate-500 hover:text-rose-400 opacity-0 group-hover:opacity-100 transition-opacity"
                 >
                   <Trash2 className="w-3 h-3" />
                 </button>
@@ -445,7 +445,7 @@ export const BoardLibraryModal: React.FC<BoardLibraryModalProps> = ({
                               id={`board-library-delete-${b.id}`}
                               onClick={() => onDeleteBoard(b.id)}
                               aria-label={`删除画板 ${b.name}`}
-                              className="p-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-950/40 transition-colors"
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-950/40 transition-colors"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>

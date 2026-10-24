@@ -697,7 +697,7 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
 
             {/* 状态 3：异常提示 (Error View) */}
             {phase.kind === 'error' && (
-              <div className="p-8 rounded-2xl bg-white dark:bg-[#0c1222] border border-red-200 dark:border-red-900/60 shadow-sm flex flex-col items-center justify-center gap-3 text-center animate-in fade-in duration-200">
+              <div className="p-8 rounded-2xl bg-white dark:bg-[#0c1222] border border-rose-200 dark:border-rose-900/60 shadow-sm flex flex-col items-center justify-center gap-3 text-center animate-in fade-in duration-200">
                 <AlertTriangle className="w-8 h-8 text-amber-500" />
                 <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">出题未完成</h3>
                 <p className="text-xs text-slate-500 max-w-md">{phase.message}</p>
