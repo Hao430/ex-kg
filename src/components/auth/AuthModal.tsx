@@ -5,6 +5,7 @@ import { LogIn, UserPlus, Sparkles, Key, Mail, AlertCircle, X, CheckCircle2, Arr
 import { Modal } from '../ui/base/Modal';
 import { Spinner } from '../ui/base/Spinner';
 import { StatusBanner } from '../ui/base/StatusBanner';
+import { extractErrorMessage } from '../../lib/api';
 
 export interface AuthModalProps {
   isOpen?: boolean;
@@ -71,8 +72,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         body: JSON.stringify({ email }),
       });
       if (!res.ok) {
-        const data = await res.json().catch(() => null);
-        setError(data?.error || '发送失败，请稍后重试');
+        setError(await extractErrorMessage(res, '发送失败，请稍后重试'));
       } else {
         setForgotSent(true);
       }

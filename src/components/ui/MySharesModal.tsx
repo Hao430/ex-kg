@@ -18,6 +18,7 @@ import { copyTextToClipboard } from '../../lib/clipboard';
 import { formatDate } from '../../lib/format';
 import { Spinner } from './base/Spinner';
 import { StatusBanner } from './base/StatusBanner';
+import { extractErrorMessage } from '../../lib/api';
 
 interface ShareItem {
   canvasId: string;
@@ -65,8 +66,7 @@ export const MySharesModal: React.FC<MySharesModalProps> = ({
         return;
       }
       if (!res.ok) {
-        const body = await res.json().catch(() => null) as any;
-        setError(body?.error || '分享列表加载失败，请稍后重试');
+        setError(await extractErrorMessage(res, '分享列表加载失败，请稍后重试'));
         return;
       }
       const data = await res.json();
@@ -151,8 +151,7 @@ export const MySharesModal: React.FC<MySharesModalProps> = ({
             : { type: 'success', text: '该分享已失效，已从列表移除' }
         );
       } else {
-        const body = await res.json().catch(() => null) as any;
-        setStatusMsg({ type: 'error', text: body?.error || '停止分享失败，请稍后重试' });
+        setStatusMsg({ type: 'error', text: await extractErrorMessage(res, '停止分享失败，请稍后重试') });
       }
     } catch {
       setStatusMsg({ type: 'error', text: '网络连接异常，请检查网络后重试' });

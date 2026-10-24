@@ -6,6 +6,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { Tooltip } from '../../ui/Tooltip';
+import { extractErrorMessage } from '../../../lib/api';
 import { AdminTicket } from '../types';
 
 export interface AdminTicketsTabProps {
@@ -97,9 +98,8 @@ export const AdminTicketsTab: React.FC<AdminTicketsTabProps> = ({
         credentials: 'include',
         body: JSON.stringify({ status, admin_reply }),
       });
-      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        onFeedback(data.error || '工单更新失败');
+        onFeedback(await extractErrorMessage(res, '工单更新失败'));
         return;
       }
       onFeedback('工单已更新');

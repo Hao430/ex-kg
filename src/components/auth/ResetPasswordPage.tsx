@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Sparkles, Key, Mail, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { Spinner } from '../ui/base/Spinner';
 import { StatusBanner } from '../ui/base/StatusBanner';
+import { extractErrorMessage } from '../../lib/api';
 
 /**
  * /reset-password?token=... 落地页（Spec F1 找回密码第二步）
@@ -41,9 +42,8 @@ export const ResetPasswordPage: React.FC = () => {
         credentials: 'include',
         body: JSON.stringify({ token, password }),
       });
-      const data = await res.json().catch(() => null);
       if (!res.ok) {
-        setError(data?.error || '重置失败，请稍后重试');
+        setError(await extractErrorMessage(res, '重置失败，请稍后重试'));
       } else {
         setSuccess(true);
       }
@@ -171,14 +171,14 @@ export const VerifyEmailPage: React.FC = () => {
         const res = await fetch(`/api/auth/verify-email?token=${encodeURIComponent(token)}`, {
           credentials: 'include',
         });
-        const data = await res.json().catch(() => null);
-        if (res.ok) {
-          setStatus('success');
-          setMessage(data?.message || '邮箱验证成功');
-        } else {
+        if (!res.ok) {
           setStatus('error');
-          setMessage(data?.error || '验证链接无效或已过期');
+          setMessage(await extractErrorMessage(res, '验证链接无效或已过期'));
+          return;
         }
+        const data = await res.json().catch(() => null) as { message?: string } | null;
+        setStatus('success');
+        setMessage(data?.message || '邮箱验证成功');
       } catch {
         setStatus('error');
         setMessage('网络连接异常，请稍后重试');
@@ -204,6 +204,7 @@ export const VerifyEmailPage: React.FC = () => {
       if (res.status === 401) {
         setResendMessage('请先登录后再重发验证邮件');
       } else if (data?.code === 'EMAIL_ALREADY_VERIFIED') {
+        // body 还要取 code（已验证特判），不走 extractErrorMessage 二次消费
         setResendMessage('该邮箱已完成验证，可直接返回首页登录');
       } else {
         setResendMessage(data?.error || '发送失败，请稍后重试');

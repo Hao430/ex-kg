@@ -32,6 +32,7 @@ import * as folderStore from './lib/folder-store';
 import { useBoards, useFolders } from './hooks/useBoards';
 import { useTheme } from './hooks/useTheme';
 import { useConfirmDialog } from './hooks/useConfirmDialog';
+import { extractErrorMessage } from './lib/api';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ModalProvider, useModal } from './context/ModalContext';
 import { trackEvent } from './lib/analytics';
@@ -181,11 +182,15 @@ function MainApp() {
         method: 'POST',
         credentials: 'include',
       });
+      if (!res.ok) {
+        showToast(await extractErrorMessage(res, '分享创建失败，请重试'));
+        return;
+      }
       const body = await res.json().catch(() => null);
-      if (res.ok && body?.shareCode) {
+      if (body?.shareCode) {
         setShareDialog({ url: String(body.url), recreated: Boolean(body.recreated) });
       } else {
-        showToast(body?.error || '分享创建失败，请重试');
+        showToast('分享创建失败，请重试');
       }
     } catch {
       showToast('网络异常，分享创建失败');
@@ -202,8 +207,7 @@ function MainApp() {
         setShareDialog(null);
         showToast('已停止分享，原链接即刻失效');
       } else {
-        const body = await res.json().catch(() => null);
-        showToast(body?.error || '停止分享失败，请重试');
+        showToast(await extractErrorMessage(res, '停止分享失败，请重试'));
       }
     } catch {
       showToast('网络异常，操作失败');

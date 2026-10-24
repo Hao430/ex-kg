@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { AuthUser } from '../types';
 import { trackEvent } from '../lib/analytics';
+import { extractErrorMessage } from '../lib/api';
 
 interface AuthContextType {
   user: AuthUser | null;
@@ -76,6 +77,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       const data = await res.json();
       if (!res.ok) {
+        // body 还要取 remainingMinutes（防爆破倒计时），不走 extractErrorMessage 二次消费
         return {
           success: false,
           error: data.error || '登录失败',
@@ -100,10 +102,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         credentials: 'include',
         body: JSON.stringify({ email, password, name, code }),
       });
-      const data = await res.json();
       if (!res.ok) {
-        return { success: false, error: data.error || '注册失败' };
+        return { success: false, error: await extractErrorMessage(res, '注册失败') };
       }
+      const data = await res.json();
       setUser(data.user);
       void refreshUser(); // 拉取 entitlements（Spec B3/B4）
       trackEvent('register_success'); // K4 事件 3：注册成功（漏斗关键节点）
@@ -122,10 +124,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         credentials: 'include',
         body: JSON.stringify({ email }),
       });
-      const data = await res.json().catch(() => null);
       if (!res.ok) {
-        return { success: false, error: data?.error || '发送失败，请稍后重试' };
+        return { success: false, error: await extractErrorMessage(res, '发送失败，请稍后重试') };
       }
+      const data = await res.json().catch(() => null) as { message?: string } | null;
       trackEvent('register_code_sent'); // K4 事件 2：注册验证码发送成功（进入注册漏斗）
       return { success: true, message: data?.message || '验证码已发送，请查收' };
     } catch (e: any) {
@@ -141,10 +143,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         credentials: 'include',
         body: JSON.stringify(data),
       });
-      const resData = await res.json();
       if (!res.ok) {
-        return { success: false, error: resData.error || '更新失败' };
+        return { success: false, error: await extractErrorMessage(res, '更新失败') };
       }
+      const resData = await res.json();
       if (resData.user) {
         setUser(resData.user);
       }
@@ -162,9 +164,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         credentials: 'include',
         body: JSON.stringify({ oldPassword, newPassword }),
       });
-      const data = await res.json();
       if (!res.ok) {
-        return { success: false, error: data.error || '修改密码失败' };
+        return { success: false, error: await extractErrorMessage(res, '修改密码失败') };
       }
       // 服务端已踢全部会话，前端同步登出
       setUser(null);
@@ -181,10 +182,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         method: 'POST',
         credentials: 'include',
       });
-      const data = await res.json().catch(() => null);
       if (!res.ok) {
-        return { success: false, error: data?.error || '发送失败，请稍后重试' };
+        return { success: false, error: await extractErrorMessage(res, '发送失败，请稍后重试') };
       }
+      const data = await res.json().catch(() => null) as { message?: string } | null;
       return { success: true, message: data?.message || '验证邮件已重新发送，请查收' };
     } catch (e: any) {
       return { success: false, error: e?.message || '网络连接异常' };
