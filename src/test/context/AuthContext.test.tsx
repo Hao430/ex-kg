@@ -168,6 +168,77 @@ describe('AuthContext Empirical Stress Tests', () => {
         expect(screen.getByTestId('auth-is-vip').textContent).toBe('vip');
       });
     });
+
+    it('treats hard-locked VIP (role=vip, entitlements.plan=trial) as NOT vip', async () => {
+      // 权益以服务端 entitlements 为权威：role 列不随后过期翻转，
+      // 超 7 天宽限期的用户（plan 降 trial + vipExpired）绝不能再按 role 短路显示 VIP
+      const mockHardLockedUser: AuthUser = {
+        id: 'usr-3',
+        email: 'locked@example.com',
+        name: 'Locked VIP',
+        role: 'vip',
+        vip_expires_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+        entitlements: { plan: 'trial', vipExpired: true, boardLimit: 3, nodeLimit: 10 },
+        created_at: '2026-01-01',
+      };
+
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+        if (url === '/api/auth/me') {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ user: mockHardLockedUser }),
+          } as Response;
+        }
+        return { ok: false } as Response;
+      });
+
+      render(
+        <AuthProvider>
+          <AuthConsumer />
+        </AuthProvider>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('auth-loading').textContent).toBe('ready');
+      });
+      expect(screen.getByTestId('auth-is-vip').textContent).toBe('standard');
+    });
+
+    it('keeps grace-period VIP (plan=vip + vipExpired) as vip', async () => {
+      // 宽限期内体验不中断仅提醒：徽章保持 VIP，由横幅负责提示续费
+      const mockGraceUser: AuthUser = {
+        id: 'usr-4',
+        email: 'grace@example.com',
+        name: 'Grace VIP',
+        role: 'vip',
+        vip_expires_at: new Date(Date.now() - 3 * 86400000).toISOString(),
+        entitlements: { plan: 'vip', vipExpired: true, vipGraceDaysRemaining: 4, boardLimit: null, nodeLimit: null },
+        created_at: '2026-01-01',
+      };
+
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+        if (url === '/api/auth/me') {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ user: mockGraceUser }),
+          } as Response;
+        }
+        return { ok: false } as Response;
+      });
+
+      render(
+        <AuthProvider>
+          <AuthConsumer />
+        </AuthProvider>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('auth-loading').textContent).toBe('ready');
+      });
+      expect(screen.getByTestId('auth-is-vip').textContent).toBe('vip');
+    });
   });
 
   describe('3. Login & Session Lifecycle', () => {

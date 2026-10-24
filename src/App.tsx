@@ -1277,8 +1277,15 @@ function MainApp() {
     }
   };
   const ent = user?.entitlements;
-  let vipBanner: { type: 'expiring' | 'grace'; text: string } | null = null;
-  if (ent?.plan === 'vip' && ent.vipExpired) {
+  let vipBanner: { type: 'expiring' | 'grace' | 'expired'; text: string } | null = null;
+  if (ent?.plan === 'trial' && ent.vipExpired) {
+    // 硬锁定：已超宽限期。role 仍为 'vip' 但权益已降 trial——没有这条横幅，
+    // 用户只会无提示地吃到 403 VIP_EXPIRED（顶栏徽章此时也已翻转为「升级 VIP」）
+    vipBanner = {
+      type: 'expired',
+      text: 'VIP 会员已过期且超出宽限期，AI 推理与新建画板已受限，续费后立即恢复',
+    };
+  } else if (ent?.plan === 'vip' && ent.vipExpired) {
     vipBanner = {
       type: 'grace',
       text: `VIP 会员已过期，宽限期剩余 ${ent.vipGraceDaysRemaining ?? 0} 天，到期后将无法使用 AI 推理与新建画板`,
@@ -1366,6 +1373,8 @@ function MainApp() {
               className={`w-full flex items-center justify-center gap-3 px-4 py-2 text-sm ${
                 vipBanner.type === 'grace'
                   ? 'bg-amber-500/95 text-white'
+                  : vipBanner.type === 'expired'
+                  ? 'bg-rose-600/95 text-white'
                   : 'bg-yellow-400/95 text-slate-900'
               }`}
             >

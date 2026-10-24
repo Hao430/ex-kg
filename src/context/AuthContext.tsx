@@ -36,11 +36,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
 
   // Determine VIP active status
+  // 权益以服务端 entitlements（/me 下发，QuotaPolicy 计算）为权威：plan='trial' 即体验版——
+  // 含 role='vip' 但已超宽限期的硬锁定态（role 列不随后过期翻转，绝不能按 role 短路放行，
+  // 否则 VIP 徽章与本地配额闸会同服务端 403 VIP_EXPIRED 脱节）。
+  // entitlements 未加载（登录瞬间）时回落 role/到期时间的本地推导。
   const isVip = Boolean(
     user &&
-      (user.role === 'admin' ||
-        user.role === 'vip' ||
-        (user.vip_expires_at && new Date(user.vip_expires_at).getTime() > Date.now()))
+      (user.entitlements
+        ? user.entitlements.plan !== 'trial'
+        : user.role === 'admin' ||
+          user.role === 'vip' ||
+          (user.vip_expires_at && new Date(user.vip_expires_at).getTime() > Date.now()))
   );
 
   const refreshUser = useCallback(async () => {
