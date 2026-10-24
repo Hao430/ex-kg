@@ -31,6 +31,7 @@ import * as syncQueue from './lib/sync-queue';
 import * as folderStore from './lib/folder-store';
 import { useBoards, useFolders } from './hooks/useBoards';
 import { useTheme } from './hooks/useTheme';
+import { useConfirmDialog } from './hooks/useConfirmDialog';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ModalProvider, useModal } from './context/ModalContext';
 import { trackEvent } from './lib/analytics';
@@ -128,6 +129,8 @@ function MainApp() {
 
   const { isVip, user, resendVerification, loading: authLoading } = useAuth();
   const { openRechargeModal } = useModal();
+  // Promise 化确认框（替代 window.confirm）；element 挂在 JSX 根部
+  const { confirm: confirmAction, element: confirmElement } = useConfirmDialog();
 
   // Unified Dark Mode hook ('light' | 'dark')
   const { theme, toggleTheme } = useTheme({
@@ -294,11 +297,14 @@ function MainApp() {
     ? '画板已在其他窗口被修改'
     : '同步已停止自动重试';
   /** 离开当前画板/导入/新建前拦一下；无风险时不弹，不打扰正常使用 */
-  const confirmDiscardRisk = (action: string): boolean => {
+  const confirmDiscardRisk = async (action: string): Promise<boolean> => {
     if (!unsavedDiscardRisk) return true;
-    return window.confirm(
-      `「${boardName}」有改动尚未保存到云端（${riskReason}）。${action}后这些改动会丢失，仍要继续吗？`
-    );
+    return confirmAction({
+      title: `「${boardName}」有改动尚未保存到云端`,
+      description: `${riskReason}。${action}后这些改动会丢失，仍要继续吗？`,
+      confirmLabel: '仍要继续',
+      tone: 'warning',
+    });
   };
   // 风险态下刷新/关闭页面也要拦一下（浏览器原生确认框，不能自定义文案）
   useEffect(() => {
@@ -720,7 +726,15 @@ function MainApp() {
     if (!target) return;
     // 删当前画板是破坏性操作：非编辑权标签不得删（另一个标签可能正拿着它编辑）
     if (targetId === currentBoardId && !ensureEditable()) return;
-    if (!window.confirm(`确定要删除画板「${target.name}」吗？该操作无法撤销。`)) return;
+    if (
+      !(await confirmAction({
+        title: `确定要删除画板「${target.name}」吗？`,
+        description: '该操作无法撤销。',
+        confirmLabel: '删除画板',
+        tone: 'danger',
+      }))
+    )
+      return;
 
     // 删的是**别的**画板：当前板还没到防抖窗口的改动与这次删除无关，先落盘——
     // 否则紧接着的重挂载会清掉待发定时器，那段改动只存在于内存里，下次载入按
@@ -857,7 +871,7 @@ function MainApp() {
   const handleSwitchBoard = async (targetId: string) => {
     if (targetId === currentBoardId) return;
     // 风险态下（离线/停止重试/冲突）先让用户确认：此时切走 = 永久丢掉那部分改动
-    if (!confirmDiscardRisk('切换画板')) return;
+    if (!(await confirmDiscardRisk('切换画板'))) return;
     // 离开当前画板前先把压在防抖窗口里的改动落盘：紧接着的重挂载会让新板的变更清掉
     // 待发定时器，那段改动只存在于内存里，下次载入按「服务端为准」丢弃（ADR-0025）。
     flushPendingCanvasSave();
@@ -883,8 +897,8 @@ function MainApp() {
     }
   };
 
-  const handleNewBoard = () => {
-    if (!confirmDiscardRisk('新建画板')) return; // 风险态下先让用户确认，别默默丢掉存不上的改动
+  const handleNewBoard = async () => {
+    if (!(await confirmDiscardRisk('新建画板'))) return; // 风险态下先让用户确认，别默默丢掉存不上的改动
     if (quotaStore.canCreate(isVip) === 'block') {
       openRechargeModal('免费版用户最多支持创建 3 个独立画板。升级 Pro 会员解锁无限画板与无限节点！');
       return;
@@ -1153,7 +1167,7 @@ function MainApp() {
       return;
     }
     if (!ensureEditable()) return;
-    if (!confirmDiscardRisk('导入备份')) return;
+    if (!(await confirmDiscardRisk('导入备份'))) return;
     const imported = result.board;
     flushPendingCanvasSave(); // 切到导入的新板前，先落盘当前板压在防抖窗口里的改动
     quotaStore.markPendingCreate(imported.id);
@@ -1195,9 +1209,16 @@ function MainApp() {
     }
   };
 
-  const handleResetBoard = () => {
+  const handleResetBoard = async () => {
     if (!ensureEditable()) return; // 清空 = 大量删除，非编辑权标签不得动手
-    if (window.confirm('确定要清空当前画板的所有节点吗？此操作无法撤销。')) {
+    if (
+      await confirmAction({
+        title: '确定要清空当前画板的所有节点吗？',
+        description: '此操作无法撤销。',
+        confirmLabel: '清空画板',
+        tone: 'danger',
+      })
+    ) {
       const starter = createStarterRootNode();
       const resetBoard: StoredBoard = {
         id: currentBoardId,
@@ -1475,6 +1496,9 @@ function MainApp() {
           {toastMessage}
         </div>
       )}
+
+      {/* Promise 化确认框（window.confirm 替代） */}
+      {confirmElement}
     </div>
   );
 }

@@ -4,7 +4,9 @@
  */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Search, X, Loader2 } from 'lucide-react';
+import { Search, X } from 'lucide-react';
+import { useClickOutside } from '../../../hooks/useClickOutside';
+import { Spinner } from '../base/Spinner';
 
 /**
  * GET /api/canvases/:id/search 的结果项
@@ -85,31 +87,13 @@ export const NodeSearchDialog: React.FC<NodeSearchDialogProps> = ({
   }, [isOpen]);
 
   // 点击外部与 Escape 监听
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const handleClickOutside = (event: MouseEvent | PointerEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (!target) return;
-      if (triggerRef?.current && triggerRef.current.contains(target)) return;
-      if (containerRef.current && !containerRef.current.contains(target)) {
-        handleClose();
-      }
-    };
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        handleClose();
-      }
-    };
-
-    document.addEventListener('pointerdown', handleClickOutside, true);
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('pointerdown', handleClickOutside, true);
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [isOpen, handleClose, triggerRef]);
+  useClickOutside({
+    refs: [containerRef],
+    enabled: isOpen,
+    onOutside: handleClose,
+    ignore: (target) => !!triggerRef?.current?.contains(target),
+    closeOnEscape: true,
+  });
 
   // 执行搜索
   const runNodeSearch = useCallback(
@@ -230,7 +214,7 @@ export const NodeSearchDialog: React.FC<NodeSearchDialogProps> = ({
             aria-label="清空搜索"
             className="absolute right-5 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 cursor-pointer"
           >
-            {searchLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5" />}
+            {searchLoading ? <Spinner size="sm" /> : <X className="w-3.5 h-3.5" />}
           </button>
         )}
       </div>

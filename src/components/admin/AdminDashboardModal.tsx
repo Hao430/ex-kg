@@ -16,6 +16,7 @@ import {
   X,
 } from 'lucide-react';
 import { Tooltip } from '../ui/Tooltip';
+import { StatusBanner } from '../ui/base/StatusBanner';
 import { AdminTabType } from './types';
 import { AdminOverviewTab } from './tabs/AdminOverviewTab';
 import { AdminModelsTab } from './tabs/AdminModelsTab';
@@ -185,12 +186,16 @@ export const AdminDashboardModal: React.FC = () => {
 
         {/* Feedback Alert Toast */}
         {feedback && (
-          <div className="mx-6 mt-3 px-4 py-2 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 text-xs flex items-center justify-between animate-in fade-in">
-            <span>{feedback}</span>
-            <button onClick={() => setFeedback(null)} className="text-xs hover:opacity-70 cursor-pointer">
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
+          <StatusBanner
+            type="info"
+            unstyled
+            icon={null}
+            dismissible
+            onDismiss={() => setFeedback(null)}
+            className="mx-6 mt-3 px-4 py-2 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 text-xs animate-in fade-in"
+          >
+            {feedback}
+          </StatusBanner>
         )}
 
         {/* Tab Contents */}

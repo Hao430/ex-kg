@@ -6,6 +6,9 @@
 import React, { useState } from 'react';
 import { Crown } from 'lucide-react';
 import { AuthUser } from '../../../types';
+import { Modal } from '../../ui/base/Modal';
+import { formatDate } from '../../../lib/format';
+import { extractErrorMessage } from '../../../lib/api';
 
 export interface VipGrantModalProps {
   targetUser: AuthUser | null;
@@ -35,12 +38,12 @@ export const VipGrantModal: React.FC<VipGrantModalProps> = ({
         credentials: 'include',
         body: JSON.stringify({ days: vipDaysToAdd }),
       });
-      const d = await res.json();
-      if (res.ok) {
-        onSuccess(d.message);
-      } else {
-        onError?.(d.error || 'VIP 授权设置失败');
+      if (!res.ok) {
+        onError?.(await extractErrorMessage(res, 'VIP 授权设置失败'));
+        return;
       }
+      const d = await res.json();
+      onSuccess(d.message);
     } catch (e: any) {
       onError?.(e?.message || '操作失败');
     } finally {
@@ -49,8 +52,14 @@ export const VipGrantModal: React.FC<VipGrantModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
-      <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-800 p-5">
+    <Modal
+      isOpen={!!targetUser}
+      onClose={onClose}
+      zIndex="z-60"
+      size="md"
+      ariaLabel="授权 / 调整 VIP 会员天数"
+    >
+      <div className="p-5">
         <div className="flex items-center gap-2 mb-1">
           <div className="p-1.5 rounded-lg bg-amber-500/10 text-amber-500">
             <Crown className="w-4 h-4" />
@@ -63,7 +72,7 @@ export const VipGrantModal: React.FC<VipGrantModalProps> = ({
           目标用户：<span className="font-mono text-slate-700 dark:text-slate-300 font-medium">{targetUser.email}</span>
           {targetUser.vip_expires_at && (
             <span className="block text-amber-600 dark:text-amber-400 mt-0.5">
-              当前 VIP 到期时间：{new Date(targetUser.vip_expires_at).toLocaleDateString('zh-CN')}
+              当前 VIP 到期时间：{formatDate(targetUser.vip_expires_at)}
             </span>
           )}
         </p>
@@ -130,6 +139,6 @@ export const VipGrantModal: React.FC<VipGrantModalProps> = ({
           </div>
         </form>
       </div>
-    </div>
+    </Modal>
   );
 };

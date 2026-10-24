@@ -11,10 +11,13 @@
  * 独立 fetch（credentials include），不经 App 的 shareDialog/boards 状态。
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { X, Share2, Copy, Check, RefreshCw, Link2Off, Loader2, Eye } from 'lucide-react';
+import { X, Share2, Copy, Check, RefreshCw, Link2Off, Eye } from 'lucide-react';
 import { Modal } from './base/Modal';
 import { useModal } from '../../context/ModalContext';
 import { copyTextToClipboard } from '../../lib/clipboard';
+import { formatDate } from '../../lib/format';
+import { Spinner } from './base/Spinner';
+import { StatusBanner } from './base/StatusBanner';
 
 interface ShareItem {
   canvasId: string;
@@ -28,11 +31,6 @@ interface ShareItem {
 interface StatusMsg {
   type: 'success' | 'error';
   text: string;
-}
-
-function formatDate(iso: string): string {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('zh-CN');
 }
 
 export interface MySharesModalProps {
@@ -197,7 +195,7 @@ export const MySharesModal: React.FC<MySharesModalProps> = ({
         <div className="flex-1 overflow-y-auto p-5 space-y-3">
           {loading && (
             <div className="flex items-center justify-center gap-2 py-12 text-slate-400 text-sm">
-              <Loader2 className="w-4 h-4 animate-spin" />
+              <Spinner size="md" />
               加载中…
             </div>
           )}
@@ -230,7 +228,10 @@ export const MySharesModal: React.FC<MySharesModalProps> = ({
           {!loading && !error && items && items.length > 0 && (
             <>
               {statusMsg && (
-                <div
+                <StatusBanner
+                  type={statusMsg.type}
+                  unstyled
+                  icon={null}
                   className={`px-3 py-2 rounded-xl text-xs border ${
                     statusMsg.type === 'success'
                       ? 'bg-emerald-950/40 border-emerald-800/60 text-emerald-300'
@@ -238,7 +239,7 @@ export const MySharesModal: React.FC<MySharesModalProps> = ({
                   }`}
                 >
                   {statusMsg.text}
-                </div>
+                </StatusBanner>
               )}
               {items.map((item) => (
                 <div

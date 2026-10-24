@@ -16,7 +16,6 @@ import {
   ChevronUp,
   Copy,
   Check,
-  Loader2,
   AlertCircle,
   RotateCw,
   HelpCircle,
@@ -34,6 +33,8 @@ import { useNodeActions } from '../../context/NodeActionsContext';
 import { useModal } from '../../context/ModalContext';
 import { Tooltip } from '../ui/Tooltip';
 import { useRenderMonitor } from '../../hooks/useRenderMonitor';
+import { useClickOutside } from '../../hooks/useClickOutside';
+import { Spinner } from '../ui/base/Spinner';
 import { getChatDraft, setChatDraft, clearChatDraft } from '../../lib/chat-draft.js';
 
 // Preprocess LaTeX math syntax so remark-math and rehype-katex render it properly
@@ -175,33 +176,16 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
   const renderWarning = useRenderMonitor(`ChatNode_${id}`);
 
   // #点击空白地方自动收起：当参考来源展开时，点击卡片外部/正文空白/画布空白自动收起
-  useEffect(() => {
-    if (!showSources) return;
-
-    const handleSourcesClickOutside = (event: MouseEvent | PointerEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (!target) return;
-
-      // 如果点击在参考来源卡片容器内部（查看链接、复制、滚动等），保持展开
-      if (sourcesContainerRef.current && sourcesContainerRef.current.contains(target)) {
-        return;
-      }
-
-      // 如果点击的是正文引用角标 <sup>，交由 handleCitationClick 处理展开与高亮定位
-      if (target.closest('sup') || target.getAttribute('href')?.startsWith('#src-')) {
-        return;
-      }
-
-      // 点击了卡片空白地方、正文空白或画布空白处，自动收起折叠卡片
-      setShowSources(false);
-    };
-
-    // 使用捕获阶段确保即使节点内部容器调用了 stopPropagation 也能可靠捕获
-    document.addEventListener('pointerdown', handleSourcesClickOutside, true);
-    return () => {
-      document.removeEventListener('pointerdown', handleSourcesClickOutside, true);
-    };
-  }, [showSources]);
+  // 使用捕获阶段确保即使节点内部容器调用了 stopPropagation 也能可靠捕获
+  useClickOutside({
+    refs: [sourcesContainerRef],
+    enabled: showSources,
+    onOutside: () => setShowSources(false),
+    // 正文引用角标 <sup> 与锚点链接交由 handleCitationClick 处理展开与高亮定位
+    ignore: (target) =>
+      target.closest('sup') !== null ||
+      target.getAttribute('href')?.startsWith('#src-') === true,
+  });
 
   // Auto scroll to latest answer text while generating
   useEffect(() => {
@@ -520,7 +504,7 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
 
           {nodeData.status === 'generating' && (
             <span className="shrink-0 flex items-center gap-1.5 px-2 py-0.5 text-[10px] font-semibold rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-300 border border-indigo-500/25">
-              <Loader2 className="w-2.5 h-2.5 animate-spin" />
+              <Spinner size="xs" />
               <span>推演中</span>
             </span>
           )}
@@ -778,7 +762,7 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
             {nodeData.status === 'generating' && (
               <div className="flex flex-col gap-1.5 py-1.5 px-2.5 bg-indigo-50/70 dark:bg-indigo-950/50 rounded-lg w-fit border border-transparent dark:border-indigo-900/40">
                 <div className="flex items-center gap-2 text-xs text-indigo-600 dark:text-indigo-400 font-medium">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <Spinner size="sm" />
                   <span>深度思考与推演中...</span>
                 </div>
                 {nodeData.enableWebSearch && (

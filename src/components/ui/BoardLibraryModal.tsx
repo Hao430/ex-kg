@@ -27,9 +27,12 @@ import {
   Folder as FolderIcon,
 } from 'lucide-react';
 import { Modal } from './base/Modal';
+import { StatusBanner } from './base/StatusBanner';
+import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 import type { DeepDiveBoardMeta } from '../../types';
 import type { FolderMeta } from '../../lib/folder-store';
 import { SHARED_BOARD_IDS } from '../../lib/board-scope';
+import { formatDate } from '../../lib/format';
 
 type FolderSel = 'all' | 'none' | string;
 type SortKey = 'recent' | 'name';
@@ -60,9 +63,7 @@ export interface BoardLibraryModalProps {
 }
 
 function formatUpdatedAt(ts: number): string {
-  if (!ts) return '';
-  const d = new Date(ts);
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('zh-CN');
+  return ts ? formatDate(ts) : '';
 }
 
 export const BoardLibraryModal: React.FC<BoardLibraryModalProps> = ({
@@ -91,6 +92,7 @@ export const BoardLibraryModal: React.FC<BoardLibraryModalProps> = ({
   const [showArchived, setShowArchived] = useState(false);
   const [favOnly, setFavOnly] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  const { confirm: confirmAction, element: confirmElement } = useConfirmDialog();
 
   // 分组被删除后选中项失效 → 回落到「全部」
   useEffect(() => {
@@ -146,7 +148,15 @@ export const BoardLibraryModal: React.FC<BoardLibraryModalProps> = ({
   };
 
   const handleDeleteFolder = async (f: FolderMeta) => {
-    if (!window.confirm(`确定删除分组「${f.name}」吗？组内画板不会被删除，只会回到未分组。`)) return;
+    if (
+      !(await confirmAction({
+        title: `确定删除分组「${f.name}」吗？`,
+        description: '组内画板不会被删除，只会回到未分组。',
+        confirmLabel: '删除分组',
+        tone: 'danger',
+      }))
+    )
+      return;
     const r = await onDeleteFolder(f.id);
     setStatusMsg(r.ok ? null : r.error || '删除分组失败');
   };
@@ -297,9 +307,14 @@ export const BoardLibraryModal: React.FC<BoardLibraryModalProps> = ({
                 </button>
               </div>
               {statusMsg && (
-                <div className="px-3 py-1.5 rounded-lg text-[11px] bg-rose-950/40 border border-rose-800/60 text-rose-300">
+                <StatusBanner
+                  type="error"
+                  unstyled
+                  icon={null}
+                  className="px-3 py-1.5 rounded-lg text-[11px] bg-rose-950/40 border border-rose-800/60 text-rose-300"
+                >
                   {statusMsg}
-                </div>
+                </StatusBanner>
               )}
             </div>
 
@@ -445,6 +460,9 @@ export const BoardLibraryModal: React.FC<BoardLibraryModalProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Promise 化确认框（删除分组等） */}
+      {confirmElement}
     </Modal>
   );
 };

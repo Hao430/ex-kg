@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   ChevronDown,
   User,
@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../../context/AuthContext';
 import { useModal } from '../../../context/ModalContext';
+import { useClickOutside } from '../../../hooks/useClickOutside';
 import { Tooltip } from '../Tooltip';
 
 export interface UserDropdownProps {
@@ -43,30 +44,12 @@ export const UserDropdown: React.FC<UserDropdownProps> = ({
   const handleIntroduce = onGoToLanding ?? onOpenIntroduce;
 
   // 点击外部与 Escape 监听
-  useEffect(() => {
-    if (!showUserMenu) return;
-
-    const handleClickOutside = (event: MouseEvent | PointerEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (!target) return;
-      if (userMenuRef.current && !userMenuRef.current.contains(target)) {
-        setShowUserMenu(false);
-      }
-    };
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setShowUserMenu(false);
-      }
-    };
-
-    document.addEventListener('pointerdown', handleClickOutside, true);
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('pointerdown', handleClickOutside, true);
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [showUserMenu]);
+  useClickOutside({
+    refs: [userMenuRef],
+    enabled: showUserMenu,
+    onOutside: () => setShowUserMenu(false),
+    closeOnEscape: true,
+  });
 
   if (!user) {
     return (

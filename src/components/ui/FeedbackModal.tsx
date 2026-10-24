@@ -10,12 +10,13 @@ import {
   Star,
   Mail,
   Send,
-  Loader2,
   CheckCircle2,
   Inbox,
   Clock,
 } from 'lucide-react';
 import { Modal } from './base/Modal';
+import { Spinner } from './base/Spinner';
+import { StatusBanner } from './base/StatusBanner';
 import { useAuth } from '../../context/AuthContext';
 import { useModal } from '../../context/ModalContext';
 import { submitFeedback, listMyFeedbacks } from '../../services/feedback';
@@ -186,7 +187,7 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
             <div className="p-6 space-y-3 max-h-[60vh] overflow-y-auto">
               {mineLoading && (
                 <div className="py-10 text-center text-slate-400 text-xs flex items-center justify-center gap-2">
-                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <Spinner size="md" />
                   加载中...
                 </div>
               )}
@@ -351,9 +352,14 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
 
               {/* Error Alert */}
               {errorMsg && (
-                <div className="p-2.5 rounded-xl bg-rose-950/60 border border-rose-800/60 text-rose-300 text-xs">
+                <StatusBanner
+                  type="error"
+                  unstyled
+                  icon={null}
+                  className="p-2.5 rounded-xl bg-rose-950/60 border border-rose-800/60 text-rose-300 text-xs"
+                >
                   {errorMsg}
-                </div>
+                </StatusBanner>
               )}
 
               {/* Actions */}
@@ -374,7 +380,7 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
                 >
                   {submitting ? (
                     <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <Spinner size="sm" />
                       提交中...
                     </>
                   ) : (

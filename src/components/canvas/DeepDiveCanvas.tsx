@@ -44,6 +44,7 @@ import { trackEvent, trackOnce } from '../../lib/analytics';
 import { markChecklistStep } from '../../lib/checklist';
 import { uuidv7 } from '../../lib/uuid.js';
 import { AlertCircle, Sparkles, X, FolderPlus, AlertTriangle, Trash2 } from 'lucide-react';
+import { ConfirmDialog } from '../ui/base/ConfirmDialog';
 
 // id 生成统一 UUIDv7（路线 A，2026-09-10）：恒 36 字符、不可枚举、时间前缀 B-tree 友好；
 // ADR-0013 的「前缀截断防 varchar(64) 22001」防御随之消亡（不再有前缀拼接，见 src/lib/uuid.ts）
@@ -1303,102 +1304,76 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
       />
 
       {/* Delete Parent Node & Cascade Children Confirmation Modal */}
-      {deleteConfirmTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-          <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4">
-            <div className="flex items-start gap-3">
-              <div className="p-2.5 rounded-xl bg-rose-500/10 text-rose-500 dark:bg-rose-500/20 shrink-0">
-                <AlertTriangle className="w-5 h-5" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
-                  确认删除该分支及其全部子节点？
-                </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
-                  您正在尝试删除「<span className="font-medium text-slate-800 dark:text-slate-200">{deleteConfirmTarget.nodeTitle}</span>」。
-                  该节点包含 <span className="font-semibold text-rose-500">{deleteConfirmTarget.descendantCount}</span> 个衍生的下级子节点，
-                  确认删除后，<strong className="text-slate-700 dark:text-slate-300">该父节点及其全部下游子节点将一并级联删除</strong>，该操作不可撤销。
-                </p>
-              </div>
-            </div>
-
-            <div className="bg-slate-50 dark:bg-slate-800/60 rounded-xl p-3 border border-slate-100 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-300 flex items-center justify-between">
-              <span>受影响节点总数</span>
-              <span className="font-mono font-semibold text-rose-600 dark:text-rose-400">
-                {deleteConfirmTarget.allTargetIds.length} 个节点
-              </span>
-            </div>
-
-            <div className="flex items-center justify-end gap-2.5 pt-1">
-              <button
-                type="button"
-                onClick={() => setDeleteConfirmTarget(null)}
-                className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  executeDeleteNodeIds(deleteConfirmTarget.allTargetIds);
-                  setDeleteConfirmTarget(null);
-                }}
-                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white text-xs font-semibold shadow-sm transition-colors flex items-center gap-1.5"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>确认一并删除 ({deleteConfirmTarget.allTargetIds.length})</span>
-              </button>
-            </div>
+      <ConfirmDialog
+        open={!!deleteConfirmTarget}
+        tone="danger"
+        icon={<AlertTriangle className="w-5 h-5" />}
+        title="确认删除该分支及其全部子节点？"
+        description={
+          deleteConfirmTarget ? (
+            <>
+              您正在尝试删除「<span className="font-medium text-slate-800 dark:text-slate-200">{deleteConfirmTarget.nodeTitle}</span>」。
+              该节点包含 <span className="font-semibold text-rose-500">{deleteConfirmTarget.descendantCount}</span> 个衍生的下级子节点，
+              确认删除后，<strong className="text-slate-700 dark:text-slate-300">该父节点及其全部下游子节点将一并级联删除</strong>，该操作不可撤销。
+            </>
+          ) : undefined
+        }
+        confirmLabel={
+          deleteConfirmTarget ? (
+            <>
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>确认一并删除 ({deleteConfirmTarget.allTargetIds.length})</span>
+            </>
+          ) : (
+            '确认'
+          )
+        }
+        onConfirm={() => {
+          if (deleteConfirmTarget) {
+            executeDeleteNodeIds(deleteConfirmTarget.allTargetIds);
+            setDeleteConfirmTarget(null);
+          }
+        }}
+        onCancel={() => setDeleteConfirmTarget(null)}
+      >
+        {deleteConfirmTarget && (
+          <div className="bg-slate-50 dark:bg-slate-800/60 rounded-xl p-3 border border-slate-100 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-300 flex items-center justify-between">
+            <span>受影响节点总数</span>
+            <span className="font-mono font-semibold text-rose-600 dark:text-rose-400">
+              {deleteConfirmTarget.allTargetIds.length} 个节点
+            </span>
           </div>
-        </div>
-      )}
+        )}
+      </ConfirmDialog>
       {/* Spec Q1：关闭灵感的确认框（删除不可恢复，故确认后才执行） */}
-      {suggestionCleanupCount > 0 && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-          <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-5 space-y-4">
-            <div className="flex items-start gap-3">
-              <div className="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-500 dark:bg-indigo-500/20 shrink-0">
-                <Sparkles className="w-5 h-5" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
-                  关闭灵感并清理本画板的灵感节点？
-                </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
-                  将删除本画板上的{' '}
-                  <span className="font-semibold text-indigo-600 dark:text-indigo-400">
-                    {suggestionCleanupCount}
-                  </span>{' '}
-                  个灵感节点，删除后
-                  <strong className="text-slate-700 dark:text-slate-300">不可恢复</strong>
-                  ；之后本画板的新回答也不会再生成灵感节点。已展开的探索内容不受影响。
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-2.5 pt-1">
-              <button
-                type="button"
-                onClick={() => {
-                  pendingSuggestionIdsRef.current = [];
-                  setSuggestionCleanupCount(0);
-                }}
-                className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={confirmSuggestionCleanup}
-                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white text-xs font-semibold shadow-sm transition-colors flex items-center gap-1.5"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>清理并关闭 ({suggestionCleanupCount})</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        open={suggestionCleanupCount > 0}
+        tone="primary"
+        icon={<Sparkles className="w-5 h-5" />}
+        title="关闭灵感并清理本画板的灵感节点？"
+        description={
+          <>
+            将删除本画板上的{' '}
+            <span className="font-semibold text-indigo-600 dark:text-indigo-400">
+              {suggestionCleanupCount}
+            </span>{' '}
+            个灵感节点，删除后
+            <strong className="text-slate-700 dark:text-slate-300">不可恢复</strong>
+            ；之后本画板的新回答也不会再生成灵感节点。已展开的探索内容不受影响。
+          </>
+        }
+        confirmLabel={
+          <>
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>清理并关闭 ({suggestionCleanupCount})</span>
+          </>
+        }
+        onConfirm={confirmSuggestionCleanup}
+        onCancel={() => {
+          pendingSuggestionIdsRef.current = [];
+          setSuggestionCleanupCount(0);
+        }}
+      />
     </div>
   );
 };

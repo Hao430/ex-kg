@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useModal } from '../../context/ModalContext';
-import { Crown, Check, Sparkles, X, ShieldCheck, Flame, Infinity, Layers, Network, Calendar, AlertCircle, Loader2 } from 'lucide-react';
+import { Crown, Check, Sparkles, X, ShieldCheck, Flame, Infinity, Layers, Network, Calendar, AlertCircle } from 'lucide-react';
 import { Modal } from './base/Modal';
+import { Spinner } from './base/Spinner';
 import { SubscriptionPlan, SubscriptionPlanId } from '../../types';
 
 /** GET /api/quota 返回的余量形状（Spec J2/K7，仅取本弹窗所需字段） */
@@ -383,7 +384,7 @@ export const RechargeModal: React.FC<RechargeModalProps> = ({
           ) : payStage === 'awaiting' ? (
             <div className="w-full py-3 px-4 rounded-xl text-sm font-medium flex flex-col items-center gap-1.5 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-800 dark:text-indigo-200 border border-indigo-200 dark:border-indigo-800/60">
               <span className="flex items-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <Spinner size="md" />
                 已跳转支付，等待支付完成…
               </span>
               <span className="text-[11px] text-indigo-500 dark:text-indigo-300/80">
@@ -398,7 +399,7 @@ export const RechargeModal: React.FC<RechargeModalProps> = ({
             >
               {payStage === 'creating' ? (
                 <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <Spinner size="md" />
                   正在创建支付订单…
                 </>
               ) : (

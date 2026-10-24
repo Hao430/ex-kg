@@ -6,6 +6,8 @@
 import React, { useState } from 'react';
 import { Mail } from 'lucide-react';
 import { AuthUser } from '../../../types';
+import { Modal } from '../../ui/base/Modal';
+import { extractErrorMessage } from '../../../lib/api';
 
 export interface UserEmailModalProps {
   targetUser: AuthUser | null;
@@ -35,13 +37,13 @@ export const UserEmailModal: React.FC<UserEmailModalProps> = ({
         credentials: 'include',
         body: JSON.stringify({ email: newEmail.trim() }),
       });
-      const d = await res.json();
-      if (res.ok) {
-        onSuccess(d.message);
-        setNewEmail('');
-      } else {
-        onError?.(d.error || '修改邮箱失败');
+      if (!res.ok) {
+        onError?.(await extractErrorMessage(res, '修改邮箱失败'));
+        return;
       }
+      const d = await res.json();
+      onSuccess(d.message);
+      setNewEmail('');
     } catch (e: any) {
       onError?.(e?.message || '网络异常');
     } finally {
@@ -50,8 +52,14 @@ export const UserEmailModal: React.FC<UserEmailModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
-      <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-800 p-5">
+    <Modal
+      isOpen={!!targetUser}
+      onClose={onClose}
+      zIndex="z-60"
+      size="md"
+      ariaLabel="修改用户登录邮箱"
+    >
+      <div className="p-5">
         <div className="flex items-center gap-2 mb-1">
           <div className="p-1.5 rounded-lg bg-sky-500/10 text-sky-500">
             <Mail className="w-4 h-4" />
@@ -100,6 +108,6 @@ export const UserEmailModal: React.FC<UserEmailModalProps> = ({
           </div>
         </form>
       </div>
-    </div>
+    </Modal>
   );
 };

@@ -9,7 +9,6 @@ import {
   Mail,
   Check,
   Sparkles,
-  Loader2,
   Camera,
   Trash2,
   KeyRound,
@@ -27,6 +26,10 @@ import {
   BadgeCheck,
 } from 'lucide-react';
 import { Modal } from './base/Modal';
+import { Spinner } from './base/Spinner';
+import { StatusBanner } from './base/StatusBanner';
+import { useConfirmDialog } from '../../hooks/useConfirmDialog';
+import { extractErrorMessage } from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
 import { useModal } from '../../context/ModalContext';
 import { copyTextToClipboard } from '../../lib/clipboard.js';
@@ -70,6 +73,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   const onClose = propOnClose ?? closeUserProfileModal;
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('profile');
+  const { confirm: confirmAction, element: confirmElement } = useConfirmDialog();
   const [name, setName] = useState('');
   const [selectedAvatar, setSelectedAvatar] = useState('🧠');
   const [customAvatarUrl, setCustomAvatarUrl] = useState('');
@@ -187,7 +191,15 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
   // Spec F4：自助注销账号（软删除，30 天内可联系管理员恢复）
   const handleDeleteAccount = async () => {
-    if (!confirm('注销后 30 天内可联系管理员恢复，确认注销？')) return;
+    if (
+      !(await confirmAction({
+        title: '确认注销账号？',
+        description: '注销后 30 天内可联系管理员恢复。',
+        confirmLabel: '确认注销',
+        tone: 'danger',
+      }))
+    )
+      return;
 
     setDeleting(true);
     setStatusMsg(null);
@@ -200,8 +212,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
         closeUserProfileModal();
         await logout();
       } else {
-        const body = await res.json().catch(() => null);
-        setStatusMsg({ type: 'error', text: body?.message || '注销失败，请稍后重试' });
+        setStatusMsg({ type: 'error', text: await extractErrorMessage(res, '注销失败，请稍后重试') });
       }
     } catch {
       setStatusMsg({ type: 'error', text: '注销失败，请检查网络后重试' });
@@ -851,7 +862,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                     >
                       {changingPassword ? (
                         <>
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <Spinner size="sm" />
                           正在更新密码...
                         </>
                       ) : (
@@ -898,7 +909,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                   >
                     {deleting ? (
                       <>
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <Spinner size="sm" />
                         注销中...
                       </>
                     ) : (
@@ -919,18 +930,25 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
               <motion.div
                 initial={{ opacity: 0, y: 4 }}
                 animate={{ opacity: 1, y: 0 }}
-                className={`p-3 rounded-xl text-xs font-medium flex items-center gap-2 ${
-                  statusMsg.type === 'success'
-                    ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
-                    : 'bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800'
-                }`}
               >
-                {statusMsg.type === 'success' ? (
-                  <Check className="w-4 h-4 shrink-0 text-emerald-500" />
-                ) : (
-                  <AlertTriangle className="w-4 h-4 shrink-0 text-rose-500" />
-                )}
-                <span>{statusMsg.text}</span>
+                <StatusBanner
+                  type={statusMsg.type}
+                  unstyled
+                  icon={
+                    statusMsg.type === 'success' ? (
+                      <Check className="w-4 h-4 shrink-0 text-emerald-500" />
+                    ) : (
+                      <AlertTriangle className="w-4 h-4 shrink-0 text-rose-500" />
+                    )
+                  }
+                  className={`p-3 rounded-xl text-xs font-medium ${
+                    statusMsg.type === 'success'
+                      ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                      : 'bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800'
+                  }`}
+                >
+                  <span>{statusMsg.text}</span>
+                </StatusBanner>
               </motion.div>
             </div>
           )}
@@ -959,7 +977,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                 >
                   {saving ? (
                     <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <Spinner size="sm" />
                       保存中...
                     </>
                   ) : (
@@ -974,6 +992,9 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
           </div>
         </>
       )}
+
+      {/* Promise 化确认框（注销账号等） */}
+      {confirmElement}
     </div>
   </Modal>
 );

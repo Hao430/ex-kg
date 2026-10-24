@@ -15,9 +15,12 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { AuthUser } from '../../../types';
+import { formatDate } from '../../../lib/format';
+import { extractErrorMessage } from '../../../lib/api';
 import { Tooltip } from '../../ui/Tooltip';
 import { VipGrantModal } from '../modals/VipGrantModal';
 import { UserEmailModal } from '../modals/UserEmailModal';
+import { useConfirmDialog } from '../../../hooks/useConfirmDialog';
 
 export interface AdminUsersTabProps {
   currentUserId?: string;
@@ -29,6 +32,7 @@ export const AdminUsersTab: React.FC<AdminUsersTabProps> = ({
   onFeedback,
 }) => {
   const [users, setUsers] = useState<AuthUser[]>([]);
+  const { confirm: confirmAction, element: confirmElement } = useConfirmDialog();
   const [userTotal, setUserTotal] = useState(0);
   const [userPage, setUserPage] = useState(1);
   const [userSearch, setUserSearch] = useState('');
@@ -70,7 +74,14 @@ export const AdminUsersTab: React.FC<AdminUsersTabProps> = ({
   const handleToggleUserStatus = async (targetUser: AuthUser) => {
     const nextStatus = !targetUser.is_active;
     const actionName = nextStatus ? '解冻账号' : '冻结账号';
-    if (!window.confirm(`确定要${actionName} "${targetUser.email}" 吗？`)) return;
+    if (
+      !(await confirmAction({
+        title: `确定要${actionName} "${targetUser.email}" 吗？`,
+        confirmLabel: actionName,
+        tone: 'warning',
+      }))
+    )
+      return;
 
     try {
       const res = await fetch(`/api/admin/users/${targetUser.id}/status`, {
@@ -79,13 +90,12 @@ export const AdminUsersTab: React.FC<AdminUsersTabProps> = ({
         credentials: 'include',
         body: JSON.stringify({ is_active: nextStatus }),
       });
-      const d = await res.json();
-      if (res.ok) {
-        onFeedback(`已成功${actionName}`);
-        fetchUsers();
-      } else {
-        onFeedback(d.error || '操作失败');
+      if (!res.ok) {
+        onFeedback(await extractErrorMessage(res, '操作失败'));
+        return;
       }
+      onFeedback(`已成功${actionName}`);
+      fetchUsers();
     } catch (e: any) {
       onFeedback(e?.message || '网络异常');
     }
@@ -223,7 +233,7 @@ export const AdminUsersTab: React.FC<AdminUsersTabProps> = ({
                           </span>
                           {u.vip_expires_at && (
                             <div className="text-[10px] text-slate-400">
-                              至 {new Date(u.vip_expires_at).toLocaleDateString('zh-CN')}
+                              至 {formatDate(u.vip_expires_at)}
                             </div>
                           )}
                         </div>
@@ -308,7 +318,7 @@ export const AdminUsersTab: React.FC<AdminUsersTabProps> = ({
       <VipGrantModal
         targetUser={vipTargetUser}
         onClose={() => setVipTargetUser(null)}
-        onSuccess={(msg) => {
+        onError={onFeedback}        onSuccess={(msg) => {
           onFeedback(msg);
           setVipTargetUser(null);
           fetchUsers();
@@ -318,12 +328,16 @@ export const AdminUsersTab: React.FC<AdminUsersTabProps> = ({
       <UserEmailModal
         targetUser={emailTargetUser}
         onClose={() => setEmailTargetUser(null)}
+        onError={onFeedback}
         onSuccess={(msg) => {
           onFeedback(msg);
           setEmailTargetUser(null);
           fetchUsers();
         }}
       />
+
+      {/* Promise 化确认框（冻结/解冻账号等） */}
+      {confirmElement}
     </div>
   );
 };

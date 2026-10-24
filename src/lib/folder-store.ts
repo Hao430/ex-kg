@@ -5,10 +5,13 @@
  * - 新建/改名/删除**在线优先**：乐观更新，失败回滚并返回错误供上层 toast；
  *   离线时直接拒绝（移动画板归属不走此模块，走 meta 队列，可离线）
  * - 依赖约定：只依赖 board-scope / board-store / uuid，避免与 storage 成环
+ * - 订阅/视图/作用域骨架由 store-factory 提供（2026-10 反抽）
  */
 import * as scope from './board-scope';
 import * as boardStore from './board-store';
 import { uuidv7 } from './uuid';
+import { createScopedStore } from './store-factory';
+import { extractErrorMessage } from './api';
 
 export interface FolderMeta {
   id: string;
@@ -24,34 +27,10 @@ export interface FoldersView {
 
 export type FolderOpResult = { ok: true } | { ok: false; error: string };
 
-let folders: FolderMeta[] = [];
-let loaded = false;
-let offline = false;
-let boundScope: scope.ScopeKey | null = null;
-let view: FoldersView = { folders: [], loaded: false, offline: false };
-const listeners = new Set<() => void>();
-
-function notify(): void {
-  for (const cb of listeners) {
-    try {
-      cb();
-    } catch (e) {
-      console.error('folder-store listener error:', e);
-    }
-  }
-}
-
-function rebuild(): void {
-  view = { folders, loaded, offline };
-  notify();
-}
-
-function persist(): void {
-  try {
-    scope.writeJson(scope.foldersKey(boundScope ?? undefined), folders);
-  } catch (e) {
-    console.error('folder-store persist failed:', e);
-  }
+interface FolderState {
+  folders: FolderMeta[];
+  loaded: boolean;
+  offline: boolean;
 }
 
 function isOffline(): boolean {
@@ -67,62 +46,75 @@ function sortFolders(list: FolderMeta[]): FolderMeta[] {
   return [...list].sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'zh'));
 }
 
+const store = createScopedStore<FolderState, FoldersView>({
+  name: 'folder-store',
+  initialState: () => ({ folders: [], loaded: false, offline: false }),
+  buildView: (s) => ({ folders: s.folders, loaded: s.loaded, offline: s.offline }),
+  /** 绑定作用域：载入本地缓存（离线可见），loaded 置 false 待服务端刷新 */
+  onScopeBind: (key) => {
+    const cached = scope.readJson<FolderMeta[]>(scope.foldersKey(key), []);
+    return {
+      folders: Array.isArray(cached)
+        ? sortFolders(cached.filter((f) => f && typeof f.id === 'string'))
+        : [],
+      loaded: false,
+      offline: false,
+    };
+  },
+  writeCache: (s, key) => {
+    try {
+      scope.writeJson(scope.foldersKey(key ?? undefined), s.folders);
+    } catch (e) {
+      console.error('folder-store persist failed:', e);
+    }
+  },
+});
+
 export function subscribe(cb: () => void): () => void {
-  listeners.add(cb);
-  return () => {
-    listeners.delete(cb);
-  };
+  return store.subscribe(cb);
 }
 
 /** useSyncExternalStore 的 getSnapshot：稳定引用 */
 export function getFoldersView(): FoldersView {
-  return view;
+  return store.getView();
 }
 
 export function getFolders(): FolderMeta[] {
-  return view.folders;
+  return store.getView().folders;
 }
 
-/** 绑定作用域：载入本地缓存（离线可见），loaded 置 false 待服务端刷新 */
+/** 绑定作用域（同 key 幂等，StrictMode 双跑安全） */
 export function bindScope(scopeKey: scope.ScopeKey): void {
-  if (boundScope === scopeKey) return;
-  boundScope = scopeKey;
-  const cached = scope.readJson<FolderMeta[]>(scope.foldersKey(scopeKey), []);
-  folders = Array.isArray(cached) ? sortFolders(cached.filter((f) => f && typeof f.id === 'string')) : [];
-  loaded = false;
-  offline = false;
-  rebuild();
+  store.bindScope(scopeKey);
 }
 
 /** 服务端快照水合；null/失败必须 no-op（离线不得清空缓存） */
 export function hydrateFromServer(list: any[] | null): void {
   if (!Array.isArray(list)) return;
-  folders = sortFolders(list.map(mapFolder).filter((f): f is FolderMeta => f !== null));
-  loaded = true;
-  offline = false;
-  persist();
-  rebuild();
+  store.setState({
+    folders: sortFolders(list.map(mapFolder).filter((f): f is FolderMeta => f !== null)),
+    loaded: true,
+    offline: false,
+  });
+  store.persistNow();
 }
 
 export async function refreshFolders(): Promise<boolean> {
   try {
     const res = await fetch('/api/folders', { credentials: 'include' });
     if (res.status === 401) {
-      offline = true;
-      rebuild();
+      store.setState({ ...store.getState(), offline: true });
       return false;
     }
     if (!res.ok) {
-      offline = true;
-      rebuild();
+      store.setState({ ...store.getState(), offline: true });
       return false;
     }
     const body = (await res.json()) as any;
     hydrateFromServer(Array.isArray(body?.folders) ? body.folders : []);
     return true;
   } catch {
-    offline = true;
-    rebuild();
+    store.setState({ ...store.getState(), offline: true });
     return false;
   }
 }
@@ -130,10 +122,10 @@ export async function refreshFolders(): Promise<boolean> {
 export async function createFolder(name: string): Promise<FolderOpResult> {
   if (isOffline()) return { ok: false, error: '离线中，暂不支持新建分组' };
   const id = uuidv7();
-  const prev = folders;
-  folders = sortFolders([...folders, { id, name, sortOrder: folders.length }]);
-  persist();
-  rebuild();
+  const prev = store.getState().folders;
+  const { loaded, offline } = store.getState();
+  store.setState({ folders: sortFolders([...prev, { id, name, sortOrder: prev.length }]), loaded, offline });
+  store.persistNow();
   try {
     const res = await fetch('/api/folders', {
       method: 'POST',
@@ -141,34 +133,34 @@ export async function createFolder(name: string): Promise<FolderOpResult> {
       credentials: 'include',
       body: JSON.stringify({ id, name }),
     });
-    const body = await res.json().catch(() => null) as any;
-    if (res.ok) {
-      const created = mapFolder(body?.folder);
-      if (created) {
-        folders = sortFolders([...folders.filter((f) => f.id !== id), created]);
-        persist();
-        rebuild();
-      }
-      return { ok: true };
+    if (!res.ok) {
+      const error = await extractErrorMessage(res, '新建分组失败，请稍后重试');
+      store.setState({ ...store.getState(), folders: prev });
+      store.persistNow();
+      return { ok: false, error };
     }
-    folders = prev;
-    persist();
-    rebuild();
-    return { ok: false, error: body?.error || '新建分组失败，请稍后重试' };
+    const body = await res.json().catch(() => null) as any;
+    const created = mapFolder(body?.folder);
+    if (created) {
+      store.setState({
+        ...store.getState(),
+        folders: sortFolders([...store.getState().folders.filter((f) => f.id !== id), created]),
+      });
+      store.persistNow();
+    }
+    return { ok: true };
   } catch {
-    folders = prev;
-    persist();
-    rebuild();
+    store.setState({ ...store.getState(), folders: prev });
+    store.persistNow();
     return { ok: false, error: '网络连接异常，请检查网络后重试' };
   }
 }
 
 export async function renameFolder(id: string, name: string): Promise<FolderOpResult> {
   if (isOffline()) return { ok: false, error: '离线中，暂不支持重命名分组' };
-  const prev = folders;
-  folders = folders.map((f) => (f.id === id ? { ...f, name } : f));
-  persist();
-  rebuild();
+  const prev = store.getState().folders;
+  store.setState({ ...store.getState(), folders: prev.map((f) => (f.id === id ? { ...f, name } : f)) });
+  store.persistNow();
   try {
     const res = await fetch(`/api/folders/${encodeURIComponent(id)}`, {
       method: 'PATCH',
@@ -176,35 +168,34 @@ export async function renameFolder(id: string, name: string): Promise<FolderOpRe
       credentials: 'include',
       body: JSON.stringify({ name }),
     });
-    if (res.ok) {
-      const body = await res.json().catch(() => null) as any;
-      const updated = mapFolder(body?.folder);
-      if (updated) {
-        folders = sortFolders(folders.map((f) => (f.id === id ? updated : f)));
-        persist();
-        rebuild();
-      }
-      return { ok: true };
+    if (!res.ok) {
+      const error = await extractErrorMessage(res, '重命名失败，请稍后重试');
+      store.setState({ ...store.getState(), folders: prev });
+      store.persistNow();
+      return { ok: false, error };
     }
     const body = await res.json().catch(() => null) as any;
-    folders = prev;
-    persist();
-    rebuild();
-    return { ok: false, error: body?.error || '重命名失败，请稍后重试' };
+    const updated = mapFolder(body?.folder);
+    if (updated) {
+      store.setState({
+        ...store.getState(),
+        folders: sortFolders(store.getState().folders.map((f) => (f.id === id ? updated : f))),
+      });
+      store.persistNow();
+    }
+    return { ok: true };
   } catch {
-    folders = prev;
-    persist();
-    rebuild();
+    store.setState({ ...store.getState(), folders: prev });
+    store.persistNow();
     return { ok: false, error: '网络连接异常，请检查网络后重试' };
   }
 }
 
 export async function deleteFolder(id: string): Promise<FolderOpResult> {
   if (isOffline()) return { ok: false, error: '离线中，暂不支持删除分组' };
-  const prev = folders;
-  folders = folders.filter((f) => f.id !== id);
-  persist();
-  rebuild();
+  const prev = store.getState().folders;
+  store.setState({ ...store.getState(), folders: prev.filter((f) => f.id !== id) });
+  store.persistNow();
   try {
     const res = await fetch(`/api/folders/${encodeURIComponent(id)}`, {
       method: 'DELETE',
@@ -215,25 +206,18 @@ export async function deleteFolder(id: string): Promise<FolderOpResult> {
       boardStore.clearFolderOnBoards(id);
       return { ok: true };
     }
-    const body = await res.json().catch(() => null) as any;
-    folders = prev;
-    persist();
-    rebuild();
-    return { ok: false, error: body?.error || '删除分组失败，请稍后重试' };
+    const error = await extractErrorMessage(res, '删除分组失败，请稍后重试');
+    store.setState({ ...store.getState(), folders: prev });
+    store.persistNow();
+    return { ok: false, error };
   } catch {
-    folders = prev;
-    persist();
-    rebuild();
+    store.setState({ ...store.getState(), folders: prev });
+    store.persistNow();
     return { ok: false, error: '网络连接异常，请检查网络后重试' };
   }
 }
 
 /** 仅供测试 */
 export function resetForTest(): void {
-  folders = [];
-  loaded = false;
-  offline = false;
-  boundScope = null;
-  listeners.clear();
-  view = { folders: [], loaded: false, offline: false };
+  store.resetForTest();
 }

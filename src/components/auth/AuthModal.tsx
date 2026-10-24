@@ -3,6 +3,8 @@ import { useAuth } from '../../context/AuthContext';
 import { useModal } from '../../context/ModalContext';
 import { LogIn, UserPlus, Sparkles, Key, Mail, AlertCircle, X, CheckCircle2, ArrowLeft, ShieldCheck } from 'lucide-react';
 import { Modal } from '../ui/base/Modal';
+import { Spinner } from '../ui/base/Spinner';
+import { StatusBanner } from '../ui/base/StatusBanner';
 
 export interface AuthModalProps {
   isOpen?: boolean;
@@ -167,10 +169,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           {view === 'forgot' ? (
             <>
               {error && (
-                <div className="mb-4 p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 flex items-start gap-2.5 text-xs text-rose-700 dark:text-rose-300">
-                  <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                <StatusBanner
+                  type="error"
+                  unstyled
+                  icon={<AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />}
+                  className="mb-4 p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 text-xs text-rose-700 dark:text-rose-300"
+                >
                   <p className="font-medium">{error}</p>
-                </div>
+                </StatusBanner>
               )}
 
               {forgotSent ? (
@@ -226,7 +232,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-xl text-sm font-medium transition-colors shadow-sm disabled:opacity-50 flex items-center justify-center gap-2"
                     >
                       {submitting ? (
-                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        <Spinner size="md" className="text-white" />
                       ) : (
                         <>
                           <Mail className="w-4 h-4" />
@@ -251,17 +257,19 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           ) : (
           <>
           {error && (
-            <div className="mb-4 p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 flex items-start gap-2.5 text-xs text-rose-700 dark:text-rose-300">
-              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-              <div>
-                <p className="font-medium">{error}</p>
-                {lockoutMinutes && (
-                  <p className="mt-1 text-rose-600 dark:text-rose-400">
-                    账户触发防爆破机制，请于 {lockoutMinutes} 分钟后再尝试。
-                  </p>
-                )}
-              </div>
-            </div>
+            <StatusBanner
+              type="error"
+              unstyled
+              icon={<AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />}
+              className="mb-4 p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 text-xs text-rose-700 dark:text-rose-300"
+            >
+              <p className="font-medium">{error}</p>
+              {lockoutMinutes && (
+                <p className="mt-1 text-rose-600 dark:text-rose-400">
+                  账户触发防爆破机制，请于 {lockoutMinutes} 分钟后再尝试。
+                </p>
+              )}
+            </StatusBanner>
           )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -371,7 +379,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-xl text-sm font-medium transition-colors shadow-sm disabled:opacity-50 flex items-center justify-center gap-2"
             >
               {submitting ? (
-                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                <Spinner size="md" className="text-white" />
               ) : isSignUp ? (
                 <>
                   <UserPlus className="w-4 h-4" />

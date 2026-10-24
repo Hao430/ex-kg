@@ -15,7 +15,6 @@ import {
   Compass,
   Brain,
   Sparkles,
-  Loader2,
   CheckCircle2,
   XCircle,
   AlertTriangle,
@@ -36,11 +35,13 @@ import {
   Lightbulb,
 } from 'lucide-react';
 import * as quizStore from '../../lib/quiz-store';
+import { Spinner } from '../ui/base/Spinner';
 import { scopeKeyFor } from '../../lib/board-scope';
 import type { QuizAttemptView, QuizDifficulty, QuizGradeResult, QuizHistoryItem, QuizQuestion, QuizSubmission } from '../../lib/quiz-store';
 import { useAuth } from '../../context/AuthContext';
 import { useModal } from '../../context/ModalContext';
 import { Tooltip } from '../ui/Tooltip';
+import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 
 export const DIFFICULTY_LABELS: Record<QuizDifficulty, string> = {
   beginner: '入门',
@@ -190,6 +191,7 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
   initialChoices,
 }) => {
   const [topic, setTopic] = useState(initialTopic);
+  const { confirm: confirmAction, element: confirmElement } = useConfirmDialog();
   const [difficulty, setDifficulty] = useState<QuizDifficulty>('beginner');
   const [count, setCount] = useState(5);
   const [phase, setPhase] = useState<Phase>(initialPhase ?? { kind: 'form' });
@@ -679,7 +681,7 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
               <div className="p-12 rounded-2xl bg-white dark:bg-[#0c1222] border border-slate-200/80 dark:border-slate-800/80 shadow-sm flex flex-col items-center justify-center gap-4 text-center animate-in fade-in duration-200">
                 <div className="relative">
                   <div className="w-14 h-14 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
-                    <Loader2 className="w-7 h-7 animate-spin" />
+                    <Spinner size="lg" />
                   </div>
                 </div>
                 <div>
@@ -728,8 +730,14 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
                     </span>
                     <button
                       type="button"
-                      onClick={() => {
-                        if (window.confirm('确定放弃本次练习并返回吗？')) {
+                      onClick={async () => {
+                        if (
+                          await confirmAction({
+                            title: '确定放弃本次练习并返回吗？',
+                            confirmLabel: '放弃本次',
+                            tone: 'warning',
+                          })
+                        ) {
                           setPhase({ kind: 'form' });
                         }
                       }}
@@ -967,6 +975,9 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
           </div>
         </main>
       </div>
+
+      {/* Promise 化确认框（放弃本次练习等） */}
+      {confirmElement}
     </div>
   );
 };

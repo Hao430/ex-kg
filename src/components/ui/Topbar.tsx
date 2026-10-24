@@ -33,6 +33,7 @@ import type { FolderMeta } from '../../lib/folder-store';
 import { useAuth } from '../../context/AuthContext';
 import { useModal } from '../../context/ModalContext';
 import { Tooltip } from './Tooltip';
+import { useClickOutside } from '../../hooks/useClickOutside';
 import {
   NodeSearchDialog,
   BoardSelectorDropdown,
@@ -139,30 +140,12 @@ export const Topbar: React.FC<TopbarProps> = ({
   const isDark = theme === 'dark';
 
   // 画布更多操作菜单：点击外部与 Escape 监听
-  useEffect(() => {
-    if (!showCanvasMoreMenu) return;
-
-    const handleClickOutside = (event: MouseEvent | PointerEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (!target) return;
-      if (canvasMoreMenuRef.current && !canvasMoreMenuRef.current.contains(target)) {
-        setShowCanvasMoreMenu(false);
-      }
-    };
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setShowCanvasMoreMenu(false);
-      }
-    };
-
-    document.addEventListener('pointerdown', handleClickOutside, true);
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('pointerdown', handleClickOutside, true);
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [showCanvasMoreMenu]);
+  useClickOutside({
+    refs: [canvasMoreMenuRef],
+    enabled: showCanvasMoreMenu,
+    onOutside: () => setShowCanvasMoreMenu(false),
+    closeOnEscape: true,
+  });
 
   return (
     <header className="absolute top-0 left-0 right-0 h-14 bg-white/80 dark:bg-[#070b14]/85 backdrop-blur-xl border-b border-slate-200/70 dark:border-slate-800/70 px-3 sm:px-4 flex items-center justify-between z-40 shadow-[0_4px_20px_rgba(0,0,0,0.03)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.4)] transition-colors duration-200 select-none">

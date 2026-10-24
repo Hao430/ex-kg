@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
-import { Sparkles, Key, Mail, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
+import { Sparkles, Key, Mail, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Spinner } from '../ui/base/Spinner';
+import { StatusBanner } from '../ui/base/StatusBanner';
 
 /**
  * /reset-password?token=... 落地页（Spec F1 找回密码第二步）
@@ -67,10 +69,14 @@ export const ResetPasswordPage: React.FC = () => {
 
         <div className="p-6">
           {error && (
-            <div className="mb-4 p-3 rounded-xl bg-rose-950/60 border border-rose-900/60 flex items-start gap-2.5 text-xs text-rose-300">
-              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+            <StatusBanner
+              type="error"
+              unstyled
+              icon={<AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />}
+              className="mb-4 p-3 rounded-xl bg-rose-950/60 border border-rose-900/60 text-xs text-rose-300"
+            >
               <p className="font-medium">{error}</p>
-            </div>
+            </StatusBanner>
           )}
 
           {success ? (
@@ -126,7 +132,7 @@ export const ResetPasswordPage: React.FC = () => {
                 className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white rounded-xl text-sm font-medium transition-colors shadow-sm disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {submitting ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <Spinner size="md" />
                 ) : (
                   <>
                     <Key className="w-4 h-4" />
@@ -221,7 +227,7 @@ export const VerifyEmailPage: React.FC = () => {
           </div>
         </div>
         <div className="p-6 text-center py-8 space-y-4">
-          {status === 'pending' && <Loader2 className="w-10 h-10 text-indigo-400 mx-auto animate-spin" />}
+          {status === 'pending' && <Spinner size="xl" className="text-indigo-400 mx-auto" />}
           {status === 'success' && <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto" />}
           {status === 'error' && <AlertCircle className="w-10 h-10 text-rose-500 mx-auto" />}
           <p className="text-sm text-slate-300">{message || '正在验证邮箱...'}</p>
@@ -235,7 +241,7 @@ export const VerifyEmailPage: React.FC = () => {
                   className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 rounded-lg transition disabled:opacity-50"
                 >
                   {resendState === 'sending' ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <Spinner size="sm" />
                   ) : (
                     <Mail className="w-3.5 h-3.5" />
                   )}

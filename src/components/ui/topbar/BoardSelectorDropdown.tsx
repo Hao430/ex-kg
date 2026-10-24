@@ -21,6 +21,7 @@ import type { FolderMeta } from '../../../lib/folder-store';
 import { buildQuickSections } from '../../../lib/board-sections';
 import { SHARED_BOARD_IDS } from '../../../lib/board-scope';
 import { useQuotaView } from '../../../hooks/useBoards';
+import { useClickOutside } from '../../../hooks/useClickOutside';
 import { Tooltip } from '../Tooltip';
 
 export interface BoardSelectorDropdownProps {
@@ -75,30 +76,12 @@ export const BoardSelectorDropdown: React.FC<BoardSelectorDropdownProps> = ({
   };
 
   // 点击外部与 Escape 监听
-  useEffect(() => {
-    if (!showBoardMenu) return;
-
-    const handleClickOutside = (event: MouseEvent | PointerEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (!target) return;
-      if (boardMenuRef.current && !boardMenuRef.current.contains(target)) {
-        setShowBoardMenu(false);
-      }
-    };
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setShowBoardMenu(false);
-      }
-    };
-
-    document.addEventListener('pointerdown', handleClickOutside, true);
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('pointerdown', handleClickOutside, true);
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [showBoardMenu]);
+  useClickOutside({
+    refs: [boardMenuRef],
+    enabled: showBoardMenu,
+    onOutside: () => setShowBoardMenu(false),
+    closeOnEscape: true,
+  });
 
   return (
     <div ref={boardMenuRef} className="relative flex items-center">

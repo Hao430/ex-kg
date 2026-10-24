@@ -8,8 +8,11 @@
  * - 服务端 `/api/quiz/*` 为权威，本地缓存只作离线可见与快速首屏
  * - 依赖约定：只依赖 board-scope，避免与 storage 成环（照 folder-store）
  * - 游客不显示入口，故本模块不处理游客态
+ * - 订阅/视图/作用域骨架由 store-factory 提供（2026-10 反抽）
  */
 import * as scope from './board-scope';
+import { createScopedStore } from './store-factory';
+import { extractErrorMessage } from './api';
 
 export type QuizDifficulty = 'beginner' | 'intermediate' | 'advanced';
 export type QuizQuestionType = 'single' | 'true_false';
@@ -87,81 +90,68 @@ export interface QuizHistoryView {
   offline: boolean;
 }
 
-let history: QuizHistoryItem[] = [];
-let historyLoaded = false;
-let historyOffline = false;
-let boundScope: scope.ScopeKey | null = null;
-let view: QuizHistoryView = { items: [], loaded: false, offline: false };
-const listeners = new Set<() => void>();
+interface QuizState {
+  history: QuizHistoryItem[];
+  loaded: boolean;
+  offline: boolean;
+}
 
-function notify(): void {
-  for (const cb of listeners) {
+const emptyState = (): QuizState => ({ history: [], loaded: false, offline: false });
+
+/** 缓存 key 与 JSON 格式保持不变（旧缓存必须还能读） */
+const store = createScopedStore<QuizState, QuizHistoryView>({
+  name: 'quiz-store',
+  initialState: emptyState,
+  buildView: (s) => ({ items: s.history, loaded: s.loaded, offline: s.offline }),
+  /** 绑定账号 scope：换账号即重置并从本地缓存预热（离线也能看到历史） */
+  onScopeBind: (key) => {
+    const next = emptyState();
     try {
-      cb();
-    } catch (e) {
-      console.error('quiz-store listener error:', e);
+      const raw = localStorage.getItem(scope.quizCacheKey(key));
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) next.history = parsed as QuizHistoryItem[];
+      }
+    } catch {
+      // 缓存坏了就用空视图，不阻断
     }
-  }
-}
+    return next;
+  },
+  writeCache: (s, key) => {
+    try {
+      localStorage.setItem(scope.quizCacheKey(key ?? undefined), JSON.stringify(s.history));
+    } catch {
+      // 存储不可用时静默降级（练习记录在服务端，本地缓存只是优化）
+    }
+  },
+});
 
-function rebuild(): void {
-  view = { items: history, loaded: historyLoaded, offline: historyOffline };
-  notify();
-}
-
-function persist(): void {
-  try {
-    localStorage.setItem(scope.quizCacheKey(boundScope ?? undefined), JSON.stringify(history));
-  } catch {
-    // 存储不可用时静默降级（练习记录在服务端，本地缓存只是优化）
-  }
-}
-
-function hydrateLocal(key: scope.ScopeKey): void {
-  try {
-    const raw = localStorage.getItem(scope.quizCacheKey(key));
-    if (!raw) return;
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) history = parsed as QuizHistoryItem[];
-  } catch {
-    // 缓存坏了就用空视图，不阻断
-  }
+/** 写入或更新一条历史项（本地先行，服务端历史刷新后会覆盖） */
+function upsertLocalItem(item: QuizHistoryItem): void {
+  const history = store.getState().history;
+  const idx = history.findIndex((h) => h.attemptId === item.attemptId);
+  const next =
+    idx >= 0 ? history.map((h, i) => (i === idx ? item : h)) : [item, ...history];
+  store.setState({ ...store.getState(), history: next });
 }
 
 /** 登出/切换账号时重置视图（避免跨账号看到他人练习记录） */
 export function reset(): void {
-  history = [];
-  historyLoaded = false;
-  historyOffline = false;
-  boundScope = null;
-  rebuild();
+  store.setState(emptyState());
+  store.clearScope();
 }
 
 export function subscribe(cb: () => void): () => void {
-  listeners.add(cb);
-  return () => listeners.delete(cb);
+  return store.subscribe(cb);
 }
 
 export function getHistoryView(): QuizHistoryView {
-  return view;
+  return store.getView();
 }
 
-/** 绑定账号 scope：换账号即重置并从本地缓存预热（离线也能看到历史） */
+/** 绑定账号 scope（同 key 幂等） */
 export function bindScope(scopeKey: scope.ScopeKey): void {
-  if (boundScope === scopeKey) return;
-  boundScope = scopeKey;
-  history = [];
-  historyLoaded = false;
-  historyOffline = false;
-  hydrateLocal(scopeKey);
-  rebuild();
-}
-
-/** 写入或更新一条历史项（本地先行，服务端历史刷新后会覆盖） */
-function upsertLocalItem(item: QuizHistoryItem): void {
-  const idx = history.findIndex((h) => h.attemptId === item.attemptId);
-  if (idx >= 0) history = history.map((h, i) => (i === idx ? item : h));
-  else history = [item, ...history];
+  store.bindScope(scopeKey);
 }
 
 /** 出题：① 只拿题干与选项 */
@@ -177,13 +167,11 @@ export async function generateQuiz(input: {
       body: JSON.stringify(input),
     });
     if (!res.ok) {
-      const body = await res.json().catch(() => null) as { error?: string } | null;
-      historyOffline = true;
-      rebuild();
-      return { ok: false, error: body?.error || '出题失败，请稍后重试' };
+      store.setState({ ...store.getState(), offline: true });
+      return { ok: false, error: await extractErrorMessage(res, '出题失败，请稍后重试') };
     }
     const data = await res.json() as QuizAttemptView;
-    historyOffline = false;
+    store.setState({ ...store.getState(), offline: false });
     upsertLocalItem({
       attemptId: data.attemptId,
       topic: input.topic,
@@ -195,12 +183,10 @@ export async function generateQuiz(input: {
       completedAt: null,
       review: data.review || {},
     });
-    persist();
-    rebuild();
+    store.persistNow();
     return { ok: true, data };
   } catch {
-    historyOffline = true;
-    rebuild();
+    store.setState({ ...store.getState(), offline: true });
     return { ok: false, error: '网络异常，出题未完成' };
   }
 }
@@ -218,6 +204,7 @@ export async function submitAnswers(
     });
     const body = await res.json().catch(() => null) as any;
     if (!res.ok) {
+      // body 还要取 code，不能交给 extractErrorMessage 二次消费响应体
       return {
         ok: false,
         error: body?.error || '提交失败，请稍后重试',
@@ -225,7 +212,7 @@ export async function submitAnswers(
       };
     }
     // 本地历史同步为已完成（权威仍在服务端，此处仅免得等一次 round-trip）
-    const existing = history.find((h) => h.attemptId === attemptId);
+    const existing = store.getState().history.find((h) => h.attemptId === attemptId);
     if (existing) {
       upsertLocalItem({
         ...existing,
@@ -234,8 +221,7 @@ export async function submitAnswers(
         completedAt: new Date().toISOString(),
       });
     }
-    persist();
-    rebuild();
+    store.persistNow();
     return { ok: true, results: body.results as QuizGradeResult[], summary: body.summary };
   } catch {
     return { ok: false, error: '网络异常，提交未完成' };
@@ -248,21 +234,23 @@ export async function refreshHistory(): Promise<void> {
     const res = await fetch('/api/quiz/attempts');
     if (!res.ok) throw new Error('history failed');
     const body = await res.json() as { attempts: QuizHistoryItem[] };
-    history = Array.isArray(body.attempts) ? body.attempts : [];
-    historyLoaded = true;
-    historyOffline = false;
-    persist();
+    store.setState({
+      ...store.getState(),
+      history: Array.isArray(body.attempts) ? body.attempts : [],
+      loaded: true,
+      offline: false,
+    });
+    store.persistNow();
   } catch {
-    historyOffline = true;
     // 本地缓存保留：history 数组不动，只更新 offline 标记
+    store.setState({ ...store.getState(), offline: true });
   }
-  rebuild();
 }
 
 /** 清除已提交的作答草稿（照 chat-draft 先例：成功后必须清） */
 export function clearDraft(attemptId: string): void {
   try {
-    localStorage.removeItem(`${scope.quizCacheKey(boundScope ?? undefined)}:draft:${attemptId}`);
+    localStorage.removeItem(`${scope.quizCacheKey(store.getBoundScope() ?? undefined)}:draft:${attemptId}`);
   } catch {
     // 忽略
   }
@@ -272,7 +260,7 @@ export function clearDraft(attemptId: string): void {
 export function saveDraft(attemptId: string, answers: Record<string, QuizSubmission>): void {
   try {
     localStorage.setItem(
-      `${scope.quizCacheKey(boundScope ?? undefined)}:draft:${attemptId}`,
+      `${scope.quizCacheKey(store.getBoundScope() ?? undefined)}:draft:${attemptId}`,
       JSON.stringify(answers),
     );
   } catch {
@@ -282,7 +270,7 @@ export function saveDraft(attemptId: string, answers: Record<string, QuizSubmiss
 
 export function loadDraft(attemptId: string): Partial<Record<string, QuizSubmission>> {
   try {
-    const raw = localStorage.getItem(`${scope.quizCacheKey(boundScope ?? undefined)}:draft:${attemptId}`);
+    const raw = localStorage.getItem(`${scope.quizCacheKey(store.getBoundScope() ?? undefined)}:draft:${attemptId}`);
     if (!raw) return {};
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === 'object' ? parsed : {};

@@ -6,6 +6,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { Tooltip } from '../../ui/Tooltip';
+import { formatDate } from '../../../lib/format';
 import { AdminOrder } from '../types';
 
 export const AdminOrdersTab: React.FC = () => {
@@ -130,7 +131,7 @@ export const AdminOrdersTab: React.FC = () => {
                   </td>
                   <td className="py-3 px-3 text-slate-500">{o.duration_days} 天</td>
                   <td className="py-3 px-4 text-slate-500">
-                    {new Date(o.created_at).toLocaleDateString('zh-CN')}
+                    {formatDate(o.created_at)}
                   </td>
                 </tr>
               ))
