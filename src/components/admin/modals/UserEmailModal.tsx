@@ -61,7 +61,7 @@ export const UserEmailModal: React.FC<UserEmailModalProps> = ({
     >
       <div className="p-5">
         <div className="flex items-center gap-2 mb-1">
-          <div className="p-1.5 rounded-lg bg-sky-500/10 text-sky-500">
+          <div className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-500">
             <Mail className="w-4 h-4" />
           </div>
           <h4 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
@@ -86,7 +86,7 @@ export const UserEmailModal: React.FC<UserEmailModalProps> = ({
               value={newEmail}
               onChange={(e) => setNewEmail(e.target.value)}
               placeholder="new@example.com"
-              className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500 font-mono"
+              className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
             />
           </div>
 
@@ -101,7 +101,7 @@ export const UserEmailModal: React.FC<UserEmailModalProps> = ({
             <button
               type="submit"
               disabled={submittingEmail}
-              className="px-4 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-medium shadow-sm transition-all cursor-pointer disabled:opacity-50"
+              className="px-4 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium shadow-sm transition-all cursor-pointer disabled:opacity-50"
             >
               {submittingEmail ? '提交中...' : '确认修改邮箱'}
             </button>
