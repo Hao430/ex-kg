@@ -182,10 +182,10 @@ export const BoardLibraryModal: React.FC<BoardLibraryModalProps> = ({
           <div className="flex items-center gap-2">
             <LayoutGrid className="w-4 h-4 text-indigo-400" />
             <span className="text-sm font-semibold tracking-wide">画板库</span>
-            <span className="text-[10px] text-slate-500 px-1.5 py-0.5 rounded bg-slate-800/80">
+            <span className="text-xxs text-slate-500 px-1.5 py-0.5 rounded bg-slate-800/80">
               {boards.length} 个画板 · {folders.length} 个分组
             </span>
-            {foldersOffline && <span className="text-[10px] text-amber-400">离线</span>}
+            {foldersOffline && <span className="text-xxs text-amber-400">离线</span>}
           </div>
           <button
             id="board-library-close-btn"
@@ -203,12 +203,12 @@ export const BoardLibraryModal: React.FC<BoardLibraryModalProps> = ({
             <button id="board-library-folder-all" onClick={() => setFolderSel('all')} className={sidebarBtn(folderSel === 'all')}>
               <LayoutGrid className="w-3.5 h-3.5 shrink-0" />
               <span className="truncate flex-1 text-left">全部画板</span>
-              <span className="text-[10px] text-slate-500">{activeBoards.length}</span>
+              <span className="text-xxs text-slate-500">{activeBoards.length}</span>
             </button>
             <button id="board-library-folder-none" onClick={() => setFolderSel('none')} className={sidebarBtn(folderSel === 'none')}>
               <Inbox className="w-3.5 h-3.5 shrink-0" />
               <span className="truncate flex-1 text-left">未分组</span>
-              <span className="text-[10px] text-slate-500">{ungroupedCount}</span>
+              <span className="text-xxs text-slate-500">{ungroupedCount}</span>
             </button>
             {folders.map((f) => (
               <div key={f.id} className={`group flex items-center rounded-lg ${folderSel === f.id ? 'bg-indigo-600/20' : 'hover:bg-slate-800/60'}`}>
@@ -221,7 +221,7 @@ export const BoardLibraryModal: React.FC<BoardLibraryModalProps> = ({
                 >
                   <FolderIcon className="w-3.5 h-3.5 shrink-0" />
                   <span className="truncate flex-1 text-left">{f.name}</span>
-                  <span className="text-[10px] text-slate-500">{folderCount(f.id)}</span>
+                  <span className="text-xxs text-slate-500">{folderCount(f.id)}</span>
                 </button>
                 <button
                   id={`board-library-folder-rename-${f.id}`}
@@ -272,7 +272,7 @@ export const BoardLibraryModal: React.FC<BoardLibraryModalProps> = ({
                   onClick={() => setSort((s) => (s === 'recent' ? 'name' : 'recent'))}
                   className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-medium bg-slate-800/70 text-slate-300 hover:bg-slate-700 transition-colors shrink-0"
                 >
-                  {sort === 'recent' ? <Clock className="w-3.5 h-3.5" /> : <span className="text-[13px] leading-none">A↕</span>}
+                  {sort === 'recent' ? <Clock className="w-3.5 h-3.5" /> : <span className="text-sm leading-none">A↕</span>}
                   {sort === 'recent' ? '最近' : '名称'}
                 </button>
                 <button
@@ -311,7 +311,7 @@ export const BoardLibraryModal: React.FC<BoardLibraryModalProps> = ({
                   type="error"
                   unstyled
                   icon={null}
-                  className="px-3 py-1.5 rounded-lg text-[11px] bg-rose-950/40 border border-rose-800/60 text-rose-300"
+                  className="px-3 py-1.5 rounded-lg text-xxs bg-rose-950/40 border border-rose-800/60 text-rose-300"
                 >
                   {statusMsg}
                 </StatusBanner>
@@ -381,13 +381,13 @@ export const BoardLibraryModal: React.FC<BoardLibraryModalProps> = ({
                               {b.name}
                             </span>
                             {b.isArchived && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 shrink-0">已归档</span>
+                              <span className="text-xxs px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 shrink-0">已归档</span>
                             )}
                             {shared && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-500 shrink-0">共享</span>
+                              <span className="text-xxs px-1.5 py-0.5 rounded bg-slate-800 text-slate-500 shrink-0">共享</span>
                             )}
                           </div>
-                          <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-500">
+                          <div className="mt-0.5 flex items-center gap-1.5 text-xxs text-slate-500">
                             <span>{b.nodeCount || 0} 个节点</span>
                             {formatUpdatedAt(b.updatedAt) && (
                               <>
@@ -409,7 +409,7 @@ export const BoardLibraryModal: React.FC<BoardLibraryModalProps> = ({
                               onMoveBoard(b.id, e.target.value || null);
                             }}
                             aria-label="移动到分组"
-                            className="shrink-0 max-w-[92px] text-[11px] bg-slate-800/70 border border-slate-700/60 rounded-lg px-1.5 py-1 text-slate-300 outline-none focus:border-indigo-600/70"
+                            className="shrink-0 max-w-[92px] text-xxs bg-slate-800/70 border border-slate-700/60 rounded-lg px-1.5 py-1 text-slate-300 outline-none focus:border-indigo-600/70"
                           >
                             <option value="">未分组</option>
                             {folders.map((f) => (

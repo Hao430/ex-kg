@@ -337,7 +337,7 @@ export const Topbar: React.FC<TopbarProps> = ({
                 <div className="flex items-center gap-1.5 px-2 py-1 rounded-xl bg-amber-500/15 dark:bg-amber-500/20 border border-amber-500/40 text-amber-700 dark:text-amber-300 text-xs font-semibold shadow-2xs cursor-help animate-pulse">
                   <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
                   <span>{nodeCount} 节点</span>
-                  <span className="hidden xl:inline text-[10px] font-normal px-1 py-0.2 rounded bg-amber-200/60 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200">
+                  <span className="hidden xl:inline text-xxs font-normal px-1 py-0.2 rounded bg-amber-200/60 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200">
                     建议导出分支
                   </span>
                 </div>
@@ -350,7 +350,7 @@ export const Topbar: React.FC<TopbarProps> = ({
                 <div className="hidden lg:flex items-center gap-1.5 px-2 py-1 rounded-xl bg-slate-100/80 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 text-slate-500 dark:text-slate-400 text-xs font-medium cursor-default">
                   <Network className="w-3 h-3 text-slate-400 dark:text-slate-500 shrink-0" />
                   <span>{nodeCount}</span>
-                  <span className="text-[10px] text-slate-400 dark:text-slate-500">节点</span>
+                  <span className="text-xxs text-slate-400 dark:text-slate-500">节点</span>
                 </div>
               </Tooltip>
             )}
@@ -441,7 +441,7 @@ export const Topbar: React.FC<TopbarProps> = ({
 
           {showCanvasMoreMenu && (
             <div className="absolute top-full right-0 mt-2 w-52 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-[0_16px_40px_rgba(0,0,0,0.12)] dark:shadow-[0_20px_50px_rgba(0,0,0,0.6)] p-1.5 z-50 animate-in fade-in zoom-in-95">
-              <div className="px-2.5 py-1 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+              <div className="px-2.5 py-1 text-xxs font-semibold text-slate-400 uppercase tracking-wider">
                 画布与导出
               </div>
 
@@ -479,7 +479,7 @@ export const Topbar: React.FC<TopbarProps> = ({
                 <Link2 className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
                 <div>
                   <div className="font-medium">分享链接</div>
-                  <div className="text-[10px] text-slate-400">生成只读分享页，访客可一键克隆</div>
+                  <div className="text-xxs text-slate-400">生成只读分享页，访客可一键克隆</div>
                 </div>
               </button>
 
@@ -493,7 +493,7 @@ export const Topbar: React.FC<TopbarProps> = ({
                 <ImageDown className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
                 <div>
                   <div className="font-medium">导出 PNG 图片</div>
-                  <div className="text-[10px] text-slate-400">可分享的思维全景图（含水印）</div>
+                  <div className="text-xxs text-slate-400">可分享的思维全景图（含水印）</div>
                 </div>
               </button>
 
@@ -507,7 +507,7 @@ export const Topbar: React.FC<TopbarProps> = ({
                 <FileText className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
                 <div>
                   <div className="font-medium">导出 Markdown</div>
-                  <div className="text-[10px] text-slate-400">结构化研报与思维大纲</div>
+                  <div className="text-xxs text-slate-400">结构化研报与思维大纲</div>
                 </div>
               </button>
 
@@ -521,7 +521,7 @@ export const Topbar: React.FC<TopbarProps> = ({
                 <FileJson className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
                 <div>
                   <div className="font-medium">导出 JSON 备份</div>
-                  <div className="text-[10px] text-slate-400">完整节点与思维连接状态</div>
+                  <div className="text-xxs text-slate-400">完整节点与思维连接状态</div>
                 </div>
               </button>
 
@@ -535,7 +535,7 @@ export const Topbar: React.FC<TopbarProps> = ({
                 <FileUp className="w-4 h-4 text-cyan-600 dark:text-cyan-400 shrink-0" />
                 <div>
                   <div className="font-medium">导入 JSON 备份</div>
-                  <div className="text-[10px] text-slate-400">从已导出的备份恢复为新画板</div>
+                  <div className="text-xxs text-slate-400">从已导出的备份恢复为新画板</div>
                 </div>
               </button>
 
@@ -569,7 +569,7 @@ export const Topbar: React.FC<TopbarProps> = ({
               >
                 <Crown className="w-3.5 h-3.5 text-amber-500 fill-amber-500/30 shrink-0" />
                 <span className="font-bold tracking-tight">VIP</span>
-                <span className="text-[10px] font-normal opacity-85 hidden sm:inline text-amber-600 dark:text-amber-400">
+                <span className="text-xxs font-normal opacity-85 hidden sm:inline text-amber-600 dark:text-amber-400">
                   尊享版
                 </span>
                 <Sparkles className="w-2.5 h-2.5 text-amber-500 shrink-0 ml-0.5 animate-pulse" />

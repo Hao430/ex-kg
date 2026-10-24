@@ -166,7 +166,7 @@ export const AdminDashboardModal: React.FC = () => {
             <MessageSquarePlus className="w-3.5 h-3.5" />
             反馈工单
             {pendingTickets > 0 && (
-              <span className="min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center">
+              <span className="min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-xxs font-bold flex items-center justify-center">
                 {pendingTickets}
               </span>
             )}

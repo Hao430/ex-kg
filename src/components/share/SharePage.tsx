@@ -147,7 +147,7 @@ const SharePageInner: React.FC<{ shareCode: string }> = ({ shareCode }) => {
           </div>
           {/* 底部品牌传播条：CTA 点击记录克隆意图（Spec K6/B1），注册/登录后自动克隆该画布 */}
           <footer className="px-4 sm:px-5 py-3 border-t border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/80 backdrop-blur flex items-center justify-between gap-3">
-            <div className="text-[11px] text-slate-400">
+            <div className="text-xxs text-slate-400">
               由 枝想 生成
               <span className="hidden sm:inline"> · 已被浏览 {state.viewCount} 次</span>
             </div>
@@ -170,7 +170,7 @@ const SharePageInner: React.FC<{ shareCode: string }> = ({ shareCode }) => {
           href="https://beian.miit.gov.cn/"
           target="_blank"
           rel="noopener noreferrer"
-          className="text-[11px] text-slate-400 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+          className="text-xxs text-slate-400 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
         >
           湘ICP备2025125191号-2
         </a>

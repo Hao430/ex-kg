@@ -214,14 +214,14 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
                   <div key={f.id} className="rounded-xl border border-slate-800 bg-slate-950/50 p-3.5 space-y-2">
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
-                        <span className="text-[11px] font-medium text-slate-300 bg-slate-800/80 rounded-md px-2 py-0.5">
+                        <span className="text-xxs font-medium text-slate-300 bg-slate-800/80 rounded-md px-2 py-0.5">
                           {typeLabel}
                         </span>
-                        <span className={`text-[11px] border rounded-md px-2 py-0.5 ${meta.className}`}>
+                        <span className={`text-xxs border rounded-md px-2 py-0.5 ${meta.className}`}>
                           {meta.label}
                         </span>
                       </div>
-                      <span className="text-[11px] text-slate-500 flex items-center gap-1">
+                      <span className="text-xxs text-slate-500 flex items-center gap-1">
                         <Clock className="w-3 h-3" />
                         {formatTime(f.created_at)}
                       </span>
@@ -229,11 +229,11 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
                     <p className="text-xs text-slate-300 whitespace-pre-wrap break-words">{f.content}</p>
                     {f.admin_reply ? (
                       <div className="rounded-lg bg-indigo-950/40 border border-indigo-900/50 p-2.5">
-                        <div className="text-[11px] font-semibold text-indigo-300 mb-1">官方回复</div>
+                        <div className="text-xxs font-semibold text-indigo-300 mb-1">官方回复</div>
                         <p className="text-xs text-slate-200 whitespace-pre-wrap break-words">{f.admin_reply}</p>
                       </div>
                     ) : (
-                      <p className="text-[11px] text-slate-500">暂无回复，我们会尽快处理。</p>
+                      <p className="text-xxs text-slate-500">暂无回复，我们会尽快处理。</p>
                     )}
                   </div>
                 );
@@ -278,7 +278,7 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
                         <Icon className={`w-4 h-4 mt-0.5 flex-shrink-0 ${isSelected ? 'text-indigo-400' : 'text-slate-400'}`} />
                         <div>
                           <div className="text-xs font-semibold text-slate-200">{t.label}</div>
-                          <div className="text-[11px] text-slate-500 leading-tight mt-0.5">{t.desc}</div>
+                          <div className="text-xxs text-slate-500 leading-tight mt-0.5">{t.desc}</div>
                         </div>
                       </button>
                     );
@@ -316,7 +316,7 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
               <div className="space-y-1.5">
                 <label htmlFor="feedback-content-input" className="text-xs font-medium text-slate-300 flex items-center justify-between">
                   <span>详细描述</span>
-                  <span className="text-slate-500 text-[11px]">{content.length} / 2000 字</span>
+                  <span className="text-slate-500 text-xxs">{content.length} / 2000 字</span>
                 </label>
                 <textarea
                   id="feedback-content-input"
@@ -333,7 +333,7 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({
               <div className="space-y-1.5">
                 <label htmlFor="feedback-contact-input" className="text-xs font-medium text-slate-300 flex items-center justify-between">
                   <span>联系方式 (选填)</span>
-                  <span className="text-slate-500 text-[11px]">方便我们针对反馈向您沟通进展</span>
+                  <span className="text-slate-500 text-xxs">方便我们针对反馈向您沟通进展</span>
                 </label>
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">

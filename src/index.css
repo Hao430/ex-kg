@@ -1,5 +1,12 @@
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
+
+/* 微字号统一档（风格一致性 #10）：收敛原 text-[9px]/[10px]/[11px] 任意值。
+   11px 为微文本可读性下限；刻意不配 --line-height，与原任意值一样继承父级行高。 */
+@theme {
+  --text-xxs: 11px;
+}
+
 @import "@xyflow/react/dist/style.css";
 
 /* High-end typography & modern baseline */

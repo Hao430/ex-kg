@@ -97,7 +97,7 @@ export const UserDropdown: React.FC<UserDropdownProps> = ({
           </span>
 
           <span
-            className={`hidden sm:inline px-1.5 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider ${
+            className={`hidden sm:inline px-1.5 py-0.5 rounded-md text-xxs font-bold uppercase tracking-wider ${
               user.role === 'admin'
                 ? 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300'
                 : isVip
@@ -133,11 +133,11 @@ export const UserDropdown: React.FC<UserDropdownProps> = ({
                 <div className="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">
                   {user.name || '深度探索者'}
                 </div>
-                <div className="text-[11px] text-slate-400 truncate">{user.email}</div>
+                <div className="text-xxs text-slate-400 truncate">{user.email}</div>
               </div>
             </div>
 
-            <div className="mt-2.5 pt-2 border-t border-slate-200/60 dark:border-slate-800/80 flex items-center justify-between text-[10px]">
+            <div className="mt-2.5 pt-2 border-t border-slate-200/60 dark:border-slate-800/80 flex items-center justify-between text-xxs">
               <span className="text-slate-500">账户权限：</span>
               {user.role === 'admin' ? (
                 <span className="font-semibold text-purple-600 dark:text-purple-400 flex items-center gap-1">
@@ -166,7 +166,7 @@ export const UserDropdown: React.FC<UserDropdownProps> = ({
               <User className="w-4 h-4 text-indigo-500 shrink-0" />
               <div>
                 <div className="font-medium">个人中心</div>
-                <div className="text-[10px] text-slate-400">修改头像、昵称与账户信息</div>
+                <div className="text-xxs text-slate-400">修改头像、昵称与账户信息</div>
               </div>
             </button>
 
@@ -182,7 +182,7 @@ export const UserDropdown: React.FC<UserDropdownProps> = ({
               <Share2 className="w-4 h-4 text-sky-500 shrink-0" />
               <div>
                 <div className="font-medium">我的分享</div>
-                <div className="text-[10px] text-slate-400">管理生效中的分享链接</div>
+                <div className="text-xxs text-slate-400">管理生效中的分享链接</div>
               </div>
             </button>
 
@@ -198,7 +198,7 @@ export const UserDropdown: React.FC<UserDropdownProps> = ({
               <Crown className="w-4 h-4 text-amber-500 shrink-0" />
               <div>
                 <div className="font-medium">{isVip ? 'VIP 会员权益' : '开通 VIP 会员'}</div>
-                <div className="text-[10px] text-slate-400">
+                <div className="text-xxs text-slate-400">
                   {isVip ? '查看特权与续费周期' : '尊享无限画板与深度推演'}
                 </div>
               </div>
@@ -216,7 +216,7 @@ export const UserDropdown: React.FC<UserDropdownProps> = ({
               <MessageSquarePlus className="w-4 h-4 text-emerald-500 shrink-0" />
               <div>
                 <div className="font-medium">提交反馈</div>
-                <div className="text-[10px] text-slate-400">提出功能建议或问题报错</div>
+                <div className="text-xxs text-slate-400">提出功能建议或问题报错</div>
               </div>
             </button>
 
@@ -233,7 +233,7 @@ export const UserDropdown: React.FC<UserDropdownProps> = ({
                 <ShieldAlert className="w-4 h-4 text-purple-600 dark:text-purple-400 shrink-0" />
                 <div>
                   <div className="font-medium">运营管理台</div>
-                  <div className="text-[10px] text-purple-500/70">模型配置与用户权限</div>
+                  <div className="text-xxs text-purple-500/70">模型配置与用户权限</div>
                 </div>
               </button>
             )}

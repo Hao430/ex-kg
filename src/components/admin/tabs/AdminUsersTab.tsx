@@ -194,13 +194,13 @@ export const AdminUsersTab: React.FC<AdminUsersTabProps> = ({
                   <tr key={u.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40">
                     <td className="py-3 px-4">
                       <div className="font-medium text-slate-900 dark:text-slate-100">{u.name}</div>
-                      <div className="text-[11px] text-slate-400 font-mono truncate max-w-[180px]">
+                      <div className="text-xxs text-slate-400 font-mono truncate max-w-[180px]">
                         {u.email}
                       </div>
                     </td>
                     <td className="py-3 px-3">
                       <span
-                        className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                        className={`px-2 py-0.5 rounded text-xxs font-semibold ${
                           u.role === 'admin'
                             ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/80 dark:text-rose-300'
                             : u.role === 'vip'
@@ -213,11 +213,11 @@ export const AdminUsersTab: React.FC<AdminUsersTabProps> = ({
                     </td>
                     <td className="py-3 px-3">
                       {u.is_active !== false ? (
-                        <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 text-[11px]">
+                        <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 text-xxs">
                           <CheckCircle2 className="w-3.5 h-3.5" /> 正常
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 text-rose-500 text-[11px]">
+                        <span className="inline-flex items-center gap-1 text-rose-500 text-xxs">
                           <XCircle className="w-3.5 h-3.5" /> 已冻结
                         </span>
                       )}
@@ -233,7 +233,7 @@ export const AdminUsersTab: React.FC<AdminUsersTabProps> = ({
                             <Crown className="w-3.5 h-3.5" /> 剩余 {remainingDays} 天
                           </span>
                           {u.vip_expires_at && (
-                            <div className="text-[10px] text-slate-400">
+                            <div className="text-xxs text-slate-400">
                               至 {formatDate(u.vip_expires_at)}
                             </div>
                           )}

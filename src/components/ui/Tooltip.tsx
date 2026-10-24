@@ -74,11 +74,11 @@ export const Tooltip: React.FC<TooltipProps> = ({
       {isVisible && (
         <div
           role="tooltip"
-          className={`absolute ${positionClasses[side]} z-50 pointer-events-none flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium text-white dark:text-slate-100 bg-slate-900/95 dark:bg-slate-800/95 backdrop-blur-md rounded-lg shadow-xl border border-slate-700/60 dark:border-slate-700 whitespace-nowrap animate-in fade-in zoom-in-95 duration-100`}
+          className={`absolute ${positionClasses[side]} z-50 pointer-events-none flex items-center gap-1.5 px-2.5 py-1 text-xxs font-medium text-white dark:text-slate-100 bg-slate-900/95 dark:bg-slate-800/95 backdrop-blur-md rounded-lg shadow-xl border border-slate-700/60 dark:border-slate-700 whitespace-nowrap animate-in fade-in zoom-in-95 duration-100`}
         >
           <span>{content}</span>
           {shortcut && (
-            <kbd className="px-1.5 py-0.2 text-[9px] font-mono font-semibold bg-slate-800 dark:bg-slate-700 text-slate-300 dark:text-slate-200 rounded border border-slate-700 dark:border-slate-600">
+            <kbd className="px-1.5 py-0.2 text-xxs font-mono font-semibold bg-slate-800 dark:bg-slate-700 text-slate-300 dark:text-slate-200 rounded border border-slate-700 dark:border-slate-600">
               {shortcut}
             </kbd>
           )}

@@ -61,7 +61,7 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
           <div className="text-2xl font-bold text-slate-900 dark:text-white">
             {overview?.totalUsers ?? '-'}
           </div>
-          <div className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
+          <div className="text-xxs text-slate-400 dark:text-slate-500 mt-1">
             近7日活跃: {overview?.activeUsers7d ?? 0}
           </div>
         </div>
@@ -70,7 +70,7 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
           <div className="text-2xl font-bold text-indigo-600 dark:text-indigo-400">
             {overview?.vipUsers ?? '-'}
           </div>
-          <div className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
+          <div className="text-xxs text-slate-400 dark:text-slate-500 mt-1">
             占比: {overview?.totalUsers ? Math.round(((overview.vipUsers || 0) / overview.totalUsers) * 100) : 0}%
           </div>
         </div>
@@ -79,14 +79,14 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
           <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
             {(overview?.todayTokens || 0).toLocaleString()}
           </div>
-          <div className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">实时计费扣减</div>
+          <div className="text-xxs text-slate-400 dark:text-slate-500 mt-1">实时计费扣减</div>
         </div>
         <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200/80 dark:border-slate-700/80 shadow-xs">
           <div className="text-xs text-slate-500 dark:text-slate-400 mb-1">当月消耗 Token</div>
           <div className="text-2xl font-bold text-slate-900 dark:text-white">
             {(overview?.monthlyTokens || 0).toLocaleString()}
           </div>
-          <div className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">全站累计额度</div>
+          <div className="text-xxs text-slate-400 dark:text-slate-500 mt-1">全站累计额度</div>
         </div>
       </div>
 

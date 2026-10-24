@@ -152,9 +152,9 @@ export const NoteCardNode: React.FC<NodeProps> = ({ id, data, selected }) => {
       )}
 
       {/* Bottom Guidance & Branch Action Bar */}
-      <div className="mt-2.5 pt-2 border-t border-amber-200/60 dark:border-amber-900/50 flex items-center justify-between text-[10px] text-amber-800/80 dark:text-amber-400/80 select-none">
+      <div className="mt-2.5 pt-2 border-t border-amber-200/60 dark:border-amber-900/50 flex items-center justify-between text-xxs text-amber-800/80 dark:text-amber-400/80 select-none">
         <Tooltip content="左侧连线端点：作为上游结论的落脚点" side="bottom">
-          <span className="flex items-center gap-1 text-[9px] text-amber-700/70 dark:text-amber-400/70 font-mono tracking-tight cursor-help">
+          <span className="flex items-center gap-1 text-xxs text-amber-700/70 dark:text-amber-400/70 font-mono tracking-tight cursor-help">
             <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block" />
             结论下游
           </span>
@@ -178,7 +178,7 @@ export const NoteCardNode: React.FC<NodeProps> = ({ id, data, selected }) => {
         )}
 
         <Tooltip content="右侧连线端点：连线至后续便签或 AI 卡片" side="bottom">
-          <span className="flex items-center gap-1 text-[9px] text-amber-700/70 dark:text-amber-400/70 font-mono tracking-tight cursor-help">
+          <span className="flex items-center gap-1 text-xxs text-amber-700/70 dark:text-amber-400/70 font-mono tracking-tight cursor-help">
             前置假设
             <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block" />
           </span>

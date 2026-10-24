@@ -320,7 +320,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                         setView('forgot');
                         setError(null);
                       }}
-                      className="font-normal text-[11px] text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
+                      className="font-normal text-xxs text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
                     >
                       忘记密码?
                     </button>

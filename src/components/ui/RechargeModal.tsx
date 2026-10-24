@@ -208,7 +208,7 @@ export const RechargeModal: React.FC<RechargeModalProps> = ({
                   升级 Pro 会员订阅
                 </h3>
                 {isVip && (
-                  <span className="px-2 py-0.5 text-[10px] font-semibold bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300 rounded-full">
+                  <span className="px-2 py-0.5 text-xxs font-semibold bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300 rounded-full">
                     已是会员
                   </span>
                 )}
@@ -268,7 +268,7 @@ export const RechargeModal: React.FC<RechargeModalProps> = ({
                 >
                   {plan.badge && (
                     <div
-                      className={`absolute -top-2.5 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full text-[10px] font-semibold tracking-wide uppercase shadow-sm flex items-center gap-1 ${
+                      className={`absolute -top-2.5 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full text-xxs font-semibold tracking-wide uppercase shadow-sm flex items-center gap-1 ${
                         plan.popular
                           ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-white'
                           : 'bg-indigo-600 text-white'
@@ -284,7 +284,7 @@ export const RechargeModal: React.FC<RechargeModalProps> = ({
                   <div className="text-xl font-extrabold text-slate-900 dark:text-white mb-1">
                     {plan.price}
                   </div>
-                  <div className="text-[11px] text-slate-400 dark:text-slate-500">
+                  <div className="text-xxs text-slate-400 dark:text-slate-500">
                     有效期 {plan.durationDays} 天
                   </div>
                 </div>
@@ -296,7 +296,7 @@ export const RechargeModal: React.FC<RechargeModalProps> = ({
           <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-4 border border-slate-100 dark:border-slate-800 mb-5">
             <div className="text-xs font-medium text-slate-700 dark:text-slate-300 mb-3 flex items-center justify-between">
               <span>会员权益对比</span>
-              <span className="text-[11px] text-indigo-600 dark:text-indigo-400 font-normal">
+              <span className="text-xxs text-indigo-600 dark:text-indigo-400 font-normal">
                 {currentPlan.desc}
               </span>
             </div>
@@ -304,12 +304,12 @@ export const RechargeModal: React.FC<RechargeModalProps> = ({
             {/* Spec K7（D3）：真实使用量（体验版；数据来自 /api/quota，与后端拦截同口径） */}
             {quota && quota.plan === 'trial' && (
               <div className="flex flex-wrap items-center gap-2 mb-3">
-                <span className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900/60 border border-slate-200/60 dark:border-slate-800 text-[11px] text-slate-600 dark:text-slate-300">
+                <span className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900/60 border border-slate-200/60 dark:border-slate-800 text-xxs text-slate-600 dark:text-slate-300">
                   画板 <span className="font-semibold text-slate-900 dark:text-white">{quota.board.used}</span>
                   <span className="text-slate-400"> / {quota.board.limit ?? '∞'}</span>
                 </span>
                 {quota.node && (
-                  <span className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900/60 border border-slate-200/60 dark:border-slate-800 text-[11px] text-slate-600 dark:text-slate-300">
+                  <span className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900/60 border border-slate-200/60 dark:border-slate-800 text-xxs text-slate-600 dark:text-slate-300">
                     当前画板节点 <span className="font-semibold text-slate-900 dark:text-white">{quota.node.used}</span>
                     <span className="text-slate-400"> / {quota.node.limit ?? '∞'}</span>
                   </span>
@@ -323,7 +323,7 @@ export const RechargeModal: React.FC<RechargeModalProps> = ({
                   <span className="w-2 h-2 rounded-full bg-slate-400" />
                   免费版
                 </div>
-                <ul className="space-y-1.5 text-[11px]">
+                <ul className="space-y-1.5 text-xxs">
                   <li className="flex items-center gap-1.5 text-slate-500">
                     <Layers className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                     最多创建 {boardLimit} 个独立画板
@@ -340,7 +340,7 @@ export const RechargeModal: React.FC<RechargeModalProps> = ({
                   <Crown className="w-3.5 h-3.5 text-amber-500 fill-amber-500 shrink-0" />
                   Pro 会员
                 </div>
-                <ul className="space-y-1.5 text-[11px]">
+                <ul className="space-y-1.5 text-xxs">
                   <li className="flex items-center gap-1.5 font-medium text-indigo-900 dark:text-indigo-200">
                     <Infinity className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />
                     无限画板数量（自由归档）
@@ -387,7 +387,7 @@ export const RechargeModal: React.FC<RechargeModalProps> = ({
                 <Spinner size="md" />
                 已跳转支付，等待支付完成…
               </span>
-              <span className="text-[11px] text-indigo-500 dark:text-indigo-300/80">
+              <span className="text-xxs text-indigo-500 dark:text-indigo-300/80">
                 完成付款后本弹窗将自动更新，无需其他操作
               </span>
             </div>
@@ -411,7 +411,7 @@ export const RechargeModal: React.FC<RechargeModalProps> = ({
             </button>
           )}
 
-          <div className="mt-4 flex items-center justify-center gap-4 text-[11px] text-slate-400">
+          <div className="mt-4 flex items-center justify-center gap-4 text-xxs text-slate-400">
             <span className="flex items-center gap-1">
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
               随时续费延续有效期

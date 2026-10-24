@@ -110,7 +110,7 @@ const MARKDOWN_COMPONENTS = {
     if (isInline) {
       return (
         <code
-          className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-indigo-700 dark:text-indigo-300 font-mono text-[11px] font-medium border border-slate-200/60 dark:border-slate-700"
+          className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-indigo-700 dark:text-indigo-300 font-mono text-xxs font-medium border border-slate-200/60 dark:border-slate-700"
           {...props}
         >
           {children}
@@ -254,7 +254,7 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
                   handleCitationClick(n);
                 }}
                 title={`查看来源 [${n}]`}
-                className="cursor-pointer select-none mx-0.5 px-1 rounded text-[9px] font-bold leading-none align-super bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-600 hover:text-white transition-colors"
+                className="cursor-pointer select-none mx-0.5 px-1 rounded text-xxs font-bold leading-none align-super bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-600 hover:text-white transition-colors"
               >
                 {n}
               </sup>
@@ -380,7 +380,7 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
             <span className="flex items-center justify-center w-5 h-5 rounded-md bg-indigo-500/15 text-indigo-600 dark:text-indigo-400">
               <Sparkles className="w-3 h-3 animate-pulse" />
             </span>
-            <span className="text-[11px] font-semibold text-indigo-900 dark:text-indigo-200 tracking-wide">
+            <span className="text-xxs font-semibold text-indigo-900 dark:text-indigo-200 tracking-wide">
               探索灵感
             </span>
           </div>
@@ -503,14 +503,14 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
           )}
 
           {nodeData.status === 'generating' && (
-            <span className="shrink-0 flex items-center gap-1.5 px-2 py-0.5 text-[10px] font-semibold rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-300 border border-indigo-500/25">
+            <span className="shrink-0 flex items-center gap-1.5 px-2 py-0.5 text-xxs font-semibold rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-300 border border-indigo-500/25">
               <Spinner size="xs" />
               <span>推演中</span>
             </span>
           )}
 
           {nodeData.status === 'idle' && currentAnswerText && (
-            <span className="shrink-0 flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20">
+            <span className="shrink-0 flex items-center gap-1 px-2 py-0.5 text-xxs font-medium rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20">
               <Check className="w-2.5 h-2.5 text-emerald-600 dark:text-emerald-400" />
               <span>就绪</span>
             </span>
@@ -566,7 +566,7 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
       {/* Sub-branch trigger pill if applicable */}
       {nodeData.branchTriggerPhrase && (
         <Tooltip content={`聚焦议题: ${nodeData.branchTriggerPhrase}`} side="top">
-          <div className="px-4 py-1.5 bg-indigo-50/60 dark:bg-indigo-950/40 border-b border-indigo-100 dark:border-indigo-900/50 text-[11px] text-indigo-700 dark:text-indigo-300 flex items-center gap-1.5 font-medium cursor-help">
+          <div className="px-4 py-1.5 bg-indigo-50/60 dark:bg-indigo-950/40 border-b border-indigo-100 dark:border-indigo-900/50 text-xxs text-indigo-700 dark:text-indigo-300 flex items-center gap-1.5 font-medium cursor-help">
             <span className="shrink-0">🐰 聚焦议题:</span>
             <span className="truncate italic">"{nodeData.branchTriggerPhrase}"</span>
           </div>
@@ -576,7 +576,7 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
       {/* Question Header (Single Q&A format) */}
       {hasQuestion && !nodeData.isCollapsed && (
         <div className="px-4 py-2.5 bg-slate-50/70 dark:bg-slate-900/50 border-b border-slate-100 dark:border-slate-800/80 flex items-start gap-2.5">
-          <span className="shrink-0 w-5 h-5 rounded-md bg-gradient-to-tr from-indigo-600 to-blue-600 text-white flex items-center justify-center text-[10px] font-bold mt-0.5 shadow-xs">
+          <span className="shrink-0 w-5 h-5 rounded-md bg-gradient-to-tr from-indigo-600 to-blue-600 text-white flex items-center justify-center text-xxs font-bold mt-0.5 shadow-xs">
             问
           </span>
           <Tooltip content={currentQuestionText} side="top">
@@ -627,7 +627,7 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
 
                 {/* Quick topic inspiration pills */}
                 <div className="flex flex-col gap-1.5 pt-2 border-t border-slate-100 dark:border-slate-800">
-                  <span className="text-[10px] text-slate-400 dark:text-slate-500 font-medium">✨ 或快速选择推荐议题探索：</span>
+                  <span className="text-xxs text-slate-400 dark:text-slate-500 font-medium">✨ 或快速选择推荐议题探索：</span>
                   <div className="flex flex-wrap gap-1.5">
                     {[
                       '什么是 AI Agent？与聊天机器人有何不同',
@@ -641,7 +641,7 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
                             setInitialInput(preset);
                             nodeActions?.sendMessage?.(id, preset);
                           }}
-                          className="nodrag text-[11px] px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/40 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 font-normal transition-colors text-left border border-indigo-100 dark:border-indigo-900/50 cursor-pointer"
+                          className="nodrag text-xxs px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/40 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 font-normal transition-colors text-left border border-indigo-100 dark:border-indigo-900/50 cursor-pointer"
                         >
                           {preset}
                         </button>
@@ -658,7 +658,7 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
 
             {/* Answer Content with Full Markdown and LaTeX Math Support */}
             {currentAnswerText ? (
-              <div className="text-[13px] leading-relaxed text-slate-800 dark:text-slate-200 select-text">
+              <div className="text-sm leading-relaxed text-slate-800 dark:text-slate-200 select-text">
                 <ReactMarkdown
                   remarkPlugins={REMARK_PLUGINS}
                   rehypePlugins={REHYPE_PLUGINS}
@@ -684,13 +684,13 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
                           <Globe className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />
                           <span>参考来源与事实索引 ({nodeData.grounding.sources.length})</span>
                           {nodeData.grounding.queries && nodeData.grounding.queries.length > 0 && (
-                            <span className="hidden sm:inline text-[10px] text-slate-500 dark:text-slate-400 font-normal truncate max-w-[200px]">
+                            <span className="hidden sm:inline text-xxs text-slate-500 dark:text-slate-400 font-normal truncate max-w-[200px]">
                               · 检索词: "{nodeData.grounding.queries[0]}"
                             </span>
                           )}
                         </div>
                         <div className="flex items-center gap-1 shrink-0 text-slate-400">
-                          <span className="text-[10px] font-normal">{showSources ? '收起' : '展开'}</span>
+                          <span className="text-xxs font-normal">{showSources ? '收起' : '展开'}</span>
                           {showSources ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                         </div>
                       </button>
@@ -722,19 +722,19 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
                                       : 'border-slate-200/70 dark:border-slate-700/70 hover:border-indigo-400 dark:hover:border-indigo-500 hover:shadow-xs'
                                   }`}
                                 >
-                                  <span className="shrink-0 w-4 h-4 rounded-md bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-mono text-[10px] font-bold flex items-center justify-center mt-0.5 group-hover:bg-indigo-600 group-hover:text-white transition-colors">
+                                  <span className="shrink-0 w-4 h-4 rounded-md bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-mono text-xxs font-bold flex items-center justify-center mt-0.5 group-hover:bg-indigo-600 group-hover:text-white transition-colors">
                                     {src.index}
                                   </span>
                                   <div className="flex-1 min-w-0">
-                                    <p className="text-[11px] font-medium text-slate-800 dark:text-slate-200 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 truncate leading-snug">
+                                    <p className="text-xxs font-medium text-slate-800 dark:text-slate-200 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 truncate leading-snug">
                                       {src.title}
                                     </p>
                                     {src.snippet && (
-                                      <p className="mt-0.5 text-[10px] text-slate-500 dark:text-slate-400 line-clamp-2 leading-snug">
+                                      <p className="mt-0.5 text-xxs text-slate-500 dark:text-slate-400 line-clamp-2 leading-snug">
                                         {src.snippet}
                                       </p>
                                     )}
-                                    <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-slate-400 dark:text-slate-500">
+                                    <div className="flex items-center gap-1.5 mt-0.5 text-xxs text-slate-400 dark:text-slate-500">
                                       <span className="truncate">{src.domain}</span>
                                       {isHttpLink && (
                                         <>
@@ -766,7 +766,7 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
                   <span>深度思考与推演中…</span>
                 </div>
                 {nodeData.enableWebSearch && (
-                  <div className="flex items-center gap-1 text-[10px] text-indigo-500/90 dark:text-indigo-400/90">
+                  <div className="flex items-center gap-1 text-xxs text-indigo-500/90 dark:text-indigo-400/90">
                     <Globe className="w-3 h-3" />
                     <span>实时联网搜索中，正在索引权威知识源…</span>
                   </div>
@@ -787,7 +787,7 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
                       {nodeData.errorMessage?.includes('登录') && (
                         <button
                           onClick={() => openAuthModal('signin')}
-                          className="nodrag flex items-center gap-1 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium transition-colors cursor-pointer shadow-sm text-[11px]"
+                          className="nodrag flex items-center gap-1 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium transition-colors cursor-pointer shadow-sm text-xxs"
                         >
                           <span>登录 / 注册</span>
                           <ArrowRight className="w-3 h-3" />
@@ -796,7 +796,7 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
                       {(nodeData.errorMessage?.includes('会员') || nodeData.errorMessage?.includes('充值') || nodeData.errorMessage?.includes('升级')) && (
                         <button
                           onClick={() => openRechargeModal()}
-                          className="nodrag flex items-center gap-1 px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-medium transition-colors cursor-pointer shadow-sm text-[11px]"
+                          className="nodrag flex items-center gap-1 px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-medium transition-colors cursor-pointer shadow-sm text-xxs"
                         >
                           <span>升级/续费会员</span>
                         </button>
@@ -804,7 +804,7 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
                       <Tooltip content="重新推演该问题" side="top">
                         <button
                           onClick={handleRetry}
-                          className="nodrag flex items-center gap-1 px-2.5 py-1 bg-slate-700 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 text-white rounded-lg font-medium transition-colors cursor-pointer text-[11px]"
+                          className="nodrag flex items-center gap-1 px-2.5 py-1 bg-slate-700 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 text-white rounded-lg font-medium transition-colors cursor-pointer text-xxs"
                         >
                           <RotateCw className="w-3 h-3" />
                           <span>重试</span>

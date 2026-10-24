@@ -273,7 +273,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                   <h2 className="text-base font-semibold tracking-tight text-slate-900 dark:text-slate-100">
                     用户个人中心
                   </h2>
-                  <p className="text-[12px] text-slate-500 dark:text-slate-400">
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
                     管理您的个人偏好、身份标识与账户安全
                   </p>
                 </div>
@@ -329,15 +329,15 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                     {name || '思维探索者'}
                   </span>
                   {user.role === 'admin' ? (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/60">
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xxs font-semibold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/60">
                       <ShieldCheck className="w-3 h-3" /> 管理员
                     </span>
                   ) : isVip ? (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800/60">
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xxs font-semibold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800/60">
                       <Crown className="w-3 h-3 text-amber-500" /> VIP 尊享会员
                     </span>
                   ) : (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xxs font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
                       免费体验版
                     </span>
                   )}
@@ -462,7 +462,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                     className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center justify-between"
                   >
                     <span>用户昵称</span>
-                    <span className="text-[11px] text-slate-400 font-normal">
+                    <span className="text-xxs text-slate-400 font-normal">
                       最多 30 个字符，展示于画布协作与分享中
                     </span>
                   </label>
@@ -493,7 +493,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                       <button
                         type="button"
                         onClick={handleClearCustomAvatar}
-                        className="text-[11px] text-rose-500 hover:text-rose-600 dark:text-rose-400 font-medium hover:underline"
+                        className="text-xxs text-rose-500 hover:text-rose-600 dark:text-rose-400 font-medium hover:underline"
                       >
                         清除已上传图片，恢复图标头像
                       </button>
@@ -518,7 +518,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                           }`}
                         >
                           <span className="text-2xl mb-1">{preset.emoji}</span>
-                          <span className="text-[10px] font-medium text-slate-500 dark:text-slate-400">
+                          <span className="text-xxs font-medium text-slate-500 dark:text-slate-400">
                             {preset.label}
                           </span>
                         </button>
@@ -531,7 +531,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                 <div className="p-4 rounded-xl bg-slate-50/70 dark:bg-slate-900/50 border border-slate-200/80 dark:border-slate-800/80 space-y-2.5">
                   <div className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2 flex items-center justify-between">
                     <span>账号标识与绑定</span>
-                    <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 font-normal">
+                    <span className="inline-flex items-center gap-1 text-xxs text-emerald-600 dark:text-emerald-400 font-normal">
                       <BadgeCheck className="w-3.5 h-3.5" />
                       邮箱安全保护已激活
                     </span>
@@ -629,7 +629,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                               : '基础免费探索版'}
                           </h4>
                           <span
-                            className={`px-2 py-0.5 text-[10px] font-semibold rounded-full ${
+                            className={`px-2 py-0.5 text-xxs font-semibold rounded-full ${
                               user.role === 'admin'
                                 ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300'
                                 : isVip
@@ -671,7 +671,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                   {/* 详细指标 */}
                   <div className="grid grid-cols-3 gap-3 mt-4 pt-4 border-t border-slate-200/60 dark:border-slate-800/60">
                     <div>
-                      <span className="text-[11px] text-slate-400 block mb-0.5">剩余有效期</span>
+                      <span className="text-xxs text-slate-400 block mb-0.5">剩余有效期</span>
                       <span
                         className={`text-sm font-bold ${
                           typeof remainingVipDays === 'number' && remainingVipDays > 0
@@ -688,14 +688,14 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                     </div>
 
                     <div>
-                      <span className="text-[11px] text-slate-400 block mb-0.5">到期日期</span>
+                      <span className="text-xxs text-slate-400 block mb-0.5">到期日期</span>
                       <span className="text-sm font-semibold text-slate-800 dark:text-slate-200">
                         {user.role === 'admin' ? '永久有效' : vipExpDate || '永久基础版'}
                       </span>
                     </div>
 
                     <div>
-                      <span className="text-[11px] text-slate-400 block mb-0.5">推演通道</span>
+                      <span className="text-xxs text-slate-400 block mb-0.5">推演通道</span>
                       <span className="text-sm font-semibold text-indigo-600 dark:text-indigo-400">
                         {isVip ? 'VIP 独占高速集群' : '标准并发通道'}
                       </span>
@@ -717,7 +717,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                         <span className="font-semibold text-slate-800 dark:text-slate-200 block mb-0.5">
                           无限画板与思维节点
                         </span>
-                        <span className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed block">
+                        <span className="text-xxs text-slate-500 dark:text-slate-400 leading-relaxed block">
                           突破体验版 10 节点配额限制，支持超大二维知识图谱多分支发散
                         </span>
                       </div>
@@ -731,7 +731,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                         <span className="font-semibold text-slate-800 dark:text-slate-200 block mb-0.5">
                           前沿大模型优先推理
                         </span>
-                        <span className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed block">
+                        <span className="text-xxs text-slate-500 dark:text-slate-400 leading-relaxed block">
                           支持 VIP 白名单大模型，更深思考上下文，极速响应免排队
                         </span>
                       </div>
@@ -745,7 +745,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                         <span className="font-semibold text-slate-800 dark:text-slate-200 block mb-0.5">
                           实时联网检索与角标溯源
                         </span>
-                        <span className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed block">
+                        <span className="text-xxs text-slate-500 dark:text-slate-400 leading-relaxed block">
                           自动抓取最新权威网页文献，正文角标一一对应直达引用源
                         </span>
                       </div>
@@ -759,7 +759,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                         <span className="font-semibold text-slate-800 dark:text-slate-200 block mb-0.5">
                           高清长图与 Markdown 导出
                         </span>
-                        <span className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed block">
+                        <span className="text-xxs text-slate-500 dark:text-slate-400 leading-relaxed block">
                           一键生成超高清晰度架构全景图及分层 Markdown 文档
                         </span>
                       </div>
@@ -780,7 +780,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                 {user.has_password === false ? (
                   <div className="p-4 rounded-xl bg-slate-50/70 dark:bg-slate-900/50 border border-slate-200/80 dark:border-slate-800/80 flex items-start gap-3 text-xs">
                     <Shield className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-                    <div className="space-y-1 text-slate-600 dark:text-slate-400 text-[11px] leading-relaxed">
+                    <div className="space-y-1 text-slate-600 dark:text-slate-400 text-xxs leading-relaxed">
                       <span className="font-semibold text-slate-800 dark:text-slate-200 block">
                         本账号通过微信登录
                       </span>
@@ -796,14 +796,14 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                         修改账号密码
                       </span>
                     </div>
-                    <span className="text-[11px] text-slate-400">修改成功后需重新登录</span>
+                    <span className="text-xxs text-slate-400">修改成功后需重新登录</span>
                   </div>
 
                   <div className="space-y-3">
                     <div>
                       <label
                         htmlFor="user-profile-old-password"
-                        className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1"
+                        className="text-xxs text-slate-500 dark:text-slate-400 block mb-1"
                       >
                         当前旧密码
                       </label>
@@ -822,7 +822,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                       <div>
                         <label
                           htmlFor="user-profile-new-password"
-                          className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1"
+                          className="text-xxs text-slate-500 dark:text-slate-400 block mb-1"
                         >
                           新密码 (至少 6 位)
                         </label>
@@ -840,7 +840,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                       <div>
                         <label
                           htmlFor="user-profile-confirm-password"
-                          className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1"
+                          className="text-xxs text-slate-500 dark:text-slate-400 block mb-1"
                         >
                           确认新密码
                         </label>
@@ -884,7 +884,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                 {/* 会话安全与合规保护说明 */}
                 <div className="p-4 rounded-xl bg-slate-50/70 dark:bg-slate-900/50 border border-slate-200/80 dark:border-slate-800/80 flex items-start gap-3 text-xs">
                   <Shield className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-                  <div className="space-y-1 text-slate-600 dark:text-slate-400 text-[11px] leading-relaxed">
+                  <div className="space-y-1 text-slate-600 dark:text-slate-400 text-xxs leading-relaxed">
                     <span className="font-semibold text-slate-800 dark:text-slate-200 block">
                       会话安全与数据隔离说明
                     </span>
@@ -900,7 +900,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                     <span className="font-semibold text-rose-700 dark:text-rose-400 block mb-0.5">
                       注销账号
                     </span>
-                    <span className="text-[11px] text-rose-600/80 dark:text-rose-400/70 leading-relaxed block">
+                    <span className="text-xxs text-rose-600/80 dark:text-rose-400/70 leading-relaxed block">
                       注销后账号将立即停用，个人画板数据保留 30 天，期内可联系管理员恢复。
                     </span>
                   </div>
@@ -960,7 +960,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
           {/* Modal Footer */}
           <div className="flex items-center justify-between px-6 py-4 border-t border-slate-100 dark:border-slate-800/80 bg-slate-50/50 dark:bg-slate-900/30">
-            <span className="text-[11px] text-slate-400">
+            <span className="text-xxs text-slate-400">
               枝想 Arborize · 思维拓扑工作台
             </span>
             <div className="flex items-center gap-2.5">

@@ -217,11 +217,11 @@ export const AdminModelsTab: React.FC<AdminModelsTabProps> = ({
               <div>
                 <div className="text-xs font-semibold text-slate-900 dark:text-white flex items-center gap-2">
                   Google Gemini 原生引擎
-                  <span className="px-1.5 py-0.2 rounded text-[10px] bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+                  <span className="px-1.5 py-0.2 rounded text-xxs bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
                     内嵌 Google 搜索
                   </span>
                 </div>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+                <p className="text-xxs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
                   采用官方 GoogleGenAI SDK，深度支持多模态及原生 Google Search Grounding 实时检索。
                 </p>
               </div>
@@ -250,11 +250,11 @@ export const AdminModelsTab: React.FC<AdminModelsTabProps> = ({
               <div>
                 <div className="text-xs font-semibold text-slate-900 dark:text-white flex items-center gap-2">
                   OpenAI 格式兼容协议
-                  <span className="px-1.5 py-0.2 rounded text-[10px] bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+                  <span className="px-1.5 py-0.2 rounded text-xxs bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
                     DeepSeek / GPT-4o 等
                   </span>
                 </div>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+                <p className="text-xxs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
                   兼容标准 <code className="font-mono text-indigo-600 dark:text-indigo-400">/v1/chat/completions</code> 流式协议，支持主流大模型提供商及私有化部署。
                 </p>
               </div>
@@ -306,7 +306,7 @@ export const AdminModelsTab: React.FC<AdminModelsTabProps> = ({
                   placeholder="例如: https://api.deepseek.com 或 https://api.openai.com/v1"
                   className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
                 />
-                <p className="text-[10px] text-slate-400 dark:text-slate-500">无需手动拼接 /chat/completions，系统将自动路由</p>
+                <p className="text-xxs text-slate-400 dark:text-slate-500">无需手动拼接 /chat/completions，系统将自动路由</p>
               </div>
 
               <div className="space-y-1">
@@ -331,7 +331,7 @@ export const AdminModelsTab: React.FC<AdminModelsTabProps> = ({
                     API 密钥 (API Key / Token) <span className="text-rose-500">*</span>
                   </label>
                   {modelConfig.has_openai_key && (
-                    <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
+                    <span className="text-xxs text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
                       <CheckCircle2 className="w-3 h-3" /> 当前已配置密钥
                     </span>
                   )}
@@ -394,7 +394,7 @@ export const AdminModelsTab: React.FC<AdminModelsTabProps> = ({
                 }
                 className="w-full accent-indigo-600 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg cursor-pointer"
               />
-              <div className="flex justify-between text-[10px] text-slate-400 dark:text-slate-500">
+              <div className="flex justify-between text-xxs text-slate-400 dark:text-slate-500">
                 <span>精确收敛 (0.0)</span>
                 <span>标准平衡 (0.7)</span>
                 <span>高度创意 (1.5)</span>
@@ -425,7 +425,7 @@ export const AdminModelsTab: React.FC<AdminModelsTabProps> = ({
               <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
                 强制实时联网检索 (Force Web Search)
               </label>
-              <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">
+              <p className="text-xxs text-slate-400 dark:text-slate-500 mt-0.5">
                 开启后每次回答都会先联网检索并附来源索引（推荐，保障「溯源有据」）；关闭则由模型自主决定是否检索
               </p>
             </div>
@@ -484,18 +484,18 @@ export const AdminModelsTab: React.FC<AdminModelsTabProps> = ({
                 <span>{testResult.message}</span>
               </div>
               {testResult.latencyMs !== undefined && (
-                <span className="font-mono text-[11px] px-2 py-0.5 rounded bg-black/5 dark:bg-white/10">
+                <span className="font-mono text-xxs px-2 py-0.5 rounded bg-black/5 dark:bg-white/10">
                   耗时: {testResult.latencyMs}ms
                 </span>
               )}
             </div>
             {testResult.reply && (
-              <div className="mt-2 p-2.5 rounded-lg bg-white/80 dark:bg-slate-900/80 border border-emerald-200/60 dark:border-emerald-800/60 font-mono text-[11px] text-slate-700 dark:text-slate-300">
+              <div className="mt-2 p-2.5 rounded-lg bg-white/80 dark:bg-slate-900/80 border border-emerald-200/60 dark:border-emerald-800/60 font-mono text-xxs text-slate-700 dark:text-slate-300">
                 <strong>返回内容：</strong> {testResult.reply}
               </div>
             )}
             {testResult.error && (
-              <div className="mt-2 p-2.5 rounded-lg bg-white/80 dark:bg-slate-900/80 border border-rose-200/60 dark:border-rose-800/60 font-mono text-[11px] text-rose-600 dark:text-rose-400">
+              <div className="mt-2 p-2.5 rounded-lg bg-white/80 dark:bg-slate-900/80 border border-rose-200/60 dark:border-rose-800/60 font-mono text-xxs text-rose-600 dark:text-rose-400">
                 <strong>错误详情：</strong> {testResult.error}
               </div>
             )}

@@ -133,7 +133,7 @@ export const BoardSelectorDropdown: React.FC<BoardSelectorDropdownProps> = ({
         }
         side="bottom"
       >
-        <span className="ml-1 hidden sm:inline-flex items-center gap-1 px-2 py-1 rounded-xl text-[11px] font-semibold bg-slate-100/70 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 border border-slate-200/50 dark:border-slate-700/50">
+        <span className="ml-1 hidden sm:inline-flex items-center gap-1 px-2 py-1 rounded-xl text-xxs font-semibold bg-slate-100/70 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 border border-slate-200/50 dark:border-slate-700/50">
           {quota.offline && <CloudOff className="w-3 h-3 text-amber-500" />}
           画板 {quota.used}/{quota.unlimited ? '∞' : quota.limit ?? 3}
         </span>
@@ -142,7 +142,7 @@ export const BoardSelectorDropdown: React.FC<BoardSelectorDropdownProps> = ({
       {/* 画板列表下拉菜单 */}
       {showBoardMenu && (
         <div className="absolute top-full left-0 mt-2 w-64 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-[0_16px_40px_rgba(0,0,0,0.12)] dark:shadow-[0_20px_50px_rgba(0,0,0,0.6)] py-2 z-50 animate-in fade-in zoom-in-95">
-          <div className="px-3 py-1 flex items-center justify-between text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+          <div className="px-3 py-1 flex items-center justify-between text-xxs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
             <span>思考画板列表</span>
             <span className="normal-case tracking-normal">
               {quota.unlimited ? '不限' : `${quota.used}/${quota.limit ?? 3}`}
@@ -152,7 +152,7 @@ export const BoardSelectorDropdown: React.FC<BoardSelectorDropdownProps> = ({
             {buildQuickSections(boards, folders).map((sec) => (
               <div key={sec.key}>
                 {sec.label && (
-                  <div className="px-3 pt-2 pb-0.5 flex items-center gap-1 text-[10px] font-semibold text-slate-400 dark:text-slate-600 uppercase tracking-wider">
+                  <div className="px-3 pt-2 pb-0.5 flex items-center gap-1 text-xxs font-semibold text-slate-400 dark:text-slate-600 uppercase tracking-wider">
                     {sec.key === '__fav' ? (
                       <Star className="w-3 h-3 text-amber-400" fill="currentColor" />
                     ) : sec.key === '__none' ? null : (

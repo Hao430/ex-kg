@@ -104,10 +104,10 @@ export const AdminOrdersTab: React.FC = () => {
             ) : (
               orders.map((o) => (
                 <tr key={o.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40">
-                  <td className="py-3 px-4 font-mono text-[11px] text-slate-800 dark:text-slate-100">
+                  <td className="py-3 px-4 font-mono text-xxs text-slate-800 dark:text-slate-100">
                     {o.order_no}
                   </td>
-                  <td className="py-3 px-3 font-mono text-[11px] text-slate-500 dark:text-slate-400 truncate max-w-[180px]">
+                  <td className="py-3 px-3 font-mono text-xxs text-slate-500 dark:text-slate-400 truncate max-w-[180px]">
                     {o.user_email || o.user_id}
                   </td>
                   <td className="py-3 px-3">{o.plan_name}</td>
@@ -116,7 +116,7 @@ export const AdminOrdersTab: React.FC = () => {
                   </td>
                   <td className="py-3 px-3">
                     <span
-                      className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                      className={`px-2 py-0.5 rounded text-xxs font-semibold ${
                         o.status === 'paid'
                           ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300'
                           : o.status === 'pending'

@@ -1189,7 +1189,7 @@ export const DeepDiveCanvas: React.FC<DeepDiveCanvasProps> = ({
           <button
             type="button"
             onClick={runSuggestionCleanup}
-            className="ml-auto shrink-0 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition-colors"
+            className="ml-auto shrink-0 px-2.5 py-1 rounded-lg text-xxs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition-colors"
           >
             清理
           </button>

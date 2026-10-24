@@ -133,7 +133,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               <span className="text-base font-bold tracking-tight text-white">
                 枝想<span className="text-blue-400 font-medium">Arborize</span>
               </span>
-              <span className="hidden sm:inline-block text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/25">
+              <span className="hidden sm:inline-block text-xxs uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/25">
                 深度思维画布
               </span>
             </div>
@@ -175,7 +175,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                   <span className="whitespace-nowrap">{isVip ? 'VIP 会员' : '开通 VIP'}</span>
                 </button>
                 <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-white/[0.05] border border-white/10 text-xs text-slate-300 shrink-0">
-                  <div className="w-5 h-5 rounded-md bg-gradient-to-tr from-indigo-600 to-purple-600 text-white flex items-center justify-center font-bold text-[10px] shrink-0 overflow-hidden">
+                  <div className="w-5 h-5 rounded-md bg-gradient-to-tr from-indigo-600 to-purple-600 text-white flex items-center justify-center font-bold text-xxs shrink-0 overflow-hidden">
                     {user.avatar && (user.avatar.startsWith('http') || user.avatar.startsWith('data:')) ? (
                       <img src={user.avatar} alt="avatar" className="w-full h-full object-cover" />
                     ) : user.avatar ? (
@@ -288,7 +288,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               >
                 {item.label}
               </span>
-              <span className="text-[11px] text-slate-400 mt-0.5">{item.sub}</span>
+              <span className="text-xxs text-slate-400 mt-0.5">{item.sub}</span>
             </div>
           ))}
         </div>
@@ -367,11 +367,11 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                   <span className="text-xs font-bold text-white">主线探索 #0</span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                  <span className="text-xxs px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
                     <Globe className="w-2.5 h-2.5" />
                     已联网
                   </span>
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                  <span className="text-xxs px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
                     深度推演模式
                   </span>
                 </div>
@@ -385,7 +385,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 <p className="mb-2">
                   超导量子系统的状态保持受到两类基本物理退相干过程限制：
                 </p>
-                <div className="p-2 my-1.5 rounded bg-blue-950/40 border border-blue-800/40 font-mono text-[11px] text-cyan-200">
+                <div className="p-2 my-1.5 rounded bg-blue-950/40 border border-blue-800/40 font-mono text-xxs text-cyan-200">
                   {'$$T_1: \\text{能量弛豫时间} \\quad T_2^*: \\text{纯退相位时间}$$'}
                 </div>
                 <p className="text-slate-300">
@@ -404,22 +404,22 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               </div>
 
               {/* Source citations preview */}
-              <div className="mt-2.5 p-2 rounded-xl bg-blue-950/30 border border-blue-500/20 text-[11px]">
+              <div className="mt-2.5 p-2 rounded-xl bg-blue-950/30 border border-blue-500/20 text-xxs">
                 <div className="flex items-center justify-between font-semibold text-blue-300 mb-1">
                   <div className="flex items-center gap-1">
                     <Globe className="w-3 h-3 text-cyan-400" />
                     <span>权威检索来源 (3 篇)</span>
                   </div>
-                  <span className="text-[9px] text-slate-400">实时联网溯源</span>
+                  <span className="text-xxs text-slate-400">实时联网溯源</span>
                 </div>
                 <div className="flex flex-wrap gap-1 mt-1">
-                  <span className="px-1.5 py-0.5 rounded bg-white/[0.05] border border-white/[0.08] text-[9px] text-blue-200">
+                  <span className="px-1.5 py-0.5 rounded bg-white/[0.05] border border-white/[0.08] text-xxs text-blue-200">
                     [1] Nature Quantum: Dephasing
                   </span>
-                  <span className="px-1.5 py-0.5 rounded bg-white/[0.05] border border-white/[0.08] text-[9px] text-blue-200">
+                  <span className="px-1.5 py-0.5 rounded bg-white/[0.05] border border-white/[0.08] text-xxs text-blue-200">
                     [2] arXiv: Surface Code
                   </span>
-                  <span className="px-1.5 py-0.5 rounded bg-white/[0.05] border border-white/[0.08] text-[9px] text-blue-200">
+                  <span className="px-1.5 py-0.5 rounded bg-white/[0.05] border border-white/[0.08] text-xxs text-blue-200">
                     [3] IBM Quantum Docs
                   </span>
                 </div>
@@ -427,19 +427,19 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
               {/* Selection Capsule Simulation */}
               {demoStep === 2 && (
-                <div className="mt-2.5 p-2 rounded-xl bg-gradient-to-r from-blue-600/90 to-indigo-600/90 text-white text-[11px] flex items-center justify-between shadow-lg animate-in fade-in zoom-in-95">
+                <div className="mt-2.5 p-2 rounded-xl bg-gradient-to-r from-blue-600/90 to-indigo-600/90 text-white text-xxs flex items-center justify-between shadow-lg animate-in fade-in zoom-in-95">
                   <div className="flex items-center gap-1.5">
                     <Sparkles className="w-3.5 h-3.5 text-cyan-300" />
                     <span>已划选「约瑟夫森结电荷噪声」深入推演</span>
                   </div>
-                  <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-md font-semibold">
+                  <span className="text-xxs bg-white/20 px-2 py-0.5 rounded-md font-semibold">
                     自动衍生中 →
                   </span>
                 </div>
               )}
 
               {/* Bottom stats */}
-              <div className="mt-3 flex items-center justify-between text-[10px] text-slate-400 pt-2 border-t border-white/[0.06]">
+              <div className="mt-3 flex items-center justify-between text-xxs text-slate-400 pt-2 border-t border-white/[0.06]">
                 <span className="flex items-center gap-1 text-slate-300">
                   <SlidersHorizontal className="w-3 h-3 text-indigo-400" />
                   <span>智能推演引擎 · 实时检索</span>
@@ -475,7 +475,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                   <GitBranch className="w-3.5 h-3.5 text-indigo-400" />
                   <span className="text-xs font-bold text-white">子分支 #1 (深度 1)</span>
                 </div>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                <span className="text-xxs px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30">
                   {demoStep >= 2 ? '推演就绪' : '建议议题'}
                 </span>
               </div>
@@ -488,20 +488,20 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 <p className="mb-2">
                   通过增大结电容降低约瑟夫森结对电荷噪声敏感度：
                 </p>
-                <div className="p-2 my-1.5 rounded bg-indigo-950/40 border border-indigo-800/40 font-mono text-[11px] text-indigo-200">
+                <div className="p-2 my-1.5 rounded bg-indigo-950/40 border border-indigo-800/40 font-mono text-xxs text-indigo-200">
                   {'$$E_J / E_C \\gg 50 \\implies \\text{指数级压制电荷弥散}$$'}
                 </div>
-                <p className="text-slate-400 text-[11px]">
+                <p className="text-slate-400 text-xxs">
                   同时保留微弱的非简谐性以实现 $|0\rangle \to |1\rangle$ 单量子比特逻辑门受控翻转。
                 </p>
               </div>
 
               {/* Sticky note connected */}
               <div className="mt-3 p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs">
-                <div className="flex items-center gap-1 text-[11px] font-semibold text-amber-300 mb-1">
+                <div className="flex items-center gap-1 text-xxs font-semibold text-amber-300 mb-1">
                   <span>💡 研究假设便签</span>
                 </div>
-                <p className="text-[11px] text-amber-100/90 leading-normal">
+                <p className="text-xxs text-amber-100/90 leading-normal">
                   需要验证：结电容增加是否会导致谐振腔读取色散位移 $\chi$ 降低？
                 </p>
               </div>
@@ -925,7 +925,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             href="https://beian.miit.gov.cn/"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-[11px] text-slate-500 hover:text-white transition-colors"
+            className="text-xxs text-slate-500 hover:text-white transition-colors"
           >
             湘ICP备2025125191号-2
           </a>

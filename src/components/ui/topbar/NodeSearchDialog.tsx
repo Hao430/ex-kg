@@ -248,7 +248,7 @@ export const NodeSearchDialog: React.FC<NodeSearchDialogProps> = ({
               >
                 <div className="flex items-center gap-1.5 min-w-0">
                   <span
-                    className={`shrink-0 px-1.5 py-0.5 rounded-md text-[9px] font-bold ${
+                    className={`shrink-0 px-1.5 py-0.5 rounded-md text-xxs font-bold ${
                       isNote
                         ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
                         : 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-300'
@@ -261,7 +261,7 @@ export const NodeSearchDialog: React.FC<NodeSearchDialogProps> = ({
                   </span>
                 </div>
                 {excerpt && (
-                  <div className="mt-0.5 text-[11px] leading-snug text-slate-500 dark:text-slate-400 line-clamp-2">
+                  <div className="mt-0.5 text-xxs leading-snug text-slate-500 dark:text-slate-400 line-clamp-2">
                     {excerpt}
                   </div>
                 )}

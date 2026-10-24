@@ -175,7 +175,7 @@ export const MySharesModal: React.FC<MySharesModalProps> = ({
             <Share2 className="w-4 h-4 text-sky-400" />
             <span className="text-sm font-semibold tracking-wide">我的分享</span>
             {items && items.length > 0 && (
-              <span className="text-[10px] text-slate-500 px-1.5 py-0.5 rounded bg-slate-800/80">
+              <span className="text-xxs text-slate-500 px-1.5 py-0.5 rounded bg-slate-800/80">
                 {items.length} 个生效中
               </span>
             )}
@@ -250,7 +250,7 @@ export const MySharesModal: React.FC<MySharesModalProps> = ({
                       <div className="text-sm font-semibold text-slate-100 truncate">
                         {item.canvasTitle}
                       </div>
-                      <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-500">
+                      <div className="mt-0.5 flex items-center gap-1.5 text-xxs text-slate-500">
                         <Eye className="w-3 h-3" />
                         <span>浏览 {item.viewsCount} 次</span>
                         <span>·</span>
@@ -259,7 +259,7 @@ export const MySharesModal: React.FC<MySharesModalProps> = ({
                     </div>
                   </div>
 
-                  <div className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-[11px] font-mono text-slate-400 truncate select-text">
+                  <div className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xxs font-mono text-slate-400 truncate select-text">
                     {item.url}
                   </div>
 

@@ -449,18 +449,18 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
                 <TrendingUp className="w-3.5 h-3.5 text-indigo-500" />
                 掌握情况总览
               </span>
-              <span className="text-[11px] text-slate-400">{masteryStats.totalAttempted} 场测验</span>
+              <span className="text-xxs text-slate-400">{masteryStats.totalAttempted} 场测验</span>
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div className="p-2.5 rounded-lg bg-white dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60">
-                <div className="text-[11px] text-slate-500 dark:text-slate-400">已掌握题目</div>
+                <div className="text-xxs text-slate-500 dark:text-slate-400">已掌握题目</div>
                 <div className="text-lg font-bold text-slate-800 dark:text-slate-100 mt-0.5">
                   {masteryStats.totalCorrect}
                   <span className="text-xs font-normal text-slate-400"> / {masteryStats.totalQuestions}</span>
                 </div>
               </div>
               <div className="p-2.5 rounded-lg bg-white dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60">
-                <div className="text-[11px] text-slate-500 dark:text-slate-400">总体掌握率</div>
+                <div className="text-xxs text-slate-500 dark:text-slate-400">总体掌握率</div>
                 <div className="text-lg font-bold text-indigo-600 dark:text-indigo-400 mt-0.5">
                   {masteryStats.rate}%
                 </div>
@@ -472,14 +472,14 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
           <div className="flex-1 overflow-y-auto p-3 space-y-1.5 min-h-0">
             <div className="px-2 py-1 text-xs font-semibold text-slate-500 dark:text-slate-400 flex items-center justify-between">
               <span>往期练习记录</span>
-              {historyView.offline && <span className="text-[10px] text-amber-500">离线缓存</span>}
+              {historyView.offline && <span className="text-xxs text-amber-500">离线缓存</span>}
             </div>
 
             {historyView.items.length === 0 ? (
               <div className="p-6 text-center text-xs text-slate-400 dark:text-slate-500 space-y-2">
                 <BookOpen className="w-8 h-8 mx-auto opacity-30" />
                 <p>暂无往期练习记录</p>
-                <p className="text-[11px] text-slate-400">输入主题开始第一次测验吧</p>
+                <p className="text-xxs text-slate-400">输入主题开始第一次测验吧</p>
               </div>
             ) : (
               historyView.items.map((item) => {
@@ -499,11 +499,11 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
                       <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 line-clamp-1 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
                         {item.topic}
                       </span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 shrink-0">
+                      <span className="text-xxs px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 shrink-0">
                         {DIFFICULTY_LABELS[item.difficulty]}
                       </span>
                     </div>
-                    <div className="flex items-center justify-between text-[11px] text-slate-400 mt-2">
+                    <div className="flex items-center justify-between text-xxs text-slate-400 mt-2">
                       <span>
                         {item.status === 'completed' && item.correctCount !== null ? (
                           <span className="font-medium text-emerald-600 dark:text-emerald-400">
@@ -550,7 +550,7 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
                   <div className="flex flex-col gap-1.5">
                     <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
                       <span>想练习的主题或知识点</span>
-                      <span className="text-[11px] font-normal text-slate-400">{topic.length}/200</span>
+                      <span className="text-xxs font-normal text-slate-400">{topic.length}/200</span>
                     </label>
                     <div className="relative">
                       <input
@@ -577,7 +577,7 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
 
                   {/* 推荐灵感主题 Pills */}
                   <div className="flex flex-col gap-2 pt-1">
-                    <span className="text-[11px] font-medium text-slate-400 flex items-center gap-1">
+                    <span className="text-xxs font-medium text-slate-400 flex items-center gap-1">
                       <Sparkles className="w-3 h-3 text-amber-500" />
                       灵感推荐（点击快速填入）：
                     </span>
@@ -625,11 +625,11 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
                                 </span>
                                 {isSelected && <Check className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />}
                               </div>
-                              <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                              <p className="text-xxs text-slate-500 dark:text-slate-400 leading-relaxed">
                                 {info.desc}
                               </p>
                             </div>
-                            <span className="text-[10px] text-indigo-600/80 dark:text-indigo-400/80 mt-2 font-medium">
+                            <span className="text-xxs text-indigo-600/80 dark:text-indigo-400/80 mt-2 font-medium">
                               默认 {DEFAULT_COUNT[d]} 题
                             </span>
                           </button>
@@ -642,7 +642,7 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
                   <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800/80">
                     <div className="flex flex-col">
                       <span className="text-xs font-bold text-slate-700 dark:text-slate-300">测验题目数量</span>
-                      <span className="text-[11px] text-slate-400">单选题与判断题组合呈现</span>
+                      <span className="text-xxs text-slate-400">单选题与判断题组合呈现</span>
                     </div>
                     <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-900 p-1 rounded-xl border border-slate-200 dark:border-slate-800">
                       {[3, 5, 10].map((n) => (
@@ -720,7 +720,7 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
                     <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
                       {phase.attempt.questions.length} 题测验 · {topic}
                     </span>
-                    <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 font-medium">
+                    <span className="text-xxs px-2 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 font-medium">
                       {DIFFICULTY_LABELS[difficulty]}
                     </span>
                   </div>
@@ -760,7 +760,7 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
                         {i + 1}
                       </span>
                       <div className="flex-1">
-                        <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block mb-1">
+                        <span className="text-xxs font-semibold text-slate-400 uppercase tracking-wider block mb-1">
                           {q.type === 'single' ? '单选题' : '判断题'}
                         </span>
                         <p className="text-sm font-semibold text-slate-850 dark:text-slate-100 leading-relaxed">
@@ -941,7 +941,7 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
                           )}
 
                           {r.lowConfidence && (
-                            <span className="text-[10px] text-amber-500 px-1.5 py-0.5 rounded bg-amber-500/10">
+                            <span className="text-xxs text-amber-500 px-1.5 py-0.5 rounded bg-amber-500/10">
                               秒答待巩固
                             </span>
                           )}

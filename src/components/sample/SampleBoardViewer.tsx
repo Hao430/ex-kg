@@ -45,7 +45,7 @@ export const SampleBoardViewer: React.FC<SampleBoardViewerProps> = ({ initialInd
         {/* 头部：标题 + 示例切换 tab + 关闭 */}
         <header className="flex items-center gap-2 px-4 sm:px-5 py-3 border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/80 backdrop-blur">
           <div className="min-w-0 mr-2">
-            <div className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400">示例画布 · {board.persona}</div>
+            <div className="text-xxs font-semibold text-indigo-600 dark:text-indigo-400">示例画布 · {board.persona}</div>
             <h2 className="text-sm font-bold text-slate-900 dark:text-white truncate">{board.title}</h2>
           </div>
           <div className="flex-1 flex items-center gap-1.5 overflow-x-auto">
@@ -53,7 +53,7 @@ export const SampleBoardViewer: React.FC<SampleBoardViewerProps> = ({ initialInd
               <button
                 key={sb.id}
                 onClick={() => setIndex(i)}
-                className={`shrink-0 px-3 py-1.5 rounded-xl text-[11px] font-medium transition-colors ${
+                className={`shrink-0 px-3 py-1.5 rounded-xl text-xxs font-medium transition-colors ${
                   i === index
                     ? 'bg-indigo-600 text-white shadow-sm'
                     : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
@@ -83,7 +83,7 @@ export const SampleBoardViewer: React.FC<SampleBoardViewerProps> = ({ initialInd
         </div>
 
         {/* 底部说明 */}
-        <footer className="px-4 sm:px-5 py-2.5 border-t border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/80 backdrop-blur text-[11px] text-slate-400 truncate">
+        <footer className="px-4 sm:px-5 py-2.5 border-t border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/80 backdrop-blur text-xxs text-slate-400 truncate">
           {board.desc}
         </footer>
     </Modal>

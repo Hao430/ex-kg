@@ -57,7 +57,7 @@ export const StarterChecklist: React.FC<StarterChecklistProps> = ({ hasBoards })
       <div className="flex items-start justify-between mb-2.5">
         <div>
           <div className="text-xs font-bold text-slate-900 dark:text-slate-100">快速上手</div>
-          <div className="text-[10px] text-slate-400 mt-0.5">已完成 {completed}/{CHECKLIST_STEPS.length} 步</div>
+          <div className="text-xxs text-slate-400 mt-0.5">已完成 {completed}/{CHECKLIST_STEPS.length} 步</div>
         </div>
         <button
           onClick={dismissChecklist}
@@ -78,7 +78,7 @@ export const StarterChecklist: React.FC<StarterChecklistProps> = ({ hasBoards })
                 <Circle className="w-3.5 h-3.5 text-slate-300 dark:text-slate-600 shrink-0" />
               )}
               <span
-                className={`text-[11px] leading-snug ${
+                className={`text-xxs leading-snug ${
                   ok
                     ? 'text-slate-400 dark:text-slate-500 line-through'
                     : 'text-slate-700 dark:text-slate-200'

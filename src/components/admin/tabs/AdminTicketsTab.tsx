@@ -140,7 +140,7 @@ export const AdminTicketsTab: React.FC<AdminTicketsTabProps> = ({
             >
               {chip.label}
               {typeof chip.count === 'number' && (
-                <span className="ml-1.5 text-[10px] text-slate-400">{chip.count}</span>
+                <span className="ml-1.5 text-xxs text-slate-400">{chip.count}</span>
               )}
             </button>
           ))}
@@ -189,18 +189,18 @@ export const AdminTicketsTab: React.FC<AdminTicketsTabProps> = ({
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-[11px] font-medium px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200">
+                    <span className="text-xxs font-medium px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200">
                       {TICKET_TYPE_LABELS[t.type] || t.type}
                     </span>
-                    <span className="text-[11px] text-amber-500">
+                    <span className="text-xxs text-amber-500">
                       {'★'.repeat(t.rating)}
                       {'☆'.repeat(Math.max(0, 5 - t.rating))}
                     </span>
-                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded ${meta.className}`}>
+                    <span className={`text-xxs font-semibold px-2 py-0.5 rounded ${meta.className}`}>
                       {meta.label}
                     </span>
                   </div>
-                  <span className="text-[11px] text-slate-400">
+                  <span className="text-xxs text-slate-400">
                     {new Date(t.created_at).toLocaleString('zh-CN', {
                       month: 'numeric',
                       day: 'numeric',
@@ -214,7 +214,7 @@ export const AdminTicketsTab: React.FC<AdminTicketsTabProps> = ({
                   {t.content}
                 </p>
 
-                <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                <div className="text-xxs text-slate-500 dark:text-slate-400">
                   提交者：{t.user_email || t.contact_info || '匿名（未留联系方式）'}
                 </div>
 
