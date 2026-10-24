@@ -91,7 +91,7 @@ export const BoardSelectorDropdown: React.FC<BoardSelectorDropdownProps> = ({
           value={nameInput}
           onChange={(e) => setNameInput(e.target.value)}
           onBlur={handleNameSubmit}
-          onKeyDown={(e) => e.key === 'Enter' && handleNameSubmit()}
+          onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && handleNameSubmit()}
           autoFocus
           className="px-2.5 py-1 text-xs font-medium border border-indigo-500 rounded-lg outline-none bg-white dark:bg-slate-900 text-slate-850 dark:text-slate-100 max-w-[140px] sm:max-w-[200px]"
         />

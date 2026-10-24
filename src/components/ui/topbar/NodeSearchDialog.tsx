@@ -153,6 +153,8 @@ export const NodeSearchDialog: React.FC<NodeSearchDialogProps> = ({
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
+      // 输入法组词态：Enter/方向键属于候选词操作，不拦截（防组词确认被误当搜索选中）
+      if (e.nativeEvent.isComposing) return;
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
         setSearchActiveIdx((i) => {

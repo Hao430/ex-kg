@@ -477,7 +477,7 @@ export const ChatCardNode: React.FC<NodeProps> = React.memo(({ id, data, selecte
               value={titleValue}
               onChange={(e) => setTitleValue(e.target.value)}
               onBlur={handleTitleSubmit}
-              onKeyDown={(e) => e.key === 'Enter' && handleTitleSubmit()}
+              onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && handleTitleSubmit()}
               // 双击（选中文本等）不冒泡到 React Flow 视口，避免编辑时意外缩放
               onDoubleClick={(e) => e.stopPropagation()}
               autoFocus

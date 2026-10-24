@@ -558,7 +558,7 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
                         value={topic}
                         maxLength={200}
                         onChange={(e) => setTopic(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter' && topic.trim()) void handleGenerate(); }}
+                        onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing && topic.trim()) void handleGenerate(); }}
                         placeholder="例如：Transformer 多头注意力机制 / TCP 三次握手与状态流转 / 高中生物光合作用"
                         className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-900/60 border border-slate-300 dark:border-slate-700/80 rounded-xl outline-none focus:border-indigo-500 dark:focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/10 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 transition"
                         data-testid="quiz-topic-input"

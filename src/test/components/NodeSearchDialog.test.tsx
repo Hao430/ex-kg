@@ -225,6 +225,44 @@ describe('NodeSearchDialog Component', () => {
       expect(handleClose).toHaveBeenCalledTimes(1);
     });
 
+    it('ignores Enter and Arrow keys during IME composition (isComposing 守卫)', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ results: MOCK_RESULTS }),
+      });
+      vi.stubGlobal('fetch', mockFetch);
+
+      const handleSelectNode = vi.fn();
+      const handleClose = vi.fn();
+
+      render(
+        <NodeSearchDialog
+          isOpen={true}
+          onClose={handleClose}
+          boardId="board-alpha"
+          onSelectNode={handleSelectNode}
+        />
+      );
+
+      const input = screen.getByPlaceholderText('搜索节点内容…');
+      fireEvent.change(input, { target: { value: 'notes' } });
+
+      await act(async () => {
+        vi.advanceTimersByTime(300);
+      });
+
+      // 组词态：Enter 确认候选词、方向键选候选，都不得触发搜索选中/关闭
+      fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+      fireEvent.keyDown(input, { key: 'ArrowDown', isComposing: true });
+
+      expect(handleSelectNode).not.toHaveBeenCalled();
+      expect(handleClose).not.toHaveBeenCalled();
+
+      // 组词结束后恢复正常
+      fireEvent.keyDown(input, { key: 'Enter' });
+      expect(handleSelectNode).toHaveBeenCalledTimes(1);
+    });
+
     it('selects item on click directly', async () => {
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
