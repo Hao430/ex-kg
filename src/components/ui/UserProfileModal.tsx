@@ -886,7 +886,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                   <Shield className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
                   <div className="space-y-1 text-slate-600 dark:text-slate-400 text-[11px] leading-relaxed">
                     <span className="font-semibold text-slate-800 dark:text-slate-200 block">
-                      会话安全与多租户隔离规范
+                      会话安全与数据隔离说明
                     </span>
                     <p>
                       密码使用工业级高强度 scrypt 算法加盐散列。密码修改后，服务端将即刻注销所有历史终端会话以防凭证泄露。

@@ -77,6 +77,7 @@ export const AdminUsersTab: React.FC<AdminUsersTabProps> = ({
     if (
       !(await confirmAction({
         title: `确定要${actionName} "${targetUser.email}" 吗？`,
+        description: nextStatus ? '解冻后该用户可正常登录与使用。' : '冻结后该用户将无法登录。',
         confirmLabel: actionName,
         tone: 'warning',
       }))

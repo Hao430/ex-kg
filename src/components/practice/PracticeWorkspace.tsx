@@ -734,6 +734,7 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
                         if (
                           await confirmAction({
                             title: '确定放弃本次练习并返回吗？',
+                            description: '已作答的内容不会提交。',
                             confirmLabel: '放弃本次',
                             tone: 'warning',
                           })
