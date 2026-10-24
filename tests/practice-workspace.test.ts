@@ -160,7 +160,9 @@ import type {
 function renderWorkspace(props: Partial<React.ComponentProps<typeof PracticeWorkspace>> = {}): string {
   const defaultProps = {
     userId: 'u_tester',
-    user: { id: 'u_tester', nickname: 'Tester' },
+    // 豁免（2026-10-24）：夹具原为 { id, nickname }——nickname 并非 AuthUser 字段（真实字段是 name），
+    // 这一错误夹具曾倒逼生产代码读 user.nickname（恒 undefined）。按 AuthUser 结构修正。
+    user: { id: 'u_tester', email: 'tester@example.com', name: 'Tester', role: 'user' as const },
     theme: 'light' as const,
     onToggleTheme: () => {},
     activeProduct: 'practice' as const,

@@ -172,7 +172,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                   title={isVip ? 'VIP Pro 尊享特权' : '升级 VIP 会员'}
                 >
                   <Crown className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                  <span className="whitespace-nowrap">{isVip ? 'VIP 会员' : '开通 VIP'}</span>
+                  <span className="whitespace-nowrap">{isVip ? 'VIP' : '升级 VIP'}</span>
                 </button>
                 <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-white/[0.05] border border-white/10 text-xs text-slate-300 shrink-0">
                   <div className="w-5 h-5 rounded-md bg-gradient-to-tr from-indigo-600 to-purple-600 text-white flex items-center justify-center font-bold text-xxs shrink-0 overflow-hidden">

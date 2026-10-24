@@ -24,10 +24,6 @@ import {
   Plus,
   BookOpen,
   ChevronRight,
-  Sun,
-  Moon,
-  Crown,
-  User,
   History,
   TrendingUp,
   Check,
@@ -35,6 +31,14 @@ import {
   Lightbulb,
 } from 'lucide-react';
 import * as quizStore from '../../lib/quiz-store';
+import type { AuthUser } from '../../types';
+import {
+  BrandLogo,
+  ProductSwitchPill,
+  VipBadge,
+  ThemeToggleButton,
+  UserDropdown,
+} from '../ui/topbar';
 import { Spinner } from '../ui/base/Spinner';
 import { scopeKeyFor } from '../../lib/board-scope';
 import type { QuizAttemptView, QuizDifficulty, QuizGradeResult, QuizHistoryItem, QuizQuestion, QuizSubmission } from '../../lib/quiz-store';
@@ -88,7 +92,7 @@ export const RECOMMENDED_TOPICS = [
 
 export interface PracticeWorkspaceProps {
   userId: string | null;
-  user: any;
+  user: AuthUser | null;
   theme: 'light' | 'dark';
   onToggleTheme: () => void;
   activeProduct: 'canvas' | 'practice';
@@ -211,7 +215,7 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
   useEffect(() => { phaseRef.current = phase; }, [phase]);
 
   const { isVip } = useAuth();
-  const { openAuthModal, openRechargeModal, openUserProfileModal } = useModal();
+  const { openRechargeModal } = useModal();
 
   // 账号切换 scope 绑定
   useEffect(() => {
@@ -329,96 +333,28 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
   return (
     <div className="w-full h-full flex flex-col bg-slate-50 dark:bg-[#070b14] text-slate-850 dark:text-slate-100 font-sans transition-colors duration-200">
       {/* ================= 顶层全局导航 Header ================= */}
-      <header className="h-14 bg-white/80 dark:bg-[#070b14]/85 backdrop-blur-xl border-b border-slate-200/70 dark:border-slate-800/70 px-4 flex items-center justify-between z-40 shrink-0">
-        <div className="flex items-center gap-3">
-          {/* Logo */}
-          <button
-            onClick={onGoToLanding}
-            className="flex items-center gap-2 group cursor-pointer focus:outline-none"
-            title="返回产品介绍首页"
-          >
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-sky-500 flex items-center justify-center text-white shadow-md shadow-indigo-500/25 group-hover:scale-105 transition-transform">
-              <Compass className="w-4 h-4 text-white" />
-            </div>
-            <span className="font-bold text-slate-850 dark:text-slate-100 text-sm tracking-tight hidden sm:inline group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
-              枝想<span className="text-indigo-600 dark:text-indigo-400 font-semibold">Arborize</span>
-            </span>
-          </button>
+      <header className="h-14 bg-white/80 dark:bg-[#070b14]/85 backdrop-blur-xl border-b border-slate-200/70 dark:border-slate-800/70 px-3 sm:px-4 flex items-center justify-between z-40 shrink-0">
+        <div className="flex items-center gap-2 xl:gap-3 min-w-0">
+          <BrandLogo onGoToLanding={onGoToLanding} />
 
-          <div className="h-4 w-[1px] bg-slate-200 dark:bg-slate-800" />
+          <div className="h-4 w-[1px] bg-slate-200 dark:bg-slate-800 hidden sm:block" />
 
-          {/* ================= 双产品切换胶囊 ================= */}
-          <div className="flex items-center bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-xl border border-slate-200/60 dark:border-slate-700/60 text-xs font-medium">
-            <button
-              type="button"
-              onClick={() => onSwitchProduct('canvas')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${
-                activeProduct === 'canvas'
-                  ? 'bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm font-semibold'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
-              }`}
-            >
-              <Compass className="w-3.5 h-3.5 text-indigo-500" />
-              <span>思维画布</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => onSwitchProduct('practice')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${
-                activeProduct === 'practice'
-                  ? 'bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm font-semibold'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
-              }`}
-            >
-              <Brain className="w-3.5 h-3.5 text-purple-500" />
-              <span>AI 练习</span>
-            </button>
-          </div>
+          {/* ================= 双产品切换胶囊（共享组件） ================= */}
+          <ProductSwitchPill activeProduct={activeProduct} onSwitchProduct={onSwitchProduct} />
         </div>
 
-        {/* 右侧控制区 */}
-        <div className="flex items-center gap-2 sm:gap-3">
-          {/* VIP 状态 / 升级 */}
+        {/* 右侧控制区（VIP / 主题 / 用户中心均为共享组件；UserDropdown 带安全退出登录） */}
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
           {user && (
-            <button
-              onClick={() => openRechargeModal('练习模式顶部按钮')}
-              className={`flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg font-medium transition ${
-                isVip
-                  ? 'bg-amber-500/10 text-amber-500 border border-amber-500/30'
-                  : 'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 border border-indigo-200/60 dark:border-indigo-800/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/40'
-              }`}
-            >
-              <Crown className="w-3.5 h-3.5 text-amber-500" />
-              <span>{isVip ? 'VIP 会员' : '升级 Pro'}</span>
-            </button>
+            <VipBadge
+              isVip={isVip}
+              sourceVip="VIP 会员特权管理"
+              sourceUpgrade="升级 VIP 会员解锁全部特权"
+              onOpen={openRechargeModal}
+            />
           )}
-
-          {/* 主题切换 */}
-          <button
-            onClick={onToggleTheme}
-            className="p-1.5 rounded-lg text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/60 transition"
-            title={theme === 'dark' ? '切换为亮色模式' : '切换为深色模式'}
-          >
-            {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-          </button>
-
-          {/* 登录/个人中心 */}
-          {user ? (
-            <button
-              onClick={openUserProfileModal}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 transition"
-            >
-              <User className="w-3.5 h-3.5 text-slate-500" />
-              <span className="hidden sm:inline max-w-[100px] truncate">{user.nickname || user.email}</span>
-            </button>
-          ) : (
-            <button
-              onClick={() => openAuthModal('signin')}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow-sm transition"
-            >
-              登录 / 注册
-            </button>
-          )}
+          <ThemeToggleButton isDark={theme === 'dark'} onToggle={onToggleTheme} />
+          <UserDropdown onGoToLanding={onGoToLanding} />
         </div>
       </header>
 

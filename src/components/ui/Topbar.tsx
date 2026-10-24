@@ -17,16 +17,11 @@ import {
   RotateCcw,
   Cloud,
   CloudOff,
-  Compass,
-  Sun,
-  Moon,
   MoreHorizontal,
   AlertTriangle,
   Network,
-  Crown,
   Link2,
   Search,
-  Brain,
 } from 'lucide-react';
 import { DeepDiveBoardMeta } from '../../types';
 import type { FolderMeta } from '../../lib/folder-store';
@@ -38,6 +33,10 @@ import {
   NodeSearchDialog,
   BoardSelectorDropdown,
   UserDropdown,
+  BrandLogo,
+  ProductSwitchPill,
+  VipBadge,
+  ThemeToggleButton,
 } from './topbar';
 
 export interface TopbarProps {
@@ -163,51 +162,14 @@ export const Topbar: React.FC<TopbarProps> = ({
 
       {/* ================= ZONE 1: Left - Brand & Board Identity ================= */}
       <div className="flex items-center gap-2 xl:gap-3 shrink-0">
-        {/* Brand Logo */}
-        <Tooltip content="返回产品介绍首页" side="bottom">
-          <button
-            onClick={onGoToLanding}
-            className="flex items-center gap-2 group cursor-pointer focus:outline-none"
-          >
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-sky-500 flex items-center justify-center text-white shadow-md shadow-indigo-500/25 group-hover:scale-105 transition-transform">
-              <Compass className="w-4 h-4 text-white" />
-            </div>
-            <span className="font-bold text-slate-850 dark:text-slate-100 text-sm tracking-tight hidden xl:inline group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
-              枝想<span className="text-indigo-600 dark:text-indigo-400 font-semibold">Arborize</span>
-            </span>
-          </button>
-        </Tooltip>
+        {/* Brand Logo（共享组件） */}
+        <BrandLogo onGoToLanding={onGoToLanding} />
 
         <div className="h-4 w-[1px] bg-slate-200 dark:bg-slate-800 hidden sm:block" />
 
-        {/* Spec R1: 双产品切换胶囊（思维画布 ↔ AI 练习） */}
+        {/* Spec R1: 双产品切换胶囊（思维画布 ↔ AI 练习，共享组件） */}
         {quizEnabled && (
-          <div className="flex items-center bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-xl border border-slate-200/70 dark:border-slate-700/60 text-xs font-medium shrink-0">
-            <button
-              type="button"
-              onClick={() => onSwitchProduct?.('canvas')}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
-                activeProduct === 'canvas'
-                  ? 'bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm font-semibold'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
-              }`}
-            >
-              <Compass className="w-3.5 h-3.5 text-indigo-500" />
-              <span className="hidden xl:inline">思维画布</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => onSwitchProduct?.('practice')}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
-                activeProduct === 'practice'
-                  ? 'bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm font-semibold'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
-              }`}
-            >
-              <Brain className="w-3.5 h-3.5 text-purple-500" />
-              <span className="hidden xl:inline">AI 练习</span>
-            </button>
-          </div>
+          <ProductSwitchPill activeProduct={activeProduct} onSwitchProduct={onSwitchProduct} />
         )}
 
         <div className="h-4 w-[1px] bg-slate-200 dark:bg-slate-800 hidden sm:block" />
@@ -558,56 +520,19 @@ export const Topbar: React.FC<TopbarProps> = ({
 
       {/* ================= ZONE 3: Right - System & User Profile ================= */}
       <div className="flex items-center gap-2 shrink-0">
-        {/* VIP 徽章 / 升级按钮 */}
+        {/* VIP 徽章 / 升级按钮（共享组件） */}
         {user ? (
-          isVip ? (
-            <Tooltip content="尊享 Pro VIP 会员特权（无限画板与无限推演）" side="bottom">
-              <button
-                id="topbar-vip-badge-btn"
-                onClick={() => openRechargeModal('VIP 会员特权管理')}
-                className="flex items-center gap-1.5 px-2 py-1.5 rounded-xl bg-gradient-to-r from-amber-500/15 via-amber-400/10 to-amber-500/15 hover:from-amber-500/25 hover:to-amber-500/25 text-amber-700 dark:text-amber-300 border border-amber-300/80 dark:border-amber-700/80 text-xs font-semibold transition-all cursor-pointer shadow-2xs"
-              >
-                <Crown className="w-3.5 h-3.5 text-amber-500 fill-amber-500/30 shrink-0" />
-                <span className="font-bold tracking-tight">VIP</span>
-                <span className="text-xxs font-normal opacity-85 hidden 2xl:inline text-amber-600 dark:text-amber-400">
-                  尊享版
-                </span>
-                <Sparkles className="hidden 2xl:block w-2.5 h-2.5 text-amber-500 shrink-0 ml-0.5 animate-pulse" />
-              </button>
-            </Tooltip>
-          ) : (
-            <Tooltip content="升级至 Pro VIP 会员，解锁无限画板与无限制思考节点" side="bottom">
-              <button
-                id="topbar-upgrade-vip-btn"
-                onClick={() => openRechargeModal('升级 VIP 会员解锁全部特权')}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white text-xs font-semibold transition-all cursor-pointer shadow-xs hover:shadow-md"
-              >
-                <Crown className="w-3.5 h-3.5 text-amber-200 shrink-0" />
-                <span>升级 VIP</span>
-              </button>
-            </Tooltip>
-          )
+          <VipBadge
+            isVip={isVip}
+            sourceVip="VIP 会员特权管理"
+            sourceUpgrade="升级 VIP 会员解锁全部特权"
+            onOpen={openRechargeModal}
+          />
         ) : null}
 
-        {/* 主题切换按钮 */}
+        {/* 主题切换按钮（共享组件） */}
         {onToggleTheme && (
-          <Tooltip content={isDark ? '切换浅色模式' : '切换沉浸深色模式'} side="bottom">
-            <button
-              id="topbar-theme-toggle-btn"
-              onClick={onToggleTheme}
-              className={`hidden md:block p-2 rounded-xl border text-xs font-medium cursor-pointer transition-all ${
-                isDark
-                  ? 'bg-slate-800/90 hover:bg-slate-700 text-amber-300 border-slate-700/80 shadow-inner'
-                  : 'bg-slate-100 hover:bg-slate-200/80 text-slate-700 border-slate-200/80'
-              }`}
-            >
-              {isDark ? (
-                <Moon className="w-3.5 h-3.5 text-amber-300 fill-amber-300/20" />
-              ) : (
-                <Sun className="w-3.5 h-3.5 text-amber-500" />
-              )}
-            </button>
-          </Tooltip>
+          <ThemeToggleButton isDark={isDark} onToggle={onToggleTheme} className="hidden md:block" />
         )}
 
         {/* 子模块 3: 用户中心与快捷入口下拉 */}

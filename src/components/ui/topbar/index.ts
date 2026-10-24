@@ -6,3 +6,7 @@
 export * from './NodeSearchDialog';
 export * from './BoardSelectorDropdown';
 export * from './UserDropdown';
+export * from './BrandLogo';
+export * from './ProductSwitchPill';
+export * from './VipBadge';
+export * from './ThemeToggleButton';
