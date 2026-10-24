@@ -6,6 +6,7 @@
  *
  * 三个关键设计（Spike 定稿，见 Spec §8.1）：
  * 1. **结构化输出**：线上 provider 是 OpenAI 兼容 `/responses`（千问），用
+ *    `text.format: { type: 'json_schema' }`（Responses API 形参；不支持时降级 `json_object`）。
  *    `response_format: { type: 'json_schema' }`；不支持时降级 `json_object`。
  *    ⚠️ schema 刻意不含 `$ref`/`$defs`（Gemini 侧不吃），换 provider 也安全。
  * 2. **截断防护四步**：给足 max_output_tokens → 查 finishReason（MAX_TOKENS 直接判失败，
@@ -384,10 +385,15 @@ export async function generateQuiz(
           temperature: 0.8,
           max_output_tokens: maxOutputTokens,
           store: false,
-          // 结构化约束：优先 json_schema，不支持时降级 json_object
-          response_format: {
-            type: 'json_schema',
-            json_schema: { name: 'quiz_questions', schema: buildQuizJsonSchema(input.count) },
+          // 结构化约束：优先 json_schema，不支持时降级 json_object。
+          // ⚠️ 必须用 Responses API 的形参 text.format —— Chat Completions 的 response_format
+          // 在 /responses 上被 400 拒绝（实测 InvalidParameter "Expects 'text.format'"，2026-10-24）
+          text: {
+            format: {
+              type: 'json_schema',
+              name: 'quiz_questions',
+              schema: buildQuizJsonSchema(input.count),
+            },
           },
         }),
       });
