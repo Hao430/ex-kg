@@ -103,7 +103,7 @@ export const BoardSelectorDropdown: React.FC<BoardSelectorDropdownProps> = ({
               className="flex items-center gap-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 py-1 pr-1 cursor-pointer focus:outline-none"
             >
               <FolderOpen className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />
-              <span className="max-w-[90px] sm:max-w-[150px] truncate">{boardName}</span>
+              <span className="max-w-[50px] xl:max-w-[90px] 2xl:max-w-[150px] truncate">{boardName}</span>
               <ChevronDown className="w-3 h-3 text-slate-400 shrink-0" />
             </button>
           </Tooltip>
@@ -133,7 +133,7 @@ export const BoardSelectorDropdown: React.FC<BoardSelectorDropdownProps> = ({
         }
         side="bottom"
       >
-        <span className="ml-1 hidden sm:inline-flex items-center gap-1 px-2 py-1 rounded-xl text-xxs font-semibold bg-slate-100/70 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 border border-slate-200/50 dark:border-slate-700/50">
+        <span className="ml-1 hidden 2xl:inline-flex items-center gap-1 px-2 py-1 rounded-xl text-xxs font-semibold bg-slate-100/70 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 border border-slate-200/50 dark:border-slate-700/50">
           {quota.offline && <CloudOff className="w-3 h-3 text-amber-500" />}
           画板 {quota.used}/{quota.unlimited ? '∞' : quota.limit ?? 3}
         </span>
