@@ -31,8 +31,8 @@ env:
   APP_ORIGIN: https://kg.hao430.cn
   SITE_DIR: /www/wwwroot/ex-kg
   RELEASES_DIR: /www/ex-kg.releases
-  SERVER_NPM: /www/server/nodejs/v22.22.2/bin/npm
-  SERVER_NODE: /www/server/nodejs/v22.22.2/bin/node
+  # 服务端 node/npm 路径不再写死版本号：宝塔升级 Node 会更换 /www/server/nodejs/vX.Y.Z 目录，
+  # 写死曾致部署在依赖安装步 127 失败（2026-10-24）。各部署步骤在远端动态解析最新版本目录。
 
 jobs:
   ci:
@@ -227,12 +227,15 @@ jobs:
           ssh -i ~/.ssh/deploy_key -p ${{ secrets.DEPLOY_PORT }} \
             ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} 'bash -s' <<'REMOTE'
           set -e
+          NODE_BIN_DIR="$(ls -dv /www/server/nodejs/v*/bin 2>/dev/null | tail -1)"
+          [ -x "$NODE_BIN_DIR/node" ] && [ -x "$NODE_BIN_DIR/npm" ] || { echo "❌ 未在 /www/server/nodejs/v*/bin 找到可用的 node/npm"; ls /www/server/nodejs 2>/dev/null || true; exit 1; }
+          echo "服务端 Node: $NODE_BIN_DIR"
           cd /www/wwwroot/ex-kg
           chown -R www:www dist package.json package-lock.json
-          ${{ env.SERVER_NPM }} install --omit=dev --no-audit --no-fund
+          "$NODE_BIN_DIR/npm" install --omit=dev --no-audit --no-fund
           chown -R www:www node_modules
           # 依赖预检：server.cjs 的全部 require 必须可 resolve（手册 §3），缺模块即失败不重启
-          ${{ env.SERVER_NODE }} -e "const src=require('fs').readFileSync('dist/server.cjs','utf8');const re=/require\(\"([a-z@][^\"]*)\"\)/g;const set=new Set();let m;while((m=re.exec(src)))set.add(m[1]);let bad=0;for(const n of set){try{require(n)}catch(e){console.log('MISSING',n);bad++}}if(bad){process.exit(1)}console.log('依赖齐')"
+          "$NODE_BIN_DIR/node" -e "const src=require('fs').readFileSync('dist/server.cjs','utf8');const re=/require\(\"([a-z@][^\"]*)\"\)/g;const set=new Set();let m;while((m=re.exec(src)))set.add(m[1]);let bad=0;for(const n of set){try{require(n)}catch(e){console.log('MISSING',n);bad++}}if(bad){process.exit(1)}console.log('依赖齐')"
           REMOTE
 
       # ADR-0019：迁移是部署期的独立步骤，**在重启之前**。失败即中止且不重启——
@@ -255,12 +258,15 @@ jobs:
           ssh -i ~/.ssh/deploy_key -p ${{ secrets.DEPLOY_PORT }} \
             ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} 'bash -s' <<'REMOTE'
           set -e
+          NODE_BIN_DIR="$(ls -dv /www/server/nodejs/v*/bin 2>/dev/null | tail -1)"
+          [ -x "$NODE_BIN_DIR/node" ] || { echo "❌ 未在 /www/server/nodejs/v*/bin 找到可用的 node"; ls /www/server/nodejs 2>/dev/null || true; exit 1; }
+          echo "服务端 Node: $NODE_BIN_DIR"
           cd /www/wwwroot/ex-kg
           trap 'rm -f /www/wwwroot/ex-kg/.migrate.env' EXIT
           set -a; . /www/wwwroot/ex-kg/.migrate.env; set +a
           export NODE_ENV=production
           # 迁移失败 → 中止发布（不重启，手册 §8）
-          MIGRATE_OUT=$(${{ env.SERVER_NODE }} dist/migrate.cjs 2>&1) || {
+          MIGRATE_OUT=$("$NODE_BIN_DIR/node" dist/migrate.cjs 2>&1) || {
             echo "$MIGRATE_OUT"
             echo "❌ 迁移失败——已中止发布，未重启进程（旧版本继续服务）"
             exit 1
