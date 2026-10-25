@@ -5,7 +5,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import {
-  Sparkles,
   Plus,
   Maximize2,
   LayoutGrid,
@@ -19,7 +18,6 @@ import {
   CloudOff,
   MoreHorizontal,
   AlertTriangle,
-  Network,
   Link2,
   Search,
 } from 'lucide-react';
@@ -174,7 +172,9 @@ export const Topbar: React.FC<TopbarProps> = ({
 
         <div className="h-4 w-[1px] bg-slate-200 dark:bg-slate-800 hidden sm:block" />
 
-        {/* Sync Status Indicator (Spec A5) */}
+        {/* Sync Status Indicator (Spec A5)——无事不打扰：仅在未登录(本地)/离线/error/conflict 出现，
+            健康态(idle/saved/pending)不占顶栏位（保存是后台预期行为，每次防抖都闪脉冲反而成噪源） */}
+        {(!user || offline || syncState === 'error' || syncState === 'conflict') && (
         <Tooltip
           content={
             !user ? '本地画板，未开启云端同步' :
@@ -208,6 +208,7 @@ export const Topbar: React.FC<TopbarProps> = ({
             )}
           </span>
         </Tooltip>
+        )}
 
         {/* 子模块 1: 画板选择与重命名 */}
         <BoardSelectorDropdown
@@ -221,77 +222,14 @@ export const Topbar: React.FC<TopbarProps> = ({
           onNewBoard={onNewBoard}
           onOpenSamples={onOpenSamples}
           onOpenLibrary={onOpenLibrary}
+          suggestionsEnabled={suggestionsEnabled}
+          suggestionsToggleDisabled={suggestionsToggleDisabled}
+          onToggleSuggestions={onToggleSuggestions}
         />
 
-        {/* 新建画板直达快捷入口 */}
-        <Tooltip content="新建思考画板" side="bottom">
-          <button
-            onClick={onNewBoard}
-            className="hidden lg:flex items-center gap-1 px-2 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white text-xs font-medium shadow-sm transition-colors cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span className="hidden 2xl:inline">新建画板</span>
-          </button>
-        </Tooltip>
-
-        {/* 画板库直达快捷入口 */}
-        {onOpenLibrary && (
-          <Tooltip content="画板库（搜索 / 收藏 / 归档）" side="bottom">
-            <button
-              onClick={onOpenLibrary}
-              className="hidden lg:flex items-center gap-1 px-2 py-1.5 rounded-xl bg-slate-100/70 dark:bg-slate-800/60 hover:bg-slate-200/70 dark:hover:bg-slate-700/60 text-slate-700 dark:text-slate-200 text-xs font-medium border border-slate-200/50 dark:border-slate-700/50 transition-colors cursor-pointer"
-            >
-<LayoutGrid className="w-3.5 h-3.5" />
-            <span className="hidden 2xl:inline">画板库</span>
-            </button>
-          </Tooltip>
-        )}
-
-        {/* 灵感开关 (Spec Q1) */}
-        {onToggleSuggestions && (
-          <Tooltip
-            content={
-              suggestionsToggleDisabled
-                ? '共享默认画板不支持该设置'
-                : suggestionsEnabled
-                ? '关闭后会清理本画板上的灵感节点，且不再生成（删除后不可恢复）'
-                : '开启后本画板的新回答会附带灵感节点'
-            }
-            side="bottom"
-          >
-            <div className="hidden xl:flex items-center gap-1.5 pl-2 pr-1.5 py-1 rounded-xl bg-slate-100/70 dark:bg-slate-800/60 border border-slate-200/50 dark:border-slate-700/50">
-              <Sparkles className="w-3 h-3 text-indigo-500 dark:text-indigo-400 shrink-0" />
-              <span className="text-xs font-medium text-slate-600 dark:text-slate-300 hidden 2xl:inline">
-                灵感
-              </span>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={suggestionsEnabled}
-                aria-label={suggestionsEnabled ? '关闭灵感并清理本画板的灵感节点' : '开启本画板的灵感节点'}
-                data-testid="suggestions-toggle"
-                disabled={suggestionsToggleDisabled}
-                onClick={onToggleSuggestions}
-                className={`relative w-9 h-5 rounded-full transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/60 ${
-                  suggestionsToggleDisabled
-                    ? 'opacity-40 cursor-not-allowed'
-                    : 'cursor-pointer'
-                } ${suggestionsEnabled ? 'bg-indigo-500' : 'bg-slate-300 dark:bg-slate-600'}`}
-              >
-                <span
-                  className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${
-                    suggestionsEnabled ? 'translate-x-4' : 'translate-x-0'
-                  }`}
-                />
-              </button>
-            </div>
-          </Tooltip>
-        )}
-
-        {/* 节点用量与性能告警 */}
-        {typeof nodeCount === 'number' && (
-          <>
-            {nodeCount >= 150 ? (
+        {/* 画板级设置（灵感开关，Spec Q1）已收纳进 BoardSelectorDropdown 菜单 */}
+        {/* 节点用量告警：只在大画板阈值出现（常态计数已移除，无事不打扰） */}
+        {typeof nodeCount === 'number' && nodeCount >= 150 && (
               <Tooltip
                 content={`当前画板包含 ${nodeCount} 个节点（达到大画板阈值）。为保持极致流畅度与低延迟渲染，建议点击卡片右上角「导出分支」将子分支拆分为独立画板。`}
                 side="bottom"
@@ -304,19 +242,6 @@ export const Topbar: React.FC<TopbarProps> = ({
                   </span>
                 </div>
               </Tooltip>
-            ) : (
-              <Tooltip
-                content={`当前思考画板共包含 ${nodeCount} 个节点 (AI 思维卡片与便签)`}
-                side="bottom"
-              >
-                <div className="hidden 2xl:flex items-center gap-1.5 px-2 py-1 rounded-xl bg-slate-100/80 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 text-slate-500 dark:text-slate-400 text-xs font-medium cursor-default">
-                  <Network className="w-3 h-3 text-slate-400 dark:text-slate-500 shrink-0" />
-                  <span>{nodeCount}</span>
-                  <span className="text-xxs text-slate-400 dark:text-slate-500">节点</span>
-                </div>
-              </Tooltip>
-            )}
-          </>
         )}
       </div>
 
@@ -369,27 +294,6 @@ export const Topbar: React.FC<TopbarProps> = ({
           />
         </div>
 
-        {/* 自动规整 */}
-        <Tooltip content="按思维树关系自动规整排版 (Zero-Drag)" shortcut="Alt+L" side="bottom">
-          <button
-            onClick={onAutoLayout}
-            className="p-1.5 hover:bg-white dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl transition-colors cursor-pointer hidden lg:flex items-center gap-1 text-xs"
-          >
-            <LayoutGrid className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
-            <span className="hidden 2xl:inline text-slate-700 dark:text-slate-200">规整</span>
-          </button>
-        </Tooltip>
-
-        {/* 全图视野居中自适应 */}
-        <Tooltip content="全图视野居中自适应 (Fit View)" shortcut="Space" side="bottom">
-          <button
-            onClick={onFitView}
-            className="p-1.5 hover:bg-white dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl transition-colors cursor-pointer hidden lg:flex"
-          >
-            <Maximize2 className="w-3.5 h-3.5" />
-          </button>
-        </Tooltip>
-
         {/* 画板更多操作下拉 */}
         <div ref={canvasMoreMenuRef} className="relative">
           <Tooltip content="画板导出与更多操作" side="bottom">
@@ -407,8 +311,8 @@ export const Topbar: React.FC<TopbarProps> = ({
                 画布与导出
               </div>
 
-              {/* 移动端快捷操作（顶栏隐藏 Fit/规整按钮的宽度段） */}
-              <div className="lg:hidden border-b border-slate-100 dark:border-slate-800 pb-1 mb-1">
+              {/* 排版快捷入口（桌面顶栏已去图标位，快捷键 Alt+L / Space 仍在） */}
+              <div className="border-b border-slate-100 dark:border-slate-800 pb-1 mb-1">
                 <button
                   onClick={() => {
                     onAutoLayout();

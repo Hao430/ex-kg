@@ -37,6 +37,10 @@ export interface BoardSelectorDropdownProps {
   onNewBoard: () => void;
   onOpenSamples?: () => void;
   onOpenLibrary?: () => void;
+  /** Spec Q1：灵感开关是画板级设置，收纳进本菜单（2026-10-25 顶栏减负） */
+  suggestionsEnabled?: boolean;
+  suggestionsToggleDisabled?: boolean;
+  onToggleSuggestions?: () => void;
 }
 
 export const BoardSelectorDropdown: React.FC<BoardSelectorDropdownProps> = ({
@@ -52,6 +56,9 @@ export const BoardSelectorDropdown: React.FC<BoardSelectorDropdownProps> = ({
   onNewBoard,
   onOpenSamples,
   onOpenLibrary,
+  suggestionsEnabled = true,
+  suggestionsToggleDisabled = false,
+  onToggleSuggestions,
 }) => {
   const targetBoardId = currentBoardId ?? activeBoardId ?? '';
   const [isEditingName, setIsEditingName] = useState(false);
@@ -202,6 +209,45 @@ export const BoardSelectorDropdown: React.FC<BoardSelectorDropdownProps> = ({
           </div>
 
           <div className="border-t border-slate-100 dark:border-slate-800 mt-1.5 pt-1.5 px-2 space-y-0.5">
+            {onToggleSuggestions && (
+              <div className="flex items-center justify-between px-2.5 py-1.5 text-xs text-slate-700 dark:text-slate-200">
+                <span className="flex items-center gap-1.5 min-w-0">
+                  <Sparkles className="w-3.5 h-3.5 text-indigo-500 dark:text-indigo-400 shrink-0" />
+                  <span className="font-medium">灵感节点</span>
+                </span>
+                <Tooltip
+                  content={
+                    suggestionsToggleDisabled
+                      ? '共享默认画板不支持该设置'
+                      : suggestionsEnabled
+                      ? '关闭后会清理本画板上的灵感节点，且不再生成（删除后不可恢复）'
+                      : '开启后本画板的新回答会附带灵感节点'
+                  }
+                  side="bottom"
+                >
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={suggestionsEnabled}
+                    aria-label={suggestionsEnabled ? '关闭灵感并清理本画板的灵感节点' : '开启本画板的灵感节点'}
+                    data-testid="suggestions-toggle"
+                    disabled={suggestionsToggleDisabled}
+                    onClick={onToggleSuggestions}
+                    className={`relative w-9 h-5 rounded-full transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/60 ${
+                      suggestionsToggleDisabled
+                        ? 'opacity-40 cursor-not-allowed'
+                        : 'cursor-pointer'
+                    } ${suggestionsEnabled ? 'bg-indigo-500' : 'bg-slate-300 dark:bg-slate-600'}`}
+                  >
+                    <span
+                      className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                        suggestionsEnabled ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </Tooltip>
+              </div>
+            )}
             {onOpenSamples && (
               <button
                 onClick={() => {
