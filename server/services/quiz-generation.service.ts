@@ -66,7 +66,8 @@ const QUIZ_SYSTEM_PROMPT = `你是严谨的出题专家。
 ## 输出要求
 只输出严格 JSON，不要任何解释文字，不要 Markdown 代码块围栏。
 每题给出解析（2 句以内，说清为什么对、错项错在哪）。
-单选与判断题混合出题，题型字段 type 分别为 'single' 与 'true_false'。`;
+单选与判断题混合出题，题型字段 type 分别为 'single' 与 'true_false'。
+correct 字段：单选题为 'A'/'B'/'C'/'D' 之一；判断题必须是小写字符串 'true' 或 'false'。`;
 
 /** 选项标签（洗牌后按新位置重新编号，见 shuffleSingleQuestion） */
 const LABELS = ['A', 'B', 'C', 'D'] as const;

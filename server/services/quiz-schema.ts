@@ -22,15 +22,38 @@ export const GenerateQuizSchema = z.object({
 export type GenerateQuizInput = z.infer<typeof GenerateQuizSchema>;
 
 /**
+ * correct 的取值归一化（Spec R1：落库契约严格限定小写 'true'|'false'）。
+ *
+ * 线上实测（2026-10-25）模型会把判断题答案写成 "True"（首字母大写字符串）甚至
+ * JSON boolean —— 语义无歧义，仅大小写/类型差异，在解析边界归一化而不是让
+ * 整批 5 题报废（服务无重试，一处格式错 = 用户直接收到 parseFailed）。
+ * 仅当值能无歧义映射时才改写：true/false 大小写不敏感、单选标签 a-d 补大写；
+ * 其余原样放行，交给下面的 enum 与 validateGeneratedQuiz 硬性拒绝。
+ */
+function normalizeCorrect(v: unknown): unknown {
+  if (typeof v === 'boolean') return v ? 'true' : 'false';
+  if (typeof v !== 'string') return v;
+  const t = v.trim();
+  if (/^true$/i.test(t)) return 'true';
+  if (/^false$/i.test(t)) return 'false';
+  if (/^[a-d]$/i.test(t)) return t.toUpperCase();
+  return t;
+}
+
+/**
  * 单道题的结构化输出契约。
  * ⚠️ `options` 对判断题恒为 null（不返回空数组，减少模型二义性）。
+ * ⚠️ 单选/判断共用同一 shape（不能用 discriminatedUnion，见文件头），故 correct
+ * 用「全体合法值」的 enum：既在导出的 JSON Schema 里对 provider 形成硬约束
+ * （此前是裸 string，"True" 畅通无阻——2026-10-25 线上实测故障根因），
+ * 又在解析边界经 normalizeCorrect 容错大小写与 boolean。
  */
 export const GeneratedQuestionSchema = z.object({
   type: z.enum(['single', 'true_false']),
   stem: z.string().min(1),
   options: z.array(z.object({ label: z.string(), text: z.string() })).nullable(),
-  /** 单选为 'A'|'B'|'C'|'D'；判断题为 'true'|'false' */
-  correct: z.string(),
+  /** 单选为 'A'|'B'|'C'|'D'；判断题为 'true'|'false'（大小写/boolean 在 normalizeCorrect 归一） */
+  correct: z.preprocess(normalizeCorrect, z.enum(['A', 'B', 'C', 'D', 'true', 'false'])),
   explanation: z.string(),
   knowledge_point: z.string(),
 });

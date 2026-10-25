@@ -465,3 +465,48 @@ describe('R1 出题观测：失败必须留痕', () => {
     assert.ok(/HTTP 400/.test(String(log.error_message)), `应带 HTTP 状态，实际：${log.error_message}`);
   });
 });
+
+/**
+ * 端到端回归：模型输出「脏 correct」（2026-10-25 线上实测故障形状）。
+ * 修复前：判断题 correct="True" 触发确定性守卫 → 整批 502 parseFailed（无重试，用户直接失败）。
+ * 修复后：解析边界归一化（quiz-schema.ts 的 normalizeCorrect + enum）→ 出题成功，
+ * 落库/判卷均为小写契约值。schema 层的逐值行为见 r1-quiz-schema.test.ts，
+ * 本组用例锁的是「整条链路不再因大小写报废」这一用户可感结果。
+ */
+describe('R1 出题：脏 correct 归一化（线上故障回归）', () => {
+  afterEach(() => {
+    rawModelOutput = null;
+  });
+
+  test('"True" 与小写单选标签 → 出题 200，判卷答案为小写契约值', async () => {
+    const mangled = structuredClone(sampleAiAdvanced.output);
+    for (const q of mangled.questions) {
+      if (q.type === 'true_false') q.correct = 'True';
+      else q.correct = q.correct.toLowerCase();
+    }
+    rawModelOutput = JSON.stringify(mangled);
+
+    const { status, body } = await createAttempt(userCookie);
+    assert.equal(status, 200, '脏 correct 应被归一化而不是整批报废（修复前此处 502）');
+    assert.equal(body.questions.length, 5);
+
+    const { status: s2, body: graded } = await submitAnswers(userCookie, body.attemptId, allFirst(body.questions));
+    assert.equal(s2, 200);
+    for (const r of graded.results) {
+      if (r.type === 'true_false') {
+        assert.ok(r.answer === 'true' || r.answer === 'false',
+          '判断题答案必须已是小写契约值，实际：' + String(r.answer));
+      }
+    }
+  });
+
+  test('boolean correct 与 "FALSE" → 出题 200', async () => {
+    const mangled = structuredClone(sampleBiologyBeginner.output);
+    mangled.questions[0].correct = 'FALSE';
+    mangled.questions[3].correct = true as unknown as string;
+    rawModelOutput = JSON.stringify(mangled);
+
+    const { status } = await createAttempt(vipCookie);
+    assert.equal(status, 200, 'boolean/FALSE 变体应归一化通过');
+  });
+});
