@@ -310,6 +310,12 @@ export interface QuizAttemptRecord {
   questionCount: number;
   /** null = 未提交；非 null = 已完成（判卷结果） */
   answers: QuizAnswerRecord[] | null;
+  /**
+   * 已答题数（仅 completed 有值）。
+   * ⚠️ 列表查询不 select answers（防泄漏），故列表路径必须由 DB 聚合/内存 derive 提供；
+   * 前端历史页的「掌握 X/Y」直接消费此字段（此前列表恒为 null，历史页永远不显示成绩）。
+   */
+  correctCount: number | null;
   /** 出题自审结论（pedagogical_analysis 摘要、是否解析失败），供面板透明展示 */
   review: Record<string, unknown>;
   created_at: string;

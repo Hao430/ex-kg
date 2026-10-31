@@ -18,6 +18,7 @@ import type { QuizAttemptRecord, QuizAnswerRecord } from '../core/records.js';
 
 function toAttemptRecord(row: any): QuizAttemptRecord {
   const questions = Array.isArray(row.questions) ? row.questions : [];
+  const answers = Array.isArray(row.answers) ? row.answers : null;
   return {
     id: row.id,
     user_id: row.user_id,
@@ -27,7 +28,11 @@ function toAttemptRecord(row: any): QuizAttemptRecord {
     questions,
     // 列表查询不 select questions，改由 DB 侧 jsonb_array_length 提供
     questionCount: Number(row.question_count ?? questions.length) || 0,
-    answers: Array.isArray(row.answers) ? row.answers : null,
+    answers,
+    // 列表 SQL 不 select answers，改由 jsonb 聚合；详情/写路径则从 answers 派生
+    correctCount: row.correct_count != null
+      ? Number(row.correct_count)
+      : (answers ? answers.filter((a: QuizAnswerRecord) => a.is_correct).length : null),
     review: row.review && typeof row.review === 'object' ? row.review : {},
     created_at: new Date(row.created_at).toISOString(),
     completed_at: row.completed_at ? new Date(row.completed_at).toISOString() : null,
@@ -45,7 +50,11 @@ export async function listAttempts(userId: string, limit = 20): Promise<QuizAtte
     try {
       const res = await db.query(
         `SELECT id, user_id, topic, difficulty, status, review, created_at, completed_at,
-                jsonb_array_length(questions) AS question_count
+                jsonb_array_length(questions) AS question_count,
+                CASE WHEN answers IS NULL THEN NULL
+                     ELSE (SELECT COUNT(*)::int FROM jsonb_array_elements(answers) AS a
+                           WHERE (a->>'is_correct')::boolean)
+                END AS correct_count
          FROM quiz_attempts WHERE user_id = $1
          ORDER BY created_at DESC LIMIT $2`,
         [userId, limit]
@@ -62,7 +71,13 @@ export async function listAttempts(userId: string, limit = 20): Promise<QuizAtte
     .filter((a) => a.user_id === userId)
     .sort((a, b) => b.created_at.localeCompare(a.created_at))
     .slice(0, limit)
-    .map((a) => ({ ...a, questions: [], answers: null, questionCount: a.questions.length }));
+    .map((a) => ({
+      ...a,
+      questions: [],
+      answers: null,
+      questionCount: a.questions.length,
+      correctCount: a.answers ? a.answers.filter((x) => x.is_correct).length : null,
+    }));
 }
 
 /** 单次详情（含题目与答案）。属主校验在 service 层，此处只按 id 取。 */
@@ -122,6 +137,7 @@ export async function createAttempt(data: {
     questions: data.questions,
     questionCount: data.questions.length,
     answers: null,
+    correctCount: null,
     review: data.review,
     created_at: now,
     completed_at: null,

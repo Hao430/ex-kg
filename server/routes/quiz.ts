@@ -66,8 +66,6 @@ function toAttemptView(row: QuizAttemptRecord): AttemptView {
 
 /** 列表/详情（未作答）用的精简视图：同样不含答案 */
 function toListItemView(row: QuizAttemptRecord) {
-  const answered = row.answers;
-  const correctCount = answered ? answered.filter((a) => a.is_correct).length : null;
   return {
     attemptId: row.id,
     topic: row.topic,
@@ -78,7 +76,9 @@ function toListItemView(row: QuizAttemptRecord) {
     // ⚠️ 键名**不用** `correct`：该键在判卷结果里表示「标准答案」，
     // 列表里同键会被误读为泄漏（tests/r1-quiz.test.ts 有按键名的断言守着）。
     total: row.questionCount,
-    correctCount,
+    // ⚠️ 用仓储层的 correctCount，不要从 row.answers 现算——列表查询刻意不 select
+    // answers（防答案泄漏），现算会恒为 null，前端历史页的「掌握 X/Y」永远不显示。
+    correctCount: row.correctCount,
     createdAt: row.created_at,
     completedAt: row.completed_at,
     review: row.review,
