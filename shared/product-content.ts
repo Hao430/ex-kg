@@ -20,13 +20,13 @@ export const BRAND = {
   name: '枝想',
   latin: 'Arborize',
   /** 对外一句话定位（页脚 / 结构化数据共用） */
-  tagline: '无限画布式 AI 深度思考与分支探索工作台',
+  tagline: '无限画布式 AI 深度思考与主动练习工作台',
 } as const;
 
 /** H1 拆成两段：lead 承载主关键词，accent 保留视觉上的渐变色行 */
 export const LANDING_H1 = {
-  lead: 'AI 深度思考，不该被困在单线对话里',
-  accent: '在无限画布上，推演你的多维认知星图',
+  lead: '把 AI 对话，变成可推演的思维画布',
+  accent: '再用 AI 练习，验证你到底掌握了多少',
 } as const;
 
 /**
@@ -34,7 +34,7 @@ export const LANDING_H1 = {
  * 同时用于落地页副标题与服务端静态回退块。
  */
 export const LANDING_LEAD =
-  '枝想（Arborize）是一款无限画布式的 AI 深度思考工具。它把传统的单线对话改成可自由分叉的思维拓扑：每个提问与解答都是画布上的一个节点，你可以同时推演多条平行思路，划词追问、递归深挖，并一键导出结构化研报。';
+  '枝想（Arborize）把「深度思考」与「主动练习」放进同一个学习工作台。思维画布让 AI 对话变成可自由分叉的拓扑，每个提问与解答都是可追溯的节点；AI 练习则按你的主题与难度出题，交卷后给出掌握情况、错题解析与可回看的历史记录。';
 
 export interface LandingHighlight {
   label: string;
@@ -44,11 +44,11 @@ export interface LandingHighlight {
 /** 核心能力条：落地页 bento 条与 JSON-LD 的 featureList 共用 */
 export const LANDING_HIGHLIGHTS: readonly LandingHighlight[] = [
   { label: '2D 无限画布', sub: '自由平移与空间记忆' },
-  { label: '数学公式排版', sub: 'LaTeX 行内与块级推导' },
   { label: '划词递归裂变', sub: '任意词句瞬时衍生' },
-  { label: '前沿大模型', sub: '极速推理与深度推演' },
+  { label: 'AI 主题练习', sub: '三档难度 · 自动判卷' },
+  { label: '掌握情况回看', sub: '错题解析 · 历史详情' },
   { label: '实时联网检索', sub: '权威来源引证溯源' },
-  { label: '深夜护眼模式', sub: '沉浸式专注研究' },
+  { label: '学术级排版', sub: '公式推导 · 结构化导出' },
 ];
 
 /** 图标以字符串键表示，前端映射为具体图标组件 */
@@ -116,6 +116,14 @@ export const LANDING_FAQS: readonly LandingFaq[] = [
     q: '支持哪些数学公式与代码格式？',
     a: '完美渲染学术级数学公式：行内公式（$E=mc^2$）与独立块级矩阵积分公式（$$...$$）均可正确排版；代码块支持整洁排版与一键复制，语法高亮能力正在加紧开发中，敬请期待。',
   },
+  {
+    q: 'AI 练习模式怎么用？',
+    a: '在练习工作台输入一个想检验的主题，选择题量（3/5/10）与入门、进阶、困难三档难度，系统会生成单选题与判断题。逐题作答后交卷，立即得到标准答案、逐题解析与本次掌握情况，全程不需要自己找题。',
+  },
+  {
+    q: '做完的练习记录可以回看吗？',
+    a: '可以。每条已完成记录都有独立详情页，展示当时的题目、你的作答、标准答案、解析与知识点，并支持只看错题与按主题再练一次；未完成的记录也可以从历史里继续作答，进度会保留在当前设备。',
+  },
 ];
 
 /** 首屏「推荐探索课题」快捷入口 */
@@ -152,9 +160,9 @@ export interface SeoRouteMeta {
  */
 export const SEO_ROUTES: Record<SeoRouteKey, SeoRouteMeta> = {
   home: {
-    title: '枝想 Arborize｜AI 深度思考画布，非线性对话与分支推演',
+    title: '枝想 Arborize｜AI 深度思考画布与 AI 练习工作台',
     description:
-      '枝想 Arborize 是一款无限画布式 AI 深度思考工具：把单线对话变成可分叉的思维拓扑。支持划词追问、递归深挖、公式排版与联网来源溯源，一键导出 Markdown 研报。',
+      '枝想 Arborize 把深度思考与主动练习放进同一个工作台：无限画布支持划词追问、递归深挖与联网溯源；AI 练习按主题出题、自动判卷，交卷后查看掌握情况、错题解析与历史详情。',
     robots: 'index, follow, max-image-preview:large',
   },
   'reset-password': {
