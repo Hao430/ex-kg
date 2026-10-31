@@ -124,10 +124,13 @@ t('PG 清空：只删本人', async () => {
   const b = newAttempt();
   await runWithUser(BOB, () => createAttempt({ ...b, userId: BOB }));
 
+  // 同文件前面的用例已为 Alice 建过记录；断言「删光本人」而不是固定 2 条
+  const aliceBefore = await runWithUser(ALICE, () => countAttempts(ALICE));
+  const bobBefore = await runWithUser(BOB, () => countAttempts(BOB));
   const deleted = await runWithUser(ALICE, () => deleteAllAttempts(ALICE));
-  assert.equal(deleted, 2);
+  assert.equal(deleted, aliceBefore);
   assert.equal(await runWithUser(ALICE, () => countAttempts(ALICE)), 0);
-  assert.equal(await runWithUser(BOB, () => countAttempts(BOB)), 1, '不得跨租户清空');
+  assert.equal(await runWithUser(BOB, () => countAttempts(BOB)), bobBefore, '不得跨租户清空');
 });
 
 t('PG 保留期：completed 180 天 / in_progress 24h，跨租户 system 作用域', async () => {
