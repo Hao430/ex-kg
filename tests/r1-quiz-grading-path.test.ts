@@ -418,17 +418,24 @@ describe('R1 判卷的确定性', () => {
     assert.equal(item.correctCount, firstCorrect, '二次提交不得覆盖首次判卷结果');
   });
 
-  test('交卷后详情仍不下发答案（答案只在 ② 的响应里）', async () => {
+  test('交卷后详情返回逐题回放，但不下发原始 questions', async () => {
     const created = await createAttempt(vipCookie);
-    await submit(vipCookie, created.attemptId, uniformAnswers(created.questions, 'A'));
+    const answers = uniformAnswers(created.questions, 'A');
+    await submit(vipCookie, created.attemptId, answers);
 
     const res = await fetch(`${base}/api/quiz/attempts/${created.attemptId}`, {
       headers: { cookie: vipCookie },
     });
     assert.equal(res.status, 200);
-    const keys = collectKeys(await res.json());
-    for (const forbidden of ['correct', 'explanation', 'answer', 'knowledge_point', 'questions']) {
-      assert.ok(!keys.has(forbidden), `交卷后详情仍不得含「${forbidden}」`);
+    const body = await res.json() as any;
+    assert.ok(Array.isArray(body.results), '已交卷详情应返回逐题结果');
+    assert.equal(body.results.length, created.questions.length);
+    for (const r of body.results) {
+      const submitted = answers.find((a) => a.questionId === r.questionId)!;
+      assert.equal(r.choice, submitted.choice, '「你的作答」应来自提交记录');
+      assert.ok(r.answer, '「标准答案」应来自存储题目');
     }
+    const keys = collectKeys(body);
+    assert.ok(!keys.has('questions'), '不得下发原始 questions 数组（含 correct 对象）');
   });
 });

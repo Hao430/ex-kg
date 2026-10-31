@@ -5,6 +5,8 @@
  * - 业务事件日志：EVENT_LOG_RETENTION_DAYS（默认 180 天，Spec I）
  * - 已注销用户（软删除）：DELETED_USER_RETENTION_DAYS（默认 30 天，Spec F4）
  * - 画布节点/边墓碑：CANVAS_TOMBSTONE_RETENTION_DAYS（默认 30 天，ADR-0017）
+ * - 做题记录已完成：QUIZ_COMPLETED_RETENTION_DAYS（默认 180 天）
+ * - 做题记录未交卷：QUIZ_IN_PROGRESS_RETENTION_HOURS（默认 24 小时）
  * 启动时执行一次，此后每 24 小时执行；异常仅告警。
  */
 import { cleanupOldAiLogs } from '../repositories/ai.repository.js';
@@ -13,10 +15,17 @@ import { cleanupOldEventLogs } from '../repositories/event-log.repository.js';
 import { cleanupDeletedUsers } from '../repositories/user.repository.js';
 import { cleanupExpiredSessions } from '../repositories/session.repository.js';
 import { cleanupCanvasTombstones } from '../repositories/canvas.repository.js';
+import { cleanupOldQuizAttempts } from '../repositories/quiz.repository.js';
 import { getDb } from '../core/db.js';
 import { runWithSystem } from '../core/db-context.js';
 
 const DAY_MS = 24 * 3600 * 1000;
+
+/** 解析非负整数留存值；空/NaN/负数回落默认（0 合法 = 全清） */
+function nonNegativeInt(raw: string | undefined, fallback: number): number {
+  const n = parseInt(raw ?? '', 10);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
 
 export function startLogCleanupJob(): void {
   const aiRetention = parseInt(process.env.AI_LOG_RETENTION_DAYS || '90', 10);
@@ -24,6 +33,9 @@ export function startLogCleanupJob(): void {
   const eventRetention = parseInt(process.env.EVENT_LOG_RETENTION_DAYS || '180', 10);
   const deletedUserRetention = parseInt(process.env.DELETED_USER_RETENTION_DAYS || '30', 10);
   const tombstoneRetention = parseInt(process.env.CANVAS_TOMBSTONE_RETENTION_DAYS || '30', 10);
+  // 0 = 全清（危险值，部署手册有警告）；NaN/负数回落默认
+  const quizCompletedRetention = nonNegativeInt(process.env.QUIZ_COMPLETED_RETENTION_DAYS, 180);
+  const quizInProgressRetention = nonNegativeInt(process.env.QUIZ_IN_PROGRESS_RETENTION_HOURS, 24);
 
   const run = async () => {
     try {
@@ -34,8 +46,8 @@ export function startLogCleanupJob(): void {
         await getDb()?.query('SELECT 1');
       });
 
-      // 六个清理任务全是跨租户批量删除，显式 system 作用域（ADR-0019）
-      const { ai, audit, events, deletedUsers, expiredSessions, tombstones } = await runWithSystem(
+      // 七个清理任务全是跨租户批量删除，显式 system 作用域（ADR-0019）
+      const { ai, audit, events, deletedUsers, expiredSessions, tombstones, quizAttempts } = await runWithSystem(
         'log-cleanup: 每日留存清理（跨租户批量删除）',
         async () => ({
           ai: await cleanupOldAiLogs(aiRetention),
@@ -44,6 +56,7 @@ export function startLogCleanupJob(): void {
           deletedUsers: await cleanupDeletedUsers(deletedUserRetention),
           expiredSessions: await cleanupExpiredSessions(),
           tombstones: await cleanupCanvasTombstones(tombstoneRetention),
+          quizAttempts: await cleanupOldQuizAttempts(quizCompletedRetention, quizInProgressRetention),
         })
       );
       if (
@@ -53,10 +66,11 @@ export function startLogCleanupJob(): void {
         deletedUsers > 0 ||
         expiredSessions > 0 ||
         tombstones.nodes > 0 ||
-        tombstones.edges > 0
+        tombstones.edges > 0 ||
+        quizAttempts > 0
       ) {
         console.log(
-          `[log-cleanup] 清理完成：ai_request_logs ${ai} 条、user_audit_logs ${audit} 条、event_logs ${events} 条、已注销用户硬删 ${deletedUsers} 个、过期会话 ${expiredSessions} 条、画布墓碑 ${tombstones.nodes} 节点 / ${tombstones.edges} 边`
+          `[log-cleanup] 清理完成：ai_request_logs ${ai} 条、user_audit_logs ${audit} 条、event_logs ${events} 条、已注销用户硬删 ${deletedUsers} 个、过期会话 ${expiredSessions} 条、画布墓碑 ${tombstones.nodes} 节点 / ${tombstones.edges} 边、做题记录 ${quizAttempts} 条`
         );
       }
     } catch (e) {

@@ -637,3 +637,21 @@ export const quizAttemptRateLimiter = rateLimit({
     code: 'RATE_LIMIT_EXCEEDED',
   },
 });
+
+/**
+ * 删除/清空做题记录：10 req/min per user。
+ *
+ * 独立实例（ADR-0007）：删除是破坏性写操作，不能与 60/min 的读/交卷共用桶，
+ * 否则翻历史会顺手把删除额度吃光（反之亦然）。
+ */
+export const quizDeleteRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => (req.user ? `user_${req.user.id}` : ipKeyGenerator(req.ip || 'anonymous')),
+  message: {
+    error: '删除操作过于频繁，请稍后再试',
+    code: 'RATE_LIMIT_EXCEEDED',
+  },
+});

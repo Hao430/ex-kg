@@ -22,6 +22,16 @@ export const GenerateQuizSchema = z.object({
 export type GenerateQuizInput = z.infer<typeof GenerateQuizSchema>;
 
 /**
+ * 出题端点入参（Spec R1 幂等扩展）。
+ * `attemptId` 由客户端生成（UUIDv7）：同一 id 重放时返回既有记录而不是重新调模型。
+ * 出题服务本身只吃 GenerateQuizInput——路由负责把 attemptId 剥离后再下传。
+ */
+export const CreateAttemptSchema = GenerateQuizSchema.extend({
+  attemptId: z.string().uuid('练习记录 id 格式不正确').optional(),
+});
+export type CreateAttemptInput = z.infer<typeof CreateAttemptSchema>;
+
+/**
  * correct 的取值归一化（Spec R1：落库契约严格限定小写 'true'|'false'）。
  *
  * 线上实测（2026-10-25）模型会把判断题答案写成 "True"（首字母大写字符串）甚至

@@ -18,13 +18,22 @@ import {
   quizGenerateRateLimiter,
   quizDailyAttemptLimiter,
   quizAttemptRateLimiter,
+  quizDeleteRateLimiter,
 } from '../middleware/auth.js';
 import { QuotaPolicy } from '../policies/quota.policy.js';
 import { NotFoundError } from '../lib/errors.js';
 import { generateQuiz } from '../services/quiz-generation.service.js';
-import { gradeAttempt } from '../services/quiz-grading.service.js';
-import { GenerateQuizSchema } from '../services/quiz-schema.js';
-import { createAttempt, getAttempt, listAttempts } from '../repositories/quiz.repository.js';
+import { buildGradeResponse, gradeAttempt } from '../services/quiz-grading.service.js';
+import { CreateAttemptSchema } from '../services/quiz-schema.js';
+import {
+  countAttempts,
+  createAttempt,
+  deleteAllAttempts,
+  deleteAttempt,
+  getAttempt,
+  listAttempts,
+} from '../repositories/quiz.repository.js';
+import { recordAuditLog } from '../repositories/audit.repository.js';
 import type { QuizAttemptRecord } from '../core/records.js';
 
 export const quizRouter = Router();
@@ -99,6 +108,58 @@ const AnswersSubmitSchema = z.object({
   })).min(1).max(10),
 });
 
+/** 历史分页：沿用全仓 1-based page + limit 口径；非法值由 validate() 转 400。 */
+const ListAttemptsQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+});
+
+type GenerationOutcome =
+  | { kind: 'ok'; row: QuizAttemptRecord }
+  | { kind: 'failed'; error: string; review: Record<string, unknown> }
+  | { kind: 'not_found' };
+
+/**
+ * 出题幂等的进程内单飞表。
+ *
+ * 为什么需要：两个并发请求都通过了「id 是否已存在」的预检时，仍会各调一次模型。
+ * 同 key 的后来者 await 同一个 promise，模型只调一次。
+ * ⚠️ 仅单进程有效（生产无 cluster）；跨进程/重启的兜底是 quiz_attempts.id 主键
+ * 唯一约束（createAttempt 的 ON CONFLICT 分支）。finally 语义用 then(ok, err) 清理，
+ * 不用 .finally（它会把 rejection 再抛一遍形成 unhandled）。
+ */
+const inFlightGenerations = new Map<string, Promise<GenerationOutcome>>();
+
+async function generateAndCreate(
+  userId: string,
+  input: { topic: string; difficulty: 'beginner' | 'intermediate' | 'advanced'; count: number },
+  attemptId: string,
+): Promise<GenerationOutcome> {
+  const generated = await generateQuiz(userId, input);
+  if (!generated.meta.ok || generated.questions.length === 0) {
+    return {
+      kind: 'failed',
+      error: generated.meta.review.error || '本次出题未能完成，请稍后重试',
+      review: generated.meta.review,
+    };
+  }
+
+  const row = await createAttempt({
+    id: attemptId,
+    userId,
+    topic: input.topic,
+    difficulty: input.difficulty,
+    questions: generated.questions,
+    review: {
+      subject: generated.meta.review.subject,
+      difficultyFit: generated.meta.review.difficultyFit,
+      misconceptionDesign: generated.meta.review.misconceptionDesign,
+      model: generated.meta.modelName,
+    },
+  });
+  return { kind: 'ok', row };
+}
+
 /** feature flag 关闭时统一 404（不暴露端点存在性） */
 function ensureQuizEnabled(): void {
   if (process.env.QUIZ_ENABLED !== 'true') {
@@ -121,37 +182,50 @@ quizRouter.post(
     // 未验证邮箱禁推理（与 chat 同一判据 QuotaPolicy.assertCanInferWithEmail，admin 豁免）
     QuotaPolicy.assertCanInferWithEmail(user);
 
-    // ⚠️ 入参只有主题/难度/题量——**不提供 systemInstruction**（注入面，Spec §4.3）
+    // ⚠️ 入参只有主题/难度/题量（+ 可选幂等 id）——**不提供 systemInstruction**（注入面，Spec §4.3）
     // 用 validate() 而非 schema.parse()：后者抛原生 ZodError，errorHandler 不识别
     // → 500（既有路由的通行做法，Spec §路由分层）
-    const input = validate(GenerateQuizSchema, req.body);
+    const input = validate(CreateAttemptSchema, req.body);
+    const payload = { topic: input.topic, difficulty: input.difficulty, count: input.count };
+    const attemptId = input.attemptId ?? crypto.randomUUID();
 
-    const generated = await generateQuiz(user.id, input);
-    if (!generated.meta.ok || generated.questions.length === 0) {
+    let outcome: GenerationOutcome;
+    if (input.attemptId) {
+      const key = `${user.id}:${attemptId}`;
+      let pending = inFlightGenerations.get(key);
+      if (!pending) {
+        pending = (async (): Promise<GenerationOutcome> => {
+          const existing = await getAttempt(attemptId);
+          if (existing) {
+            return existing.user_id === user.id
+              ? { kind: 'ok', row: existing }
+              : { kind: 'not_found' };
+          }
+          return generateAndCreate(user.id, payload, attemptId);
+        })();
+        inFlightGenerations.set(key, pending);
+        pending.then(
+          () => inFlightGenerations.delete(key),
+          () => inFlightGenerations.delete(key),
+        );
+      }
+      outcome = await pending;
+    } else {
+      outcome = await generateAndCreate(user.id, payload, attemptId);
+    }
+
+    if (outcome.kind === 'not_found') throw new NotFoundError('练习记录不存在');
+    if (outcome.kind === 'failed') {
       // 出题失败**如实告知**，不静默返回空列表（出题是主功能）
       res.status(502).json({
-        error: generated.meta.review.error || '本次出题未能完成，请稍后重试',
+        error: outcome.error || '本次出题未能完成，请稍后重试',
         code: 'QUIZ_GENERATION_FAILED',
-        review: generated.meta.review,
+        review: outcome.review,
       });
       return;
     }
 
-    const row = await createAttempt({
-      id: crypto.randomUUID(),
-      userId: user.id,
-      topic: input.topic,
-      difficulty: input.difficulty,
-      questions: generated.questions,
-      review: {
-        subject: generated.meta.review.subject,
-        difficultyFit: generated.meta.review.difficultyFit,
-        misconceptionDesign: generated.meta.review.misconceptionDesign,
-        model: generated.meta.modelName,
-      },
-    });
-
-    res.json(toAttemptView(row));
+    res.json(toAttemptView(outcome.row));
   }),
 );
 
@@ -176,8 +250,19 @@ quizRouter.get(
   quizAttemptRateLimiter,
   asyncHandler(async (req: Request, res: Response) => {
     ensureQuizEnabled();
-    const rows = await listAttempts(req.user!.id, 20);
-    res.json({ attempts: rows.map(toListItemView) });
+    const { page, limit } = validate(ListAttemptsQuerySchema, req.query);
+    const userId = req.user!.id;
+    const [total, rows] = await Promise.all([
+      countAttempts(userId),
+      listAttempts(userId, limit, (page - 1) * limit),
+    ]);
+    res.json({
+      attempts: rows.map(toListItemView),
+      total,
+      page,
+      limit,
+      hasMore: page * limit < total,
+    });
   }),
 );
 
@@ -192,6 +277,56 @@ quizRouter.get(
     const row = await getAttempt(req.params.id);
     if (!row) throw new NotFoundError('练习记录不存在');
     if (row.user_id !== user.id) throw new NotFoundError('练习记录不存在');
+
+    // 已交卷：回放逐题结果（choice=用户作答，answer=标准答案）。
+    // 未交卷继续只回列表摘要——答案只在交卷语境下可见。
+    if (row.status === 'completed' && row.answers) {
+      res.json({ ...toListItemView(row), ...buildGradeResponse(row) });
+      return;
+    }
     res.json(toListItemView(row));
+  }),
+);
+
+/** 清空本人全部做题记录（硬删，不可撤销） */
+quizRouter.delete(
+  '/attempts',
+  authMiddleware,
+  quizDeleteRateLimiter,
+  asyncHandler(async (req: Request, res: Response) => {
+    ensureQuizEnabled();
+    const user = req.user!;
+    const deleted = await deleteAllAttempts(user.id);
+    await recordAuditLog({
+      userId: user.id,
+      action: 'quiz_attempt_delete_all',
+      targetType: 'quiz_attempt',
+      details: { count: deleted },
+      ip: req.ip,
+      userAgent: req.get('user-agent'),
+    });
+    res.json({ success: true, deleted });
+  }),
+);
+
+/** 删除单条做题记录（硬删）。不存在/非属主/重复删除统一 404。 */
+quizRouter.delete(
+  '/attempts/:id',
+  authMiddleware,
+  quizDeleteRateLimiter,
+  asyncHandler(async (req: Request, res: Response) => {
+    ensureQuizEnabled();
+    const user = req.user!;
+    await deleteAttempt(req.params.id, user.id);
+    await recordAuditLog({
+      userId: user.id,
+      action: 'quiz_attempt_delete',
+      targetType: 'quiz_attempt',
+      targetId: req.params.id,
+      details: {},
+      ip: req.ip,
+      userAgent: req.get('user-agent'),
+    });
+    res.json({ success: true, deleted: 1 });
   }),
 );

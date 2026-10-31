@@ -29,6 +29,9 @@ import {
   Check,
   Flame,
   Lightbulb,
+  Eye,
+  Trash2,
+  Loader2,
 } from 'lucide-react';
 import * as quizStore from '../../lib/quiz-store';
 import type { AuthUser } from '../../types';
@@ -46,6 +49,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useModal } from '../../context/ModalContext';
 import { Tooltip } from '../ui/Tooltip';
 import { useConfirmDialog } from '../../hooks/useConfirmDialog';
+import { QuizResultList } from './QuizResultList';
 
 export const DIFFICULTY_LABELS: Record<QuizDifficulty, string> = {
   beginner: '入门',
@@ -109,6 +113,7 @@ export type Phase =
   | { kind: 'loading' }
   | { kind: 'answering'; attempt: QuizAttemptView; startedAt: number }
   | { kind: 'graded'; attempt: QuizAttemptView; results: QuizGradeResult[]; summary: { correct: number; total: number } }
+  | { kind: 'replay'; item: QuizHistoryItem; results: QuizGradeResult[]; summary: { correct: number; total: number } }
   | { kind: 'error'; message: string };
 
 export interface MasteryStats {
@@ -330,6 +335,58 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
     setPhase({ kind: 'form' });
   };
 
+  /** 历史回放：仅 completed 记录有 results；失败回到错误态 */
+  const handleOpenDetail = useCallback(async (item: QuizHistoryItem) => {
+    setPhase({ kind: 'loading' });
+    const detail = await quizStore.fetchAttemptDetail(item.attemptId);
+    if (!detail) {
+      setPhase({ kind: 'error', message: '练习详情加载失败，请稍后重试' });
+      return;
+    }
+    setPhase({ kind: 'replay', item, results: detail.results, summary: detail.summary });
+  }, []);
+
+  const handleDeleteAttempt = useCallback(async (item: QuizHistoryItem) => {
+    const ok = await confirmAction({
+      title: '删除这条练习记录？',
+      description: '删除后无法恢复，掌握情况统计会同步减少。',
+      confirmLabel: '删除',
+      tone: 'danger',
+    });
+    if (!ok) return;
+
+    const wasCurrent =
+      (phase.kind === 'replay' && phase.item.attemptId === item.attemptId) ||
+      (phase.kind === 'answering' && phase.attempt.attemptId === item.attemptId) ||
+      (phase.kind === 'graded' && phase.attempt.attemptId === item.attemptId);
+    const removed = await quizStore.removeAttempt(item.attemptId);
+    if (removed && wasCurrent) {
+      setTopic('');
+      setChoices({});
+      setPhase({ kind: 'form' });
+    }
+  }, [confirmAction, phase]);
+
+  const handleClearHistory = useCallback(async () => {
+    const ok = await confirmAction({
+      title: '清空全部练习记录？',
+      description: '所有历史记录与统计将永久删除，且无法恢复。',
+      confirmLabel: '清空',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    const cleared = await quizStore.clearHistory();
+    if (cleared) {
+      setTopic('');
+      setChoices({});
+      setPhase({ kind: 'form' });
+    }
+  }, [confirmAction]);
+
+  const handleLoadMore = useCallback(() => {
+    void quizStore.loadMoreHistory();
+  }, []);
+
   return (
     <div className="w-full h-full flex flex-col bg-slate-50 dark:bg-[#070b14] text-slate-850 dark:text-slate-100 font-sans transition-colors duration-200">
       {/* ================= 顶层全局导航 Header ================= */}
@@ -408,8 +465,22 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
           <div className="flex-1 overflow-y-auto p-3 space-y-1.5 min-h-0">
             <div className="px-2 py-1 text-xs font-semibold text-slate-500 dark:text-slate-400 flex items-center justify-between">
               <span>往期练习记录</span>
-              {historyView.offline && <span className="text-xxs text-amber-500">离线缓存</span>}
+              <div className="flex items-center gap-2">
+                {historyView.offline && <span className="text-xxs text-amber-500">离线缓存</span>}
+                {historyView.items.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => void handleClearHistory()}
+                    className="text-xxs text-slate-400 hover:text-rose-500 transition-colors cursor-pointer"
+                  >
+                    清空
+                  </button>
+                )}
+              </div>
             </div>
+            {historyView.historyError && (
+              <div className="px-2 text-xxs text-rose-500">{historyView.historyError}</div>
+            )}
 
             {historyView.items.length === 0 ? (
               <div className="p-6 text-center text-xs text-slate-400 dark:text-slate-500 space-y-2">
@@ -418,42 +489,85 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
                 <p className="text-xxs text-slate-400">输入主题开始第一次测验吧</p>
               </div>
             ) : (
-              historyView.items.map((item) => {
-                const isSelected = phase.kind !== 'form' && (phase as any).attempt?.attemptId === item.attemptId;
-                return (
+              <>
+                {historyView.items.map((item) => {
+                  const isSelected =
+                    (phase.kind === 'replay' && phase.item.attemptId === item.attemptId) ||
+                    ((phase.kind === 'answering' || phase.kind === 'graded') &&
+                      phase.attempt.attemptId === item.attemptId);
+                  return (
+                    <div
+                      key={item.attemptId}
+                      className={`w-full p-3 rounded-xl border transition-all group ${
+                        isSelected
+                          ? 'bg-indigo-50 dark:bg-indigo-950/40 border-indigo-300 dark:border-indigo-700/80 shadow-sm'
+                          : 'bg-white dark:bg-slate-900/60 border-slate-200/70 dark:border-slate-800/70 hover:border-indigo-200 dark:hover:border-slate-700 hover:bg-slate-50/80 dark:hover:bg-slate-800/40'
+                      }`}
+                    >
+                      <div className="flex items-start gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleStartNewWithTopic(item.topic, item.difficulty)}
+                          className="flex-1 min-w-0 text-left cursor-pointer"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 line-clamp-1 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+                              {item.topic}
+                            </span>
+                            <span className="text-xxs px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 shrink-0">
+                              {DIFFICULTY_LABELS[item.difficulty]}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between text-xxs text-slate-400 mt-2">
+                            <span>
+                              {item.status === 'completed' && item.correctCount !== null ? (
+                                <span className="font-medium text-emerald-600 dark:text-emerald-400">
+                                  掌握 {item.correctCount}/{item.total}
+                                </span>
+                              ) : (
+                                <span className="text-amber-500">未完成</span>
+                              )}
+                            </span>
+                            <span>{new Date(item.createdAt).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })}</span>
+                          </div>
+                        </button>
+
+                        <div className="flex items-center gap-0.5 shrink-0">
+                          {item.status === 'completed' && (
+                            <button
+                              type="button"
+                              title="查看详情"
+                              onClick={() => void handleOpenDetail(item)}
+                              className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 rounded-lg transition-colors cursor-pointer"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            title="删除记录"
+                            onClick={() => void handleDeleteAttempt(item)}
+                            className="p-1 text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition-colors cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+                {historyView.hasMore && (
                   <button
-                    key={item.attemptId}
                     type="button"
-                    onClick={() => handleStartNewWithTopic(item.topic, item.difficulty)}
-                    className={`w-full text-left p-3 rounded-xl border transition-all group cursor-pointer ${
-                      isSelected
-                        ? 'bg-indigo-50 dark:bg-indigo-950/40 border-indigo-300 dark:border-indigo-700/80 shadow-sm'
-                        : 'bg-white dark:bg-slate-900/60 border-slate-200/70 dark:border-slate-800/70 hover:border-indigo-200 dark:hover:border-slate-700 hover:bg-slate-50/80 dark:hover:bg-slate-800/40'
-                    }`}
+                    onClick={handleLoadMore}
+                    disabled={historyView.loadingMore}
+                    className="w-full mt-2 py-2 rounded-xl border border-slate-200 dark:border-slate-800 text-xxs text-slate-500 hover:text-indigo-600 hover:border-indigo-200 transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-wait flex items-center justify-center gap-1.5"
                   >
-                    <div className="flex items-start justify-between gap-2">
-                      <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 line-clamp-1 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
-                        {item.topic}
-                      </span>
-                      <span className="text-xxs px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 shrink-0">
-                        {DIFFICULTY_LABELS[item.difficulty]}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between text-xxs text-slate-400 mt-2">
-                      <span>
-                        {item.status === 'completed' && item.correctCount !== null ? (
-                          <span className="font-medium text-emerald-600 dark:text-emerald-400">
-                            掌握 {item.correctCount}/{item.total}
-                          </span>
-                        ) : (
-                          <span className="text-amber-500">未完成</span>
-                        )}
-                      </span>
-                      <span>{new Date(item.createdAt).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })}</span>
-                    </div>
+                    {historyView.loadingMore ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                    {historyView.loadingMore ? '加载中…' : '加载更多'}
                   </button>
-                );
-              })
+                )}
+              </>
             )}
           </div>
         </aside>
@@ -788,127 +902,36 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
 
             {/* 状态 5：判卷诊断报告 (Graded View) */}
             {phase.kind === 'graded' && (
-              <div className="flex flex-col gap-6 animate-in fade-in duration-200">
-                {/* 成绩卡片 */}
-                <div className="p-6 rounded-2xl bg-gradient-to-br from-indigo-500/10 via-emerald-500/10 to-sky-500/10 border border-emerald-500/20 dark:border-emerald-500/20 shadow-sm flex flex-col gap-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">本次测验掌握情况</span>
-                      <h2 className="text-2xl font-black text-slate-900 dark:text-slate-100 tracking-tight mt-0.5">
-                        掌握 {phase.summary.correct} / {phase.summary.total}
-                      </h2>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => void handleGenerate()}
-                        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-xl shadow-sm transition cursor-pointer flex items-center gap-1.5"
-                      >
-                        <RotateCcw className="w-3.5 h-3.5" />
-                        <span>再练一组</span>
-                      </button>
-                      {onExploreInCanvas && (
-                        <button
-                          type="button"
-                          onClick={() => onExploreInCanvas(topic)}
-                          className="px-4 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:text-indigo-600 font-semibold text-xs rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm transition cursor-pointer flex items-center gap-1.5"
-                        >
-                          <Compass className="w-3.5 h-3.5" />
-                          <span>在画布中深挖</span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* 低置信单列提示 */}
-                  {phase.results.filter((r) => r.lowConfidence).length > 0 && (
-                    <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-700 dark:text-amber-400 flex items-center gap-2">
-                      <AlertTriangle className="w-4 h-4 shrink-0" />
-                      <span>
-                        其中 {phase.results.filter((r) => r.lowConfidence).length} 题作答极快（≤2s），可能为碰巧猜对，暂未计入稳定掌握。
-                      </span>
-                    </div>
-                  )}
-                </div>
-
-                {/* 逐题详细解析 */}
-                <div className="flex flex-col gap-4">
-                  <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                    题目精讲与误区复盘
-                  </h3>
-                  {phase.results.map((r, i) => (
-                    <div
-                      key={r.questionId}
-                      className="p-5 rounded-2xl bg-white dark:bg-[#0c1222] border border-slate-200/80 dark:border-slate-800/80 shadow-sm flex flex-col gap-3"
-                    >
-                      <div className="flex items-start gap-2.5">
-                        <span
-                          className={`w-6 h-6 rounded-lg font-bold text-xs flex items-center justify-center shrink-0 ${
-                            r.isCorrect
-                              ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400'
-                              : 'bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400'
-                          }`}
-                        >
-                          {i + 1}
-                        </span>
-                        <div className="flex-1">
-                          <p className="text-sm font-semibold text-slate-850 dark:text-slate-100">
-                            {r.stem}
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* 作答状态与正确答案 */}
-                      <div className="pl-8 flex flex-col gap-2">
-                        <div className="flex flex-wrap items-center gap-3 text-xs">
-                          <span
-                            className={`flex items-center gap-1 font-semibold ${
-                              r.isCorrect ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
-                            }`}
-                          >
-                            {r.isCorrect ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
-                            <span>你的作答：{r.type === 'single' ? r.answer : (r.answer === 'true' ? '正确' : '错误')}</span>
-                          </span>
-
-                          {!r.isCorrect && (
-                            <span className="text-slate-500 font-medium">
-                              标准正确答案：<span className="text-slate-800 dark:text-slate-200 font-bold">{r.type === 'single' ? r.answer : (r.answer === 'true' ? '正确' : '错误')}</span>
-                            </span>
-                          )}
-
-                          {r.lowConfidence && (
-                            <span className="text-xxs text-amber-500 px-1.5 py-0.5 rounded bg-amber-500/10">
-                              秒答待巩固
-                            </span>
-                          )}
-                        </div>
-
-                        {/* 解析文本卡片 */}
-                        <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-100 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-                          <span className="font-bold text-slate-700 dark:text-slate-200 block mb-1">💡 试题解析：</span>
-                          {r.explanation}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* 底部返回操作 */}
-                <div className="flex items-center justify-center gap-3 pt-4">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPhase({ kind: 'form' });
-                      setTopic('');
-                      setChoices({});
-                    }}
-                    className="px-6 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 font-medium text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
-                  >
-                    开始其他主题练习
-                  </button>
-                </div>
-              </div>
+              <QuizResultList
+                results={phase.results}
+                summary={phase.summary}
+                topic={topic}
+                onRetry={() => void handleGenerate()}
+                onExplore={onExploreInCanvas}
+                onBack={() => {
+                  setPhase({ kind: 'form' });
+                  setTopic('');
+                  setChoices({});
+                }}
+              />
             )}
+
+            {/* 状态 6：历史回放（已交卷记录） */}
+            {phase.kind === 'replay' && (
+              <QuizResultList
+                results={phase.results}
+                summary={phase.summary}
+                topic={phase.item.topic}
+                onRetry={() => handleStartNewWithTopic(phase.item.topic, phase.item.difficulty)}
+                onExplore={onExploreInCanvas}
+                onBack={() => {
+                  setPhase({ kind: 'form' });
+                  setTopic('');
+                  setChoices({});
+                }}
+              />
+            )}
+
           </div>
         </main>
       </div>

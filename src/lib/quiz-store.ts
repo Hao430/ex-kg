@@ -13,6 +13,7 @@
 import * as scope from './board-scope';
 import { createScopedStore } from './store-factory';
 import { extractErrorMessage } from './api';
+import { uuidv7 } from './uuid';
 
 export type QuizDifficulty = 'beginner' | 'intermediate' | 'advanced';
 export type QuizQuestionType = 'single' | 'true_false';
@@ -56,6 +57,12 @@ export interface QuizGradeResult {
   type: QuizQuestionType;
   stem: string;
   isCorrect: boolean;
+  /**
+   * 用户实际提交的选项（'A'..'D' 或 'true'|'false'）。
+   * 可选是为了兼容旧测试夹具/历史缓存；服务端 ② 与详情回放恒返回该字段。
+   */
+  choice?: string;
+  /** 标准答案 */
   answer: string;
   explanation: string;
   knowledgePoint: string;
@@ -88,21 +95,52 @@ export interface QuizHistoryView {
   items: QuizHistoryItem[];
   loaded: boolean;
   offline: boolean;
+  page: number;
+  total: number;
+  hasMore: boolean;
+  loadingMore: boolean;
+  historyError: string | null;
 }
+
+/** 历史页大小（与服务端默认值一致；loadMore 固定用它翻页） */
+export const QUIZ_HISTORY_PAGE_SIZE = 20;
 
 interface QuizState {
   history: QuizHistoryItem[];
   loaded: boolean;
   offline: boolean;
+  page: number;
+  total: number;
+  hasMore: boolean;
+  loadingMore: boolean;
+  historyError: string | null;
 }
 
-const emptyState = (): QuizState => ({ history: [], loaded: false, offline: false });
+const emptyState = (): QuizState => ({
+  history: [],
+  loaded: false,
+  offline: false,
+  page: 1,
+  total: 0,
+  hasMore: false,
+  loadingMore: false,
+  historyError: null,
+});
 
 /** 缓存 key 与 JSON 格式保持不变（旧缓存必须还能读） */
 const store = createScopedStore<QuizState, QuizHistoryView>({
   name: 'quiz-store',
   initialState: emptyState,
-  buildView: (s) => ({ items: s.history, loaded: s.loaded, offline: s.offline }),
+  buildView: (s) => ({
+    items: s.history,
+    loaded: s.loaded,
+    offline: s.offline,
+    page: s.page,
+    total: s.total,
+    hasMore: s.hasMore,
+    loadingMore: s.loadingMore,
+    historyError: s.historyError,
+  }),
   /** 绑定账号 scope：换账号即重置并从本地缓存预热（离线也能看到历史） */
   onScopeBind: (key) => {
     const next = emptyState();
@@ -110,7 +148,10 @@ const store = createScopedStore<QuizState, QuizHistoryView>({
       const raw = localStorage.getItem(scope.quizCacheKey(key));
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) next.history = parsed as QuizHistoryItem[];
+        if (Array.isArray(parsed)) {
+          next.history = parsed as QuizHistoryItem[];
+          next.total = next.history.length;
+        }
       }
     } catch {
       // 缓存坏了就用空视图，不阻断
@@ -154,41 +195,59 @@ export function bindScope(scopeKey: scope.ScopeKey): void {
   store.bindScope(scopeKey);
 }
 
+/**
+ * 出题进行中的单飞 promise：双击/重复点击合并为一次请求。
+ * 服务端另有 attemptId 幂等（跨刷新/跨标签仍有效）。
+ */
+let inFlightGenerate: Promise<QuizGenerateOutcome> | null = null;
+
 /** 出题：① 只拿题干与选项 */
 export async function generateQuiz(input: {
   topic: string;
   difficulty: QuizDifficulty;
   count: number;
 }): Promise<QuizGenerateOutcome> {
-  try {
-    const res = await fetch('/api/quiz/attempts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(input),
-    });
-    if (!res.ok) {
+  if (inFlightGenerate) return inFlightGenerate;
+
+  const request = (async (): Promise<QuizGenerateOutcome> => {
+    try {
+      const res = await fetch('/api/quiz/attempts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // attemptId 由客户端生成：网络重试/双击带同一 id，服务端不会重复调模型
+        body: JSON.stringify({ ...input, attemptId: uuidv7() }),
+      });
+      if (!res.ok) {
+        store.setState({ ...store.getState(), offline: true });
+        return { ok: false, error: await extractErrorMessage(res, '出题失败，请稍后重试') };
+      }
+      const data = await res.json() as QuizAttemptView;
+      store.setState({ ...store.getState(), offline: false });
+      upsertLocalItem({
+        attemptId: data.attemptId,
+        topic: input.topic,
+        difficulty: input.difficulty,
+        status: 'in_progress',
+        total: data.questions.length,
+        correctCount: null,
+        createdAt: new Date().toISOString(),
+        completedAt: null,
+        review: data.review || {},
+      });
+      store.persistNow();
+      return { ok: true, data };
+    } catch {
       store.setState({ ...store.getState(), offline: true });
-      return { ok: false, error: await extractErrorMessage(res, '出题失败，请稍后重试') };
+      return { ok: false, error: '网络异常，出题未完成' };
     }
-    const data = await res.json() as QuizAttemptView;
-    store.setState({ ...store.getState(), offline: false });
-    upsertLocalItem({
-      attemptId: data.attemptId,
-      topic: input.topic,
-      difficulty: input.difficulty,
-      status: 'in_progress',
-      total: data.questions.length,
-      correctCount: null,
-      createdAt: new Date().toISOString(),
-      completedAt: null,
-      review: data.review || {},
-    });
-    store.persistNow();
-    return { ok: true, data };
-  } catch {
-    store.setState({ ...store.getState(), offline: true });
-    return { ok: false, error: '网络异常，出题未完成' };
-  }
+  })();
+
+  inFlightGenerate = request;
+  request.then(
+    () => { inFlightGenerate = null; },
+    () => { inFlightGenerate = null; },
+  );
+  return request;
 }
 
 /** 交卷：② 返回正确答案与解析 */
@@ -228,22 +287,158 @@ export async function submitAnswers(
   }
 }
 
-/** 历史列表：服务端为准，失败回落本地缓存（离线可见） */
+interface HistoryResponse {
+  attempts: QuizHistoryItem[];
+  total?: number;
+  page?: number;
+  hasMore?: boolean;
+}
+
+/**
+ * 历史列表：服务端为准，失败回落本地缓存（离线可见）。
+ * ⚠️ 第 1 页必须用**裸 URL**：只读的 SSR 测试用 `/\/api\/quiz\/attempts$/` 匹配 mock。
+ */
 export async function refreshHistory(): Promise<void> {
   try {
     const res = await fetch('/api/quiz/attempts');
     if (!res.ok) throw new Error('history failed');
-    const body = await res.json() as { attempts: QuizHistoryItem[] };
+    const body = await res.json() as HistoryResponse;
+    const items = Array.isArray(body.attempts) ? body.attempts : [];
     store.setState({
       ...store.getState(),
-      history: Array.isArray(body.attempts) ? body.attempts : [],
+      history: items,
       loaded: true,
       offline: false,
+      page: body.page ?? 1,
+      total: body.total ?? items.length,
+      hasMore: body.hasMore ?? false,
+      loadingMore: false,
+      historyError: null,
     });
     store.persistNow();
   } catch {
     // 本地缓存保留：history 数组不动，只更新 offline 标记
     store.setState({ ...store.getState(), offline: true });
+  }
+}
+
+/** 加载下一页并追加（按 attemptId 去重，防翻页期间新增导致重复）。 */
+export async function loadMoreHistory(): Promise<void> {
+  const s = store.getState();
+  if (s.loadingMore || !s.hasMore) return;
+  store.setState({ ...store.getState(), loadingMore: true, historyError: null });
+
+  try {
+    const nextPage = s.page + 1;
+    const res = await fetch(`/api/quiz/attempts?page=${nextPage}&limit=${QUIZ_HISTORY_PAGE_SIZE}`);
+    if (!res.ok) throw new Error('load more failed');
+    const body = await res.json() as HistoryResponse;
+    const incoming = Array.isArray(body.attempts) ? body.attempts : [];
+
+    const seen = new Set(s.history.map((h) => h.attemptId));
+    const appended = incoming.filter((h) => !seen.has(h.attemptId));
+    const history = [...s.history, ...appended];
+    store.setState({
+      ...store.getState(),
+      history,
+      page: body.page ?? nextPage,
+      total: body.total ?? s.total,
+      hasMore: body.hasMore ?? false,
+      loadingMore: false,
+      offline: false,
+      historyError: null,
+    });
+    store.persistNow();
+  } catch {
+    store.setState({
+      ...store.getState(),
+      loadingMore: false,
+      historyError: '加载更多失败，请稍后重试',
+    });
+  }
+}
+
+/** 删除单条：乐观移除，失败按原索引回插；404 视为已删除（幂等）。 */
+export async function removeAttempt(attemptId: string): Promise<boolean> {
+  const s = store.getState();
+  const idx = s.history.findIndex((h) => h.attemptId === attemptId);
+  if (idx < 0) return true;
+  if (s.offline) {
+    store.setState({ ...store.getState(), historyError: '离线状态无法删除记录' });
+    return false;
+  }
+
+  store.setState({
+    ...store.getState(),
+    history: s.history.filter((h) => h.attemptId !== attemptId),
+    total: Math.max(0, s.total - 1),
+    historyError: null,
+  });
+  store.persistNow();
+
+  try {
+    const res = await fetch(`/api/quiz/attempts/${attemptId}`, { method: 'DELETE' });
+    if (!res.ok && res.status !== 404) throw new Error('delete failed');
+    return true;
+  } catch {
+    const now = store.getState().history;
+    const restored = [...now];
+    restored.splice(Math.min(idx, restored.length), 0, s.history[idx]);
+    store.setState({
+      ...store.getState(),
+      history: restored,
+      total: store.getState().total + 1,
+      historyError: '删除失败，已恢复记录',
+    });
+    store.persistNow();
+    return false;
+  }
+}
+
+/** 清空全部：服务端确认后再清本地（不可撤销）。 */
+export async function clearHistory(): Promise<boolean> {
+  const s = store.getState();
+  if (s.offline) {
+    store.setState({ ...store.getState(), historyError: '离线状态无法清空记录' });
+    return false;
+  }
+
+  try {
+    const res = await fetch('/api/quiz/attempts', { method: 'DELETE' });
+    if (!res.ok) throw new Error('clear failed');
+    store.setState({
+      ...store.getState(),
+      history: [],
+      total: 0,
+      page: 1,
+      hasMore: false,
+      historyError: null,
+    });
+    store.persistNow();
+    return true;
+  } catch {
+    store.setState({
+      ...store.getState(),
+      historyError: '清空失败，请稍后重试',
+    });
+    return false;
+  }
+}
+
+export interface QuizAttemptDetail extends QuizHistoryItem {
+  results: QuizGradeResult[];
+  summary: QuizGradeSummary;
+}
+
+/** 读取已交卷记录的逐题回放（仅 completed 有 results）。 */
+export async function fetchAttemptDetail(attemptId: string): Promise<QuizAttemptDetail | null> {
+  try {
+    const res = await fetch(`/api/quiz/attempts/${attemptId}`);
+    if (!res.ok) return null;
+    const body = await res.json() as QuizAttemptDetail;
+    return body && Array.isArray(body.results) ? body : null;
+  } catch {
+    return null;
   }
 }
 

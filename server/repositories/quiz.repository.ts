@@ -44,7 +44,7 @@ function toAttemptRecord(row: any): QuizAttemptRecord {
  * 列表只用于展示主题/难度/状态/时间与掌握情况概览，答案绝不出网（Spec §4.4）。
  * 相应地，返回的 record 里 questions 为空数组、answers 为 null，调用方不得依赖。
  */
-export async function listAttempts(userId: string, limit = 20): Promise<QuizAttemptRecord[]> {
+export async function listAttempts(userId: string, limit = 20, offset = 0): Promise<QuizAttemptRecord[]> {
   const db = getDb();
   if (db) {
     try {
@@ -56,8 +56,9 @@ export async function listAttempts(userId: string, limit = 20): Promise<QuizAtte
                            WHERE (a->>'is_correct')::boolean)
                 END AS correct_count
          FROM quiz_attempts WHERE user_id = $1
-         ORDER BY created_at DESC LIMIT $2`,
-        [userId, limit]
+         ORDER BY created_at DESC, id DESC
+         LIMIT $2 OFFSET $3`,
+        [userId, limit, offset]
       );
       return res.rows.map(toAttemptRecord);
     } catch (e) {
@@ -69,8 +70,8 @@ export async function listAttempts(userId: string, limit = 20): Promise<QuizAtte
 
   return Array.from(inMemoryStore.quizAttempts.values())
     .filter((a) => a.user_id === userId)
-    .sort((a, b) => b.created_at.localeCompare(a.created_at))
-    .slice(0, limit)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id))
+    .slice(offset, offset + limit)
     .map((a) => ({
       ...a,
       questions: [],
@@ -78,6 +79,30 @@ export async function listAttempts(userId: string, limit = 20): Promise<QuizAtte
       questionCount: a.questions.length,
       correctCount: a.answers ? a.answers.filter((x) => x.is_correct).length : null,
     }));
+}
+
+/** 历史总条数（分页元信息）。只 COUNT，不碰 questions/answers。 */
+export async function countAttempts(userId: string): Promise<number> {
+  const db = getDb();
+  if (db) {
+    try {
+      const res = await db.query(
+        `SELECT COUNT(*)::int AS n FROM quiz_attempts WHERE user_id = $1`,
+        [userId]
+      );
+      return Number(res.rows[0]?.n) || 0;
+    } catch (e) {
+      if (e instanceof AppError) throw e;
+      handlePgError(e);
+      console.warn('PG countAttempts fallback to in-memory:', e);
+    }
+  }
+
+  let n = 0;
+  for (const a of inMemoryStore.quizAttempts.values()) {
+    if (a.user_id === userId) n += 1;
+  }
+  return n;
 }
 
 /** 单次详情（含题目与答案）。属主校验在 service 层，此处只按 id 取。 */
@@ -116,15 +141,33 @@ export async function createAttempt(data: {
       const res = await db.query(
         `INSERT INTO quiz_attempts (id, user_id, topic, difficulty, questions, review)
          VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)
+         ON CONFLICT (id) DO NOTHING
          RETURNING id, user_id, topic, difficulty, status, questions, answers, review, created_at, completed_at`,
         [data.id, data.userId, data.topic, data.difficulty, JSON.stringify(data.questions), JSON.stringify(data.review)]
       );
-      return toAttemptRecord(res.rows[0]);
+      if (res.rows.length > 0) return toAttemptRecord(res.rows[0]);
+
+      // 幂等冲突：同一 id 已存在（重试/并发）。属主返回既有行，他人不可确认存在。
+      const existing = await db.query(
+        `SELECT id, user_id, topic, difficulty, status, questions, answers, review, created_at, completed_at
+         FROM quiz_attempts WHERE id = $1`,
+        [data.id]
+      );
+      if (existing.rows.length === 0 || existing.rows[0].user_id !== data.userId) {
+        throw new NotFoundError('练习记录不存在');
+      }
+      return toAttemptRecord(existing.rows[0]);
     } catch (e) {
       if (e instanceof AppError) throw e;
       handlePgError(e);
       console.warn('PG createAttempt fallback to in-memory:', e);
     }
+  }
+
+  const existingRecord = inMemoryStore.quizAttempts.get(data.id);
+  if (existingRecord) {
+    if (existingRecord.user_id !== data.userId) throw new NotFoundError('练习记录不存在');
+    return { ...existingRecord };
   }
 
   const now = new Date().toISOString();
@@ -191,6 +234,109 @@ export async function completeAttempt(
   record.status = 'completed';
   record.completed_at = new Date().toISOString();
   return { ...record };
+}
+
+/**
+ * 删除单条。属主条件写在 WHERE 里：RLS 下他人行恒为 0 行，故非属主与不存在
+ * 一律 NotFound（与读接口 404 口径一致，不引入归属探针）。
+ */
+export async function deleteAttempt(id: string, userId: string): Promise<void> {
+  const db = getDb();
+  if (db) {
+    try {
+      const res = await db.query(
+        `DELETE FROM quiz_attempts WHERE id = $1 AND user_id = $2`,
+        [id, userId]
+      );
+      if ((res.rowCount || 0) === 0) throw new NotFoundError('练习记录不存在');
+      return;
+    } catch (e) {
+      if (e instanceof AppError) throw e;
+      handlePgError(e);
+      console.warn(`PG deleteAttempt(${id}) fallback to in-memory:`, e);
+    }
+  }
+
+  const record = inMemoryStore.quizAttempts.get(id);
+  if (!record || record.user_id !== userId) throw new NotFoundError('练习记录不存在');
+  inMemoryStore.quizAttempts.delete(id);
+}
+
+/** 清空本人全部做题记录（硬删）。返回删除条数。 */
+export async function deleteAllAttempts(userId: string): Promise<number> {
+  const db = getDb();
+  if (db) {
+    try {
+      const res = await db.query(
+        `DELETE FROM quiz_attempts WHERE user_id = $1`,
+        [userId]
+      );
+      return res.rowCount || 0;
+    } catch (e) {
+      if (e instanceof AppError) throw e;
+      handlePgError(e);
+      console.warn('PG deleteAllAttempts fallback to in-memory:', e);
+    }
+  }
+
+  let deleted = 0;
+  for (const [id, a] of inMemoryStore.quizAttempts.entries()) {
+    if (a.user_id === userId) {
+      inMemoryStore.quizAttempts.delete(id);
+      deleted += 1;
+    }
+  }
+  return deleted;
+}
+
+/**
+ * 保留期清理（跨租户批量删除）。调用方必须在 system 作用域执行
+ * （log-cleanup 的 runWithSystem）；仓储不自行升级作用域（ADR-0019）。
+ *
+ * - completed：按 completed_at（缺失回落 created_at）保留 N 天；
+ * - in_progress：按 created_at 保留 N 小时（防止点了出题从不交卷的记录永久堆积）。
+ */
+export async function cleanupOldQuizAttempts(
+  completedRetentionDays: number,
+  inProgressRetentionHours: number,
+): Promise<number> {
+  const db = getDb();
+  if (db) {
+    try {
+      const res = await db.query(
+        `DELETE FROM quiz_attempts
+         WHERE (status = 'completed'
+                AND COALESCE(completed_at, created_at) < NOW() - make_interval(days => $1::int))
+            OR (status = 'in_progress'
+                AND created_at < NOW() - make_interval(hours => $2::int))`,
+        [completedRetentionDays, inProgressRetentionHours]
+      );
+      return res.rowCount || 0;
+    } catch (e) {
+      if (e instanceof AppError) throw e;
+      handlePgError(e);
+      console.warn('PG cleanupOldQuizAttempts fallback to in-memory:', e);
+    }
+  }
+
+  const now = Date.now();
+  const completedCutoff = now - completedRetentionDays * 24 * 3600 * 1000;
+  const inProgressCutoff = now - inProgressRetentionHours * 3600 * 1000;
+  let deleted = 0;
+  for (const [id, a] of inMemoryStore.quizAttempts.entries()) {
+    const createdAt = new Date(a.created_at).getTime();
+    if (a.status === 'completed') {
+      const completedAt = a.completed_at ? new Date(a.completed_at).getTime() : createdAt;
+      if (completedAt < completedCutoff) {
+        inMemoryStore.quizAttempts.delete(id);
+        deleted += 1;
+      }
+    } else if (createdAt < inProgressCutoff) {
+      inMemoryStore.quizAttempts.delete(id);
+      deleted += 1;
+    }
+  }
+  return deleted;
 }
 
 /** 练习次数统计（供每日闸门与统计页使用）。⚠️ 只数 status='completed'。 */

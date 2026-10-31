@@ -42,6 +42,8 @@ export interface GradeResult {
   type: 'single' | 'true_false';
   stem: string;
   isCorrect: boolean;
+  /** 用户实际提交的选项（'A'..'D' 或 'true'|'false'） */
+  choice: string;
   /** 标准答案 */
   answer: string;
   explanation: string;
@@ -143,14 +145,31 @@ export async function gradeAttempt(
 
   // 条件更新落库；仓储在重复提交/越权时会抛对应错误码
   const saved = await completeAttempt(attemptId, userId, graded);
+  return buildGradeResponse(saved);
+}
 
-  const results: GradeResult[] = saved.questions.map((q) => {
-    const g = saved.answers!.find((a) => a.question_id === q.id)!;
+/**
+ * 从**已落库**的 attempt 回放判卷结果（交卷与历史详情共用，纯函数、不调模型）。
+ *
+ * ⚠️ 两个数据源必须分开：`choice` 来自 answers（用户作答），`answer` 来自
+ * questions.correct（标准答案）。此前只有 answer，前端把标准答案当「你的作答」，
+ * 错题会把同一个值显示两遍。
+ *
+ * ⚠️ 调用方必须保证 attempt.answers 非空（仅 completed 记录）；本函数不返回
+ * 原始 questions 数组，避免把 correct/explanation 对象整体带出网。
+ */
+export function buildGradeResponse(attempt: QuizAttemptRecord): GradeAttemptResult {
+  if (!attempt.answers) throw new Error('buildGradeResponse: attempt 尚未交卷');
+
+  const results: GradeResult[] = attempt.questions.map((q) => {
+    const g = attempt.answers!.find((a) => a.question_id === q.id);
+    if (!g) throw new Error(`buildGradeResponse: 缺少题目 ${q.id} 的作答记录`);
     return {
       questionId: q.id,
       type: q.type,
       stem: q.stem,
       isCorrect: g.is_correct,
+      choice: g.choice,
       answer: q.correct,
       explanation: q.explanation,
       knowledgePoint: q.knowledge_point,
