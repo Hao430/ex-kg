@@ -131,6 +131,7 @@ export type SeoRouteKey =
   | 'reset-password'
   | 'verify-email'
   | 'share'
+  | 'practice'
   | 'not-found';
 
 export interface SeoRouteMeta {
@@ -170,6 +171,11 @@ export const SEO_ROUTES: Record<SeoRouteKey, SeoRouteMeta> = {
     title: '画板分享 · 枝想 Arborize',
     description: '枝想公开分享的 AI 思维画板（只读快照）。',
     robots: 'noindex, follow',
+  },
+  practice: {
+    title: '练习详情 · 枝想 Arborize',
+    description: '枝想的 AI 练习记录详情（仅本人可见）。',
+    robots: 'noindex, nofollow',
   },
   'not-found': {
     title: '页面不存在 · 枝想 Arborize',

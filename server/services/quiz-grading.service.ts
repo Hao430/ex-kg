@@ -44,6 +44,8 @@ export interface GradeResult {
   isCorrect: boolean;
   /** 用户实际提交的选项（'A'..'D' 或 'true'|'false'） */
   choice: string;
+  /** 本题选项全文（单选 4 项；判断题恒为 null） */
+  options: { label: string; text: string }[] | null;
   /** 标准答案 */
   answer: string;
   explanation: string;
@@ -170,6 +172,7 @@ export function buildGradeResponse(attempt: QuizAttemptRecord): GradeAttemptResu
       stem: q.stem,
       isCorrect: g.is_correct,
       choice: g.choice,
+      options: q.options ? q.options.map((o) => ({ label: o.label, text: o.text })) : null,
       answer: q.correct,
       explanation: q.explanation,
       knowledgePoint: q.knowledge_point,

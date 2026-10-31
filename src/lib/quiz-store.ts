@@ -62,6 +62,8 @@ export interface QuizGradeResult {
    * 可选是为了兼容旧测试夹具/历史缓存；服务端 ② 与详情回放恒返回该字段。
    */
   choice?: string;
+  /** 选项全文（单选 4 项；判断题恒为 null；旧记录可能缺失） */
+  options?: QuizOption[] | null;
   /** 标准答案 */
   answer: string;
   explanation: string;
@@ -426,19 +428,88 @@ export async function clearHistory(): Promise<boolean> {
 }
 
 export interface QuizAttemptDetail extends QuizHistoryItem {
-  results: QuizGradeResult[];
-  summary: QuizGradeSummary;
+  /** completed 才有 */
+  results?: QuizGradeResult[];
+  summary?: QuizGradeSummary;
+  /** in_progress 才有（安全投影，无答案/解析） */
+  questions?: QuizQuestion[];
 }
 
-/** 读取已交卷记录的逐题回放（仅 completed 有 results）。 */
-export async function fetchAttemptDetail(attemptId: string): Promise<QuizAttemptDetail | null> {
+export type QuizDetailOutcome =
+  | { ok: true; detail: QuizAttemptDetail }
+  | { ok: false; status: 401 | 404 | 'other'; error: string };
+
+/** 读取详情并保留失败语义（深链页要区分未登录/不存在/网络）。 */
+export async function fetchAttemptDetailOutcome(attemptId: string): Promise<QuizDetailOutcome> {
   try {
     const res = await fetch(`/api/quiz/attempts/${attemptId}`);
-    if (!res.ok) return null;
+    if (res.status === 401) return { ok: false, status: 401, error: '请先登录后查看练习记录' };
+    if (res.status === 404) return { ok: false, status: 404, error: '练习记录不存在或已被删除' };
+    if (!res.ok) return { ok: false, status: 'other', error: '详情加载失败，请稍后重试' };
+
     const body = await res.json() as QuizAttemptDetail;
-    return body && Array.isArray(body.results) ? body : null;
+    if (body?.status === 'completed' && Array.isArray(body.results)) {
+      return { ok: true, detail: body };
+    }
+    if (body?.status === 'in_progress' && Array.isArray(body.questions)) {
+      return { ok: true, detail: body };
+    }
+    return { ok: false, status: 'other', error: '详情数据不完整，请刷新重试' };
   } catch {
-    return null;
+    return { ok: false, status: 'other', error: '网络异常，详情加载失败' };
+  }
+}
+
+/** 兼容旧调用：仅 completed 详情返回值，失败一律 null。 */
+export async function fetchAttemptDetail(attemptId: string): Promise<QuizAttemptDetail | null> {
+  const outcome = await fetchAttemptDetailOutcome(attemptId);
+  return outcome.ok && outcome.detail.status === 'completed' ? outcome.detail : null;
+}
+
+/**
+ * 按 id 删除（深链场景）。与 removeAttempt 的差别：
+ * 记录可能不在已加载的历史页里，**也必须真的发 DELETE**；否则会「假成功」。
+ * 命中已加载列表时仍做乐观移除/失败回插；未命中时成功后刷新列表对账。
+ */
+export async function removeAttemptById(attemptId: string): Promise<boolean> {
+  const s = store.getState();
+  if (s.offline) {
+    store.setState({ ...store.getState(), historyError: '离线状态无法删除记录' });
+    return false;
+  }
+
+  const idx = s.history.findIndex((h) => h.attemptId === attemptId);
+  if (idx >= 0) {
+    store.setState({
+      ...store.getState(),
+      history: s.history.filter((h) => h.attemptId !== attemptId),
+      total: Math.max(0, s.total - 1),
+      historyError: null,
+    });
+    store.persistNow();
+  }
+
+  try {
+    const res = await fetch(`/api/quiz/attempts/${attemptId}`, { method: 'DELETE' });
+    if (!res.ok && res.status !== 404) throw new Error('delete failed');
+    if (idx < 0) await refreshHistory();
+    return true;
+  } catch {
+    if (idx >= 0) {
+      const now = store.getState().history;
+      const restored = [...now];
+      restored.splice(Math.min(idx, restored.length), 0, s.history[idx]);
+      store.setState({
+        ...store.getState(),
+        history: restored,
+        total: store.getState().total + 1,
+        historyError: '删除失败，已恢复记录',
+      });
+      store.persistNow();
+    } else {
+      store.setState({ ...store.getState(), historyError: '删除失败，请稍后重试' });
+    }
+    return false;
   }
 }
 

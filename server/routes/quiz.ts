@@ -278,13 +278,16 @@ quizRouter.get(
     if (!row) throw new NotFoundError('练习记录不存在');
     if (row.user_id !== user.id) throw new NotFoundError('练习记录不存在');
 
-    // 已交卷：回放逐题结果（choice=用户作答，answer=标准答案）。
-    // 未交卷继续只回列表摘要——答案只在交卷语境下可见。
+    // 已交卷：回放逐题结果（choice=用户作答，answer=标准答案，options=选项全文）。
+    // 未交卷：只回列表摘要 + 安全题目（供详情页「继续作答」），绝不含答案/解析。
     if (row.status === 'completed' && row.answers) {
       res.json({ ...toListItemView(row), ...buildGradeResponse(row) });
       return;
     }
-    res.json(toListItemView(row));
+    res.json({
+      ...toListItemView(row),
+      questions: row.questions.map(toQuestionView),
+    });
   }),
 );
 

@@ -9,7 +9,7 @@ import { checkRuntimeDbRoleInvariants } from './server/core/pool.js';
 import { dropDefaultSeedUsers } from './server/core/memory-store.js';
 import { startLogCleanupJob } from './server/jobs/log-cleanup.js';
 import { createApp } from './server/app.js';
-import { injectSeo, resolveOrigin, routeForPath, type SeoRoute } from './server/lib/seo.js';
+import { injectSeo, resolveOrigin, routeForPath, SEO_SHELL_ROUTES, type SeoRoute } from './server/lib/seo.js';
 
 dotenv.config();
 
@@ -88,7 +88,7 @@ function registerProductionRoutes(expressApp: express.Express, distPath: string)
 
   // ⚠️ 必须注册在 express.static 之前：static 默认 index:'index.html'，否则 `/` 会被它抢先服务。
   expressApp.get(
-    ['/', '/index.html', '/reset-password', '/verify-email', '/share/:code'],
+    [...SEO_SHELL_ROUTES],
     (req, res, next) => {
       const route = routeForPath(req.path);
       if (!route) {

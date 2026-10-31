@@ -28,6 +28,14 @@ import * as boardStore from './lib/board-store';
 import * as boardScope from './lib/board-scope';
 import * as boardMigrate from './lib/board-migrate';
 import * as quotaStore from './lib/quota-store';
+import {
+  resolveInitialLocation,
+  resolvePopLocation,
+  practiceDetailHref,
+  PRACTICE_LIST_HREF,
+  CANVAS_HREF,
+  HOME_HREF,
+} from './lib/practice-route';
 import * as syncQueue from './lib/sync-queue';
 import * as folderStore from './lib/folder-store';
 import { useBoards, useFolders } from './hooks/useBoards';
@@ -91,19 +99,28 @@ const isDefaultBoardName = (name: string): boolean =>
   DEFAULT_BOARD_NAMES.includes(name) || /^探索课题 #\d+$/.test(name);
 
 function MainApp() {
-  const [viewMode, setViewMode] = useState<'landing' | 'canvas' | 'practice'>(() => {
+  const [initialLocation] = useState(() => {
+    let storedView: string | null = null;
     try {
-      const params = new URLSearchParams(window.location.search);
-      if (params.get('view') === 'canvas') return 'canvas';
-      if (params.get('view') === 'practice' || params.get('view') === 'quiz') return 'practice';
-      const storedView = sessionStorage.getItem('deepdive_active_view');
-      if (storedView === 'canvas') return 'canvas';
-      if (storedView === 'practice' || storedView === 'quiz') return 'practice';
+      storedView = sessionStorage.getItem('deepdive_active_view');
     } catch (e) {
       // ignore
     }
-    return 'landing';
+    return resolveInitialLocation(window.location.pathname, window.location.search, storedView);
   });
+  const [viewMode, setViewMode] = useState<'landing' | 'canvas' | 'practice'>(initialLocation.view);
+  const [practiceAttemptId, setPracticeAttemptId] = useState<string | null>(initialLocation.attemptId);
+
+  // 浏览器前进/后退：只信当前 URL，不读 sessionStorage（否则后退到 / 会被残留产品拦住）
+  useEffect(() => {
+    const onPopState = () => {
+      const loc = resolvePopLocation(window.location.pathname, window.location.search);
+      setViewMode(loc.view);
+      setPracticeAttemptId(loc.attemptId);
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
 
   const boards = useBoards();
   const foldersView = useFolders();
@@ -945,6 +962,10 @@ function MainApp() {
     try {
       sessionStorage.setItem('deepdive_active_view', 'canvas');
     } catch (e) {}
+    try {
+      window.history.replaceState({}, '', CANVAS_HREF);
+    } catch (e) {}
+    setPracticeAttemptId(null);
 
     if (presetTopic) {
       const existing = boards.find(
@@ -996,16 +1017,28 @@ function MainApp() {
     setViewMode('canvas');
   };
 
+  /** 练习详情开关：打开时 push（可后退回列表），关闭时 replace（不回退到已关闭的详情） */
+  const handlePracticeAttemptChange = useCallback((attemptId: string | null) => {
+    setPracticeAttemptId(attemptId);
+    try {
+      sessionStorage.setItem('deepdive_active_view', 'practice');
+    } catch (e) {}
+    try {
+      const href = attemptId ? practiceDetailHref(attemptId) : PRACTICE_LIST_HREF;
+      if (attemptId) window.history.pushState({}, '', href);
+      else window.history.replaceState({}, '', href);
+    } catch (e) {}
+  }, []);
+
   const handleSwitchProduct = (product: 'canvas' | 'practice') => {
     if (product === 'canvas') {
       try {
         sessionStorage.setItem('deepdive_active_view', 'canvas');
       } catch (e) {}
       try {
-        const url = new URL(window.location.href);
-        url.searchParams.set('view', 'canvas');
-        window.history.replaceState({}, '', url.toString());
+        window.history.replaceState({}, '', CANVAS_HREF);
       } catch (e) {}
+      setPracticeAttemptId(null);
       setViewMode('canvas');
     } else {
       flushPendingCanvasSave();
@@ -1013,10 +1046,9 @@ function MainApp() {
         sessionStorage.setItem('deepdive_active_view', 'practice');
       } catch (e) {}
       try {
-        const url = new URL(window.location.href);
-        url.searchParams.set('view', 'practice');
-        window.history.replaceState({}, '', url.toString());
+        window.history.replaceState({}, '', PRACTICE_LIST_HREF);
       } catch (e) {}
+      setPracticeAttemptId(null);
       setViewMode('practice');
     }
   };
@@ -1026,10 +1058,9 @@ function MainApp() {
       sessionStorage.setItem('deepdive_active_view', 'practice');
     } catch (e) {}
     try {
-      const url = new URL(window.location.href);
-      url.searchParams.set('view', 'practice');
-      window.history.replaceState({}, '', url.toString());
+      window.history.replaceState({}, '', PRACTICE_LIST_HREF);
     } catch (e) {}
+    setPracticeAttemptId(null);
     setViewMode('practice');
   };
 
@@ -1038,10 +1069,9 @@ function MainApp() {
       sessionStorage.setItem('deepdive_active_view', 'landing');
     } catch (e) {}
     try {
-      const url = new URL(window.location.href);
-      url.searchParams.delete('view');
-      window.history.replaceState({}, '', url.toString());
+      window.history.replaceState({}, '', HOME_HREF);
     } catch (e) {}
+    setPracticeAttemptId(null);
     setViewMode('landing');
   };
 
@@ -1318,6 +1348,8 @@ function MainApp() {
           activeProduct="practice"
           onSwitchProduct={handleSwitchProduct}
           onGoToLanding={handleGoToLanding}
+          initialAttemptId={practiceAttemptId}
+          onAttemptChange={handlePracticeAttemptChange}
           onExploreInCanvas={(presetTopic) => {
             handleEnterCanvas(presetTopic);
           }}

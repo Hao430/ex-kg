@@ -268,14 +268,18 @@ describe('R1 详情扩展：已交卷回放', () => {
     assert.ok(!keys.has('questions'), '不得下发原始 questions 数组（含 correct 对象）');
   });
 
-  test('in_progress 详情仍不含 results / 答案', async () => {
+  test('in_progress 详情：返回安全题目，但仍不含 results / 答案', async () => {
     const created = await createAttempt(vipCookie);
     const { status, body } = await detail(vipCookie, created.body.attemptId);
     assert.equal(status, 200);
     assert.equal(body.results, undefined);
     assert.equal(body.summary, undefined);
+    assert.ok(Array.isArray(body.questions), '未完成详情应返回可续答的安全题目');
+    for (const q of body.questions) {
+      assert.deepEqual(Object.keys(q).sort(), ['id', 'options', 'stem', 'type'], '题目只含展示字段');
+    }
     const keys = collectKeys(body);
-    for (const forbidden of ['questions', 'correct', 'explanation', 'answer', 'knowledge_point']) {
+    for (const forbidden of ['correct', 'explanation', 'answer', 'knowledge_point']) {
       assert.ok(!keys.has(forbidden), '未交卷详情不得含「' + forbidden + '」');
     }
   });

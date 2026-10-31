@@ -44,12 +44,21 @@ import {
 } from '../ui/topbar';
 import { Spinner } from '../ui/base/Spinner';
 import { scopeKeyFor } from '../../lib/board-scope';
-import type { QuizAttemptView, QuizDifficulty, QuizGradeResult, QuizHistoryItem, QuizQuestion, QuizSubmission } from '../../lib/quiz-store';
+import type {
+  QuizAttemptView,
+  QuizDifficulty,
+  QuizGradeResult,
+  QuizHistoryItem,
+  QuizQuestion,
+  QuizSubmission,
+} from '../../lib/quiz-store';
 import { useAuth } from '../../context/AuthContext';
 import { useModal } from '../../context/ModalContext';
 import { Tooltip } from '../ui/Tooltip';
 import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 import { QuizResultList } from './QuizResultList';
+import { QuizDetailView, type CompletedDetail } from './QuizDetailView';
+import { QuizPendingView, type PendingDetail } from './QuizPendingView';
 
 export const DIFFICULTY_LABELS: Record<QuizDifficulty, string> = {
   beginner: '入门',
@@ -106,6 +115,10 @@ export interface PracticeWorkspaceProps {
   initialTopic?: string;
   initialPhase?: Phase;
   initialChoices?: Record<string, string>;
+  /** 深链 /practice/:attemptId；由 App 从 URL 解析后传入 */
+  initialAttemptId?: string | null;
+  /** 打开/关闭详情时通知父级更新 URL；未提供时组件自行加载（RTL/嵌入场景） */
+  onAttemptChange?: (attemptId: string | null) => void;
 }
 
 export type Phase =
@@ -113,7 +126,10 @@ export type Phase =
   | { kind: 'loading' }
   | { kind: 'answering'; attempt: QuizAttemptView; startedAt: number }
   | { kind: 'graded'; attempt: QuizAttemptView; results: QuizGradeResult[]; summary: { correct: number; total: number } }
-  | { kind: 'replay'; item: QuizHistoryItem; results: QuizGradeResult[]; summary: { correct: number; total: number } }
+  | { kind: 'detail-loading'; attemptId: string }
+  | { kind: 'detail-error'; message: string; status: 401 | 404 | 'other'; attemptId: string }
+  | { kind: 'replay'; detail: CompletedDetail }
+  | { kind: 'pending'; detail: PendingDetail }
   | { kind: 'error'; message: string };
 
 export interface MasteryStats {
@@ -198,6 +214,8 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
   initialTopic = '',
   initialPhase,
   initialChoices,
+  initialAttemptId = null,
+  onAttemptChange,
 }) => {
   const [topic, setTopic] = useState(initialTopic);
   const { confirm: confirmAction, element: confirmElement } = useConfirmDialog();
@@ -219,20 +237,90 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
   const phaseRef = useRef<Phase>(phase);
   useEffect(() => { phaseRef.current = phase; }, [phase]);
 
-  const { isVip } = useAuth();
-  const { openRechargeModal } = useModal();
+  const { isVip, loading: authLoading } = useAuth();
+  const { openRechargeModal, openAuthModal } = useModal();
 
-  // 账号切换 scope 绑定
+  /** 详情请求序号：连点不同记录时只采纳最后一次回包 */
+  const detailSeqRef = useRef(0);
+  const prevUserIdRef = useRef<string | null | undefined>(undefined);
+
+  const loadDetail = useCallback(async (attemptId: string) => {
+    const seq = ++detailSeqRef.current;
+    setPhase({ kind: 'detail-loading', attemptId });
+    const outcome = await quizStore.fetchAttemptDetailOutcome(attemptId);
+    if (seq !== detailSeqRef.current) return;
+
+    if (outcome.ok === false) {
+      setPhase({ kind: 'detail-error', message: outcome.error, status: outcome.status, attemptId });
+      return;
+    }
+    const detail = outcome.detail;
+    if (detail.status === 'completed' && detail.results && detail.summary) {
+      setPhase({ kind: 'replay', detail: detail as CompletedDetail });
+      return;
+    }
+    if (detail.status === 'in_progress' && detail.questions) {
+      setPhase({ kind: 'pending', detail: detail as PendingDetail });
+      return;
+    }
+    setPhase({
+      kind: 'detail-error',
+      message: '详情数据不完整，请刷新重试',
+      status: 'other',
+      attemptId,
+    });
+  }, []);
+
+  const closeDetail = useCallback(() => {
+    detailSeqRef.current += 1;
+    if (onAttemptChange) onAttemptChange(null);
+    setPhase({ kind: 'form' });
+    setTopic('');
+    setChoices({});
+  }, [onAttemptChange]);
+
+  // 账号切换 scope 绑定（首次挂载不清 phase，避免深链被 reset）
   useEffect(() => {
+    const prev = prevUserIdRef.current;
+    const changed = prev !== undefined && prev !== userId;
+    prevUserIdRef.current = userId;
+
     if (userId) {
       quizStore.bindScope(scopeKeyFor(userId));
       void quizStore.refreshHistory();
     } else {
       quizStore.reset();
     }
-    setPhase({ kind: 'form' });
-    setChoices({});
+    if (changed) {
+      detailSeqRef.current += 1;
+      setPhase({ kind: 'form' });
+      setChoices({});
+    }
   }, [userId]);
+
+  // 深链：initialAttemptId 变化时加载详情；清空时只关闭详情态
+  useEffect(() => {
+    if (authLoading) return;
+    if (!initialAttemptId) {
+      const k = phaseRef.current.kind;
+      if (k === 'replay' || k === 'pending' || k === 'detail-loading' || k === 'detail-error') {
+        detailSeqRef.current += 1;
+        setPhase({ kind: 'form' });
+        setChoices({});
+      }
+      return;
+    }
+    if (!userId) {
+      setPhase({
+        kind: 'detail-error',
+        message: '请先登录后查看练习记录',
+        status: 401,
+        attemptId: initialAttemptId,
+      });
+      return;
+    }
+    void loadDetail(initialAttemptId);
+  }, [initialAttemptId, userId, authLoading, loadDetail]);
 
   // 返回表单态时自动刷新历史记录
   useEffect(() => {
@@ -326,6 +414,7 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
   const masteryStats = useMemo(() => computeMasteryStats(historyView.items), [historyView.items]);
 
   const handleStartNewWithTopic = (t: string, d?: QuizDifficulty) => {
+    if (onAttemptChange) onAttemptChange(null);
     setTopic(t);
     if (d) {
       setDifficulty(d);
@@ -335,16 +424,15 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
     setPhase({ kind: 'form' });
   };
 
-  /** 历史回放：仅 completed 记录有 results；失败回到错误态 */
-  const handleOpenDetail = useCallback(async (item: QuizHistoryItem) => {
-    setPhase({ kind: 'loading' });
-    const detail = await quizStore.fetchAttemptDetail(item.attemptId);
-    if (!detail) {
-      setPhase({ kind: 'error', message: '练习详情加载失败，请稍后重试' });
+  /** 打开详情：有 URL 回调时交给 App 推路径，由深链 effect 统一加载；否则本地加载 */
+  const handleOpenDetail = useCallback((item: QuizHistoryItem) => {
+    detailSeqRef.current += 1;
+    if (onAttemptChange) {
+      onAttemptChange(item.attemptId);
       return;
     }
-    setPhase({ kind: 'replay', item, results: detail.results, summary: detail.summary });
-  }, []);
+    void loadDetail(item.attemptId);
+  }, [onAttemptChange, loadDetail]);
 
   const handleDeleteAttempt = useCallback(async (item: QuizHistoryItem) => {
     const ok = await confirmAction({
@@ -356,16 +444,51 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
     if (!ok) return;
 
     const wasCurrent =
-      (phase.kind === 'replay' && phase.item.attemptId === item.attemptId) ||
+      (phase.kind === 'replay' && phase.detail.attemptId === item.attemptId) ||
+      (phase.kind === 'pending' && phase.detail.attemptId === item.attemptId) ||
       (phase.kind === 'answering' && phase.attempt.attemptId === item.attemptId) ||
       (phase.kind === 'graded' && phase.attempt.attemptId === item.attemptId);
-    const removed = await quizStore.removeAttempt(item.attemptId);
-    if (removed && wasCurrent) {
-      setTopic('');
-      setChoices({});
-      setPhase({ kind: 'form' });
+    const removed = await quizStore.removeAttemptById(item.attemptId);
+    if (removed && wasCurrent) closeDetail();
+  }, [confirmAction, phase, closeDetail]);
+
+  /** 详情页删除：直接按 id 删（记录可能不在已加载的历史页里） */
+  const handleDeleteDetail = useCallback(async () => {
+    if (phase.kind !== 'replay' && phase.kind !== 'pending') return;
+    const id = phase.detail.attemptId;
+    const ok = await confirmAction({
+      title: '删除这条练习记录？',
+      description: '删除后无法恢复，掌握情况统计会同步减少。',
+      confirmLabel: '删除',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    const removed = await quizStore.removeAttemptById(id);
+    if (removed) closeDetail();
+  }, [confirmAction, phase, closeDetail]);
+
+  const handleResume = useCallback(() => {
+    if (phase.kind !== 'pending') return;
+    const detail = phase.detail;
+    const attempt: QuizAttemptView = {
+      attemptId: detail.attemptId,
+      questions: detail.questions,
+      review: detail.review,
+    };
+    const draft = quizStore.loadDraft(detail.attemptId);
+    const restored: Record<string, string> = {};
+    for (const [qid, sub] of Object.entries(draft)) {
+      if (sub && typeof sub.choice === 'string') restored[qid] = sub.choice;
     }
-  }, [confirmAction, phase]);
+    setChoices(restored);
+    startRef.current = {};
+    setPhase({ kind: 'answering', attempt, startedAt: Date.now() });
+  }, [phase]);
+
+  const handleRetryDetail = useCallback(() => {
+    if (phase.kind !== 'replay' && phase.kind !== 'pending') return;
+    handleStartNewWithTopic(phase.detail.topic, phase.detail.difficulty);
+  }, [phase]);
 
   const handleClearHistory = useCallback(async () => {
     const ok = await confirmAction({
@@ -376,12 +499,8 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
     });
     if (!ok) return;
     const cleared = await quizStore.clearHistory();
-    if (cleared) {
-      setTopic('');
-      setChoices({});
-      setPhase({ kind: 'form' });
-    }
-  }, [confirmAction]);
+    if (cleared) closeDetail();
+  }, [confirmAction, closeDetail]);
 
   const handleLoadMore = useCallback(() => {
     void quizStore.loadMoreHistory();
@@ -492,7 +611,8 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
               <>
                 {historyView.items.map((item) => {
                   const isSelected =
-                    (phase.kind === 'replay' && phase.item.attemptId === item.attemptId) ||
+                    (phase.kind === 'replay' && phase.detail.attemptId === item.attemptId) ||
+                    (phase.kind === 'pending' && phase.detail.attemptId === item.attemptId) ||
                     ((phase.kind === 'answering' || phase.kind === 'graded') &&
                       phase.attempt.attemptId === item.attemptId);
                   return (
@@ -533,16 +653,14 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
                         </button>
 
                         <div className="flex items-center gap-0.5 shrink-0">
-                          {item.status === 'completed' && (
-                            <button
-                              type="button"
-                              title="查看详情"
-                              onClick={() => void handleOpenDetail(item)}
-                              className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 rounded-lg transition-colors cursor-pointer"
-                            >
-                              <Eye className="w-3.5 h-3.5" />
-                            </button>
-                          )}
+                          <button
+                            type="button"
+                            title="查看详情"
+                            onClick={() => handleOpenDetail(item)}
+                            className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 rounded-lg transition-colors cursor-pointer"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                          </button>
                           <button
                             type="button"
                             title="删除记录"
@@ -900,35 +1018,88 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
               </div>
             )}
 
+            {/* 详情加载中 */}
+            {phase.kind === 'detail-loading' && (
+              <div className="p-12 rounded-2xl bg-white dark:bg-[#0c1222] border border-slate-200/80 dark:border-slate-800/80 shadow-sm flex flex-col items-center justify-center gap-4 text-center animate-in fade-in duration-200">
+                <Spinner size="lg" />
+                <div>
+                  <h3 className="text-base font-bold text-slate-800 dark:text-slate-200">正在加载练习详情…</h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">正在读取题目、作答与解析</p>
+                </div>
+              </div>
+            )}
+
+            {/* 详情错误 / 未登录 / 不存在 */}
+            {phase.kind === 'detail-error' && (
+              <div className="p-8 rounded-2xl bg-white dark:bg-[#0c1222] border border-rose-200 dark:border-rose-900/60 shadow-sm flex flex-col items-center justify-center gap-3 text-center animate-in fade-in duration-200">
+                <AlertTriangle className="w-8 h-8 text-amber-500" />
+                <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">
+                  {phase.status === 401 ? '请先登录' : phase.status === 404 ? '记录不存在' : '详情加载失败'}
+                </h3>
+                <p className="text-xs text-slate-500 max-w-md">{phase.message}</p>
+                <div className="mt-3 flex items-center gap-2">
+                  {phase.status === 401 ? (
+                    <button
+                      type="button"
+                      onClick={() => openAuthModal('signin')}
+                      className="px-5 py-2 text-xs font-semibold rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 transition cursor-pointer"
+                    >
+                      登录后查看
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => void loadDetail(phase.attemptId)}
+                      className="px-5 py-2 text-xs font-semibold rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 transition cursor-pointer"
+                    >
+                      重试
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={closeDetail}
+                    className="px-5 py-2 text-xs font-semibold rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+                  >
+                    返回列表
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* 状态 5：判卷诊断报告 (Graded View) */}
             {phase.kind === 'graded' && (
               <QuizResultList
                 results={phase.results}
                 summary={phase.summary}
                 topic={topic}
-                onRetry={() => void handleGenerate()}
-                onExplore={onExploreInCanvas}
-                onBack={() => {
-                  setPhase({ kind: 'form' });
-                  setTopic('');
-                  setChoices({});
+                onRetry={() => {
+                  closeDetail();
+                  void handleGenerate();
                 }}
+                onExplore={onExploreInCanvas}
+                onBack={closeDetail}
               />
             )}
 
-            {/* 状态 6：历史回放（已交卷记录） */}
+            {/* 状态 6：历史详情（已交卷） */}
             {phase.kind === 'replay' && (
-              <QuizResultList
-                results={phase.results}
-                summary={phase.summary}
-                topic={phase.item.topic}
-                onRetry={() => handleStartNewWithTopic(phase.item.topic, phase.item.difficulty)}
+              <QuizDetailView
+                detail={phase.detail}
+                onBack={closeDetail}
+                onDelete={handleDeleteDetail}
+                onRetry={handleRetryDetail}
                 onExplore={onExploreInCanvas}
-                onBack={() => {
-                  setPhase({ kind: 'form' });
-                  setTopic('');
-                  setChoices({});
-                }}
+              />
+            )}
+
+            {/* 状态 7：历史详情（未交卷，可续答） */}
+            {phase.kind === 'pending' && (
+              <QuizPendingView
+                detail={phase.detail}
+                onResume={handleResume}
+                onDelete={handleDeleteDetail}
+                onBack={closeDetail}
+                onExplore={onExploreInCanvas}
               />
             )}
 

@@ -34,6 +34,19 @@ export type SeoRoute = SeoRouteKey;
 export const SEO_HEAD_MARKER = { start: '<!--seo:head-->', end: '<!--/seo:head-->' };
 export const SEO_BODY_MARKER = { start: '<!--seo:body-->', end: '<!--/seo:body-->' };
 
+/**
+ * 由服务端直接返回 SPA 壳（HTTP 200）的路径表。
+ * ⚠️ 新增页面必须同时登记 routeForPath 与这里，否则刷新会落到 404 分支。
+ */
+export const SEO_SHELL_ROUTES = [
+  '/',
+  '/index.html',
+  '/reset-password',
+  '/verify-email',
+  '/share/:code',
+  '/practice/:attemptId',
+] as const;
+
 /** 只依赖结构，避免把一个 Express 类型拖进本模块（也便于测试直接传字面量） */
 export interface OriginRequest {
   protocol: string;
@@ -74,6 +87,8 @@ export function routeForPath(pathname: string): SeoRoute | null {
   if (pathname === '/reset-password') return 'reset-password';
   if (pathname === '/verify-email') return 'verify-email';
   if (/^\/share\/[^/]+$/.test(pathname)) return 'share';
+  // 练习详情：私有按用户资源，只回壳 + noindex，不注入任何正文
+  if (/^\/practice\/[A-Za-z0-9_-]{1,64}$/.test(pathname)) return 'practice';
   return null;
 }
 
@@ -148,8 +163,9 @@ export function buildSeoHead(
     `<meta name="robots" content="${escapeHtml(meta.robots)}" />`,
   ];
 
-  // 404 不给 canonical：它没有可指向的规范地址，声明一个等于把错误页伪装成正常页
-  if (route !== 'not-found') {
+  // 404 不给 canonical：它没有可指向的规范地址，声明一个等于把错误页伪装成正常页。
+  // practice 同理：它是私有按用户资源，不应向搜索引擎声明规范地址。
+  if (route !== 'not-found' && route !== 'practice') {
     lines.push(`<link rel="canonical" href="${escapeHtml(canonical)}" />`);
   }
 
@@ -271,6 +287,7 @@ export function buildRobotsTxt(origin: string): string {
     'Disallow: /reset-password',
     'Disallow: /verify-email',
     'Disallow: /share/',
+    'Disallow: /practice/',
     '',
     `Sitemap: ${origin}/sitemap.xml`,
     '',
