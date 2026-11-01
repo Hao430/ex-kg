@@ -357,6 +357,16 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnterCanvas, onEnter
                 </button>
               ))}
             </div>
+            <div className="mt-5">
+              <a
+                href="https://beian.miit.gov.cn/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[11px] text-slate-500 hover:text-slate-300 transition-colors"
+              >
+                湘ICP备2025125191号-2
+              </a>
+            </div>
           </div>
           <HeroPreview onEnterPractice={onEnterPractice ? () => onEnterPractice() : undefined} />
         </div>
