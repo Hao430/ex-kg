@@ -411,6 +411,63 @@ export async function updateVipMembership(data: {
 }
 
 /**
+ * #0103：原子增授或取消 VIP 天数（PG 单条 UPDATE 消除读-改-写竞态，与 #0088 同法）。
+ * days > 0: 叠期 GREATEST(COALESCE(vip_expires_at, NOW()), NOW()) + make_interval(days => $2::int)，admin 不降级；
+ * days = 0: 撤销 VIP，vip_expires_at = NULL，role 降为 user（admin 不降级）。
+ * 双模：PG 优先，内存兜底。用户不存在或已软删返回 null。
+ */
+export async function grantUserVipDays(userId: string, days: number): Promise<UserRecord | null> {
+  const db = getDb();
+  if (db) {
+    try {
+      let res;
+      if (days > 0) {
+        res = await db.query(
+          `UPDATE users
+           SET role = CASE WHEN role = 'admin' THEN 'admin' ELSE 'vip' END,
+               vip_expires_at = GREATEST(COALESCE(vip_expires_at, NOW()), NOW()) + make_interval(days => $2::int),
+               updated_at = NOW()
+           WHERE id = $1 AND deleted_at IS NULL
+           RETURNING *`,
+          [userId, days]
+        );
+      } else {
+        res = await db.query(
+          `UPDATE users
+           SET role = CASE WHEN role = 'admin' THEN 'admin' ELSE 'user' END,
+               vip_expires_at = NULL,
+               updated_at = NOW()
+           WHERE id = $1 AND deleted_at IS NULL
+           RETURNING *`,
+          [userId]
+        );
+      }
+      if (res.rows.length > 0) return mapRowToUser(res.rows[0]);
+      return null;
+    } catch (e) {
+      handlePgError(e);
+      console.warn('PG grantUserVipDays failed, falling back to memory:', e);
+    }
+  }
+
+  const user = inMemoryStore.users.get(userId);
+  if (!user || user.deleted_at) return null;
+
+  if (days > 0) {
+    const now = Date.now();
+    const current = user.vip_expires_at ? new Date(user.vip_expires_at).getTime() : 0;
+    const base = current > now ? current : now;
+    user.vip_expires_at = new Date(base + days * 24 * 3600 * 1000).toISOString();
+    if (user.role !== 'admin') user.role = 'vip';
+  } else {
+    user.vip_expires_at = null;
+    if (user.role !== 'admin') user.role = 'user';
+  }
+  user.updated_at = new Date().toISOString();
+  return user;
+}
+
+/**
  * Spec F4：软删除账号（注销）——置 deleted_at + is_active=false。
  * 踢下线为逻辑失效：findSession 排除 deleted_at 非空用户的会话（/me → 401）；
  * 会话记录的物理清理随 30 天硬删外键级联完成。

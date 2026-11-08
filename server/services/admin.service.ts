@@ -1,4 +1,4 @@
-import { findUserById, findUserByEmail, updateVipMembership, updateUserEmail as repoUpdateUserEmail, updateUserStatus as repoUpdateUserStatus, restoreAccount as repoRestoreAccount } from '../repositories/user.repository.js';
+import { findUserById, findUserByEmail, grantUserVipDays as repoGrantUserVipDays, updateUserEmail as repoUpdateUserEmail, updateUserStatus as repoUpdateUserStatus, restoreAccount as repoRestoreAccount } from '../repositories/user.repository.js';
 import { ConflictError } from '../lib/errors.js';
 import { sendVerificationEmail } from '../lib/mailer.js';
 import crypto from 'node:crypto';
@@ -137,6 +137,7 @@ export async function unbindOAuthIdentity(data: {
 
 /**
  * Grant or extend VIP days for a user by admin
+ * #0103：下沉为仓储层单条 UPDATE 原子操作，消除先 findUserById 读再写回的读-改-写竞态（与 #0088 同法）。
  */
 export async function grantUserVipDays(data: {
   userId: string;
@@ -145,30 +146,7 @@ export async function grantUserVipDays(data: {
   ip?: string;
   userAgent?: string;
 }): Promise<{ role: string; vip_expires_at: string | null; user: UserRecord }> {
-  const currentUser = await findUserById(data.userId);
-  if (!currentUser) throw new NotFoundError('用户不存在');
-
-  let baseTime = Date.now();
-  if (currentUser.vip_expires_at && new Date(currentUser.vip_expires_at).getTime() > baseTime) {
-    baseTime = new Date(currentUser.vip_expires_at).getTime();
-  }
-
-  let newExpiresAt: string | null = null;
-  let newRole: string = currentUser.role;
-
-  if (data.days > 0) {
-    newExpiresAt = new Date(baseTime + data.days * 24 * 3600 * 1000).toISOString();
-    if (newRole !== 'admin') newRole = 'vip';
-  } else if (data.days === 0) {
-    newExpiresAt = null;
-    if (newRole !== 'admin') newRole = 'user';
-  }
-
-  const updated = await updateVipMembership({
-    userId: data.userId,
-    role: newRole,
-    vipExpiresAt: newExpiresAt,
-  });
+  const updated = await repoGrantUserVipDays(data.userId, data.days);
   if (!updated) throw new NotFoundError('用户不存在');
 
   await recordAuditLog({
