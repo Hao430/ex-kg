@@ -13,11 +13,15 @@ import { z } from 'zod';
 export const QUIZ_DIFFICULTIES = ['beginner', 'intermediate', 'advanced'] as const;
 export type QuizDifficulty = (typeof QUIZ_DIFFICULTIES)[number];
 
-/** 出题输入（用户主题 + 难度 + 题量） */
+export const QUIZ_QUESTION_TYPES = ['all', 'single', 'true_false'] as const;
+export type QuizQuestionTypePreference = (typeof QUIZ_QUESTION_TYPES)[number];
+
+/** 出题输入（用户主题 + 难度 + 题量 + 可选题型偏好） */
 export const GenerateQuizSchema = z.object({
   topic: z.string().min(1, '请填写练习主题').max(200, '主题请控制在 200 字以内'),
   difficulty: z.enum(QUIZ_DIFFICULTIES),
   count: z.number().int().min(1).max(10).default(5),
+  questionType: z.enum(QUIZ_QUESTION_TYPES).default('all'),
 });
 export type GenerateQuizInput = z.infer<typeof GenerateQuizSchema>;
 

@@ -322,6 +322,29 @@ export interface QuizAttemptRecord {
   completed_at: string | null;
 }
 
+export interface QuizWeakPointRecord {
+  knowledge_point: string;
+  total: number;
+  mastered_count: number;
+  error_count: number;
+  mastery_rate: number;
+}
+
+export interface QuizStatsRecord {
+  total_attempts: number;
+  completed_attempts: number;
+  total_questions: number;
+  mastered_questions: number;
+  overall_mastery_rate: number;
+  by_difficulty: Record<'beginner' | 'intermediate' | 'advanced', {
+    total_attempts: number;
+    total_questions: number;
+    correct_questions: number;
+    mastery_rate: number;
+  }>;
+  weak_points: QuizWeakPointRecord[];
+}
+
 export interface AiModelConfig {
   provider: 'gemini' | 'openai';
   openai_base_url: string;

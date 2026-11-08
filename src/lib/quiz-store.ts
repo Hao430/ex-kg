@@ -17,6 +17,30 @@ import { uuidv7 } from './uuid';
 
 export type QuizDifficulty = 'beginner' | 'intermediate' | 'advanced';
 export type QuizQuestionType = 'single' | 'true_false';
+export type QuizQuestionTypePreference = 'all' | 'single' | 'true_false';
+
+export interface QuizWeakPoint {
+  knowledgePoint: string;
+  total: number;
+  masteredCount: number;
+  errorCount: number;
+  masteryRate: number;
+}
+
+export interface QuizStats {
+  totalAttempts: number;
+  completedAttempts: number;
+  totalQuestions: number;
+  masteredQuestions: number;
+  overallMasteryRate: number;
+  byDifficulty: Record<QuizDifficulty, {
+    totalAttempts: number;
+    totalQuestions: number;
+    correctQuestions: number;
+    masteryRate: number;
+  }>;
+  weakPoints: QuizWeakPoint[];
+}
 
 export interface QuizOption {
   label: string;
@@ -208,6 +232,7 @@ export async function generateQuiz(input: {
   topic: string;
   difficulty: QuizDifficulty;
   count: number;
+  questionType?: QuizQuestionTypePreference;
 }): Promise<QuizGenerateOutcome> {
   if (inFlightGenerate) return inFlightGenerate;
 
@@ -294,6 +319,19 @@ interface HistoryResponse {
   total?: number;
   page?: number;
   hasMore?: boolean;
+}
+
+/**
+ * 获取用户学情概览与薄弱知识点统计。
+ */
+export async function fetchQuizStats(): Promise<QuizStats | null> {
+  try {
+    const res = await fetch('/api/quiz/stats');
+    if (!res.ok) return null;
+    return (await res.json()) as QuizStats;
+  } catch {
+    return null;
+  }
 }
 
 /**

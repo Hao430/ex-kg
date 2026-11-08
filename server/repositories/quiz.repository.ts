@@ -2,7 +2,7 @@ import { getDb } from '../core/db.js';
 import { inMemoryStore } from '../core/memory-store.js';
 import { AppError, ForbiddenError, NotFoundError, ConflictError } from '../lib/errors.js';
 import { handlePgError } from '../core/db-guard.js';
-import type { QuizAttemptRecord, QuizAnswerRecord } from '../core/records.js';
+import type { QuizAttemptRecord, QuizAnswerRecord, QuizStatsRecord, QuizWeakPointRecord } from '../core/records.js';
 
 /**
  * Spec R1：AI 练习记录仓储（双模，照 ADR-0002 模板 + folder.repository 范式）。
@@ -361,3 +361,140 @@ export async function countCompletedAttempts(userId: string, sinceIso: string): 
     (a) => a.user_id === userId && a.status === 'completed' && a.created_at >= sinceIso
   ).length;
 }
+
+/** 内部纯函数：从已完成记录中计算掌握度与提取薄弱知识点 */
+export function calculateQuizStats(
+  totalAttempts: number,
+  completedRecords: Array<{
+    difficulty?: string;
+    questions?: any[];
+    answers?: any[] | null;
+  }>
+): QuizStatsRecord {
+  const byDifficulty: QuizStatsRecord['by_difficulty'] = {
+    beginner: { total_attempts: 0, total_questions: 0, correct_questions: 0, mastery_rate: 0 },
+    intermediate: { total_attempts: 0, total_questions: 0, correct_questions: 0, mastery_rate: 0 },
+    advanced: { total_attempts: 0, total_questions: 0, correct_questions: 0, mastery_rate: 0 },
+  };
+
+  let totalQuestions = 0;
+  let masteredQuestions = 0;
+  const kpMap = new Map<string, { total: number; correct: number }>();
+
+  for (const attempt of completedRecords) {
+    const diff = (attempt.difficulty || 'beginner') as keyof typeof byDifficulty;
+    if (byDifficulty[diff]) {
+      byDifficulty[diff].total_attempts += 1;
+    }
+
+    const answersMap = new Map<string, boolean>();
+    if (Array.isArray(attempt.answers)) {
+      for (const ans of attempt.answers) {
+        if (ans && ans.question_id) {
+          answersMap.set(ans.question_id, Boolean(ans.is_correct));
+        }
+      }
+    }
+
+    if (Array.isArray(attempt.questions)) {
+      for (const q of attempt.questions) {
+        if (!q || !q.id) continue;
+        totalQuestions += 1;
+        if (byDifficulty[diff]) {
+          byDifficulty[diff].total_questions += 1;
+        }
+
+        const isCorrect = answersMap.get(q.id) ?? false;
+        if (isCorrect) {
+          masteredQuestions += 1;
+          if (byDifficulty[diff]) {
+            byDifficulty[diff].correct_questions += 1;
+          }
+        }
+
+        const kp = typeof q.knowledge_point === 'string' ? q.knowledge_point.trim() : '';
+        if (kp) {
+          let entry = kpMap.get(kp);
+          if (!entry) {
+            entry = { total: 0, correct: 0 };
+            kpMap.set(kp, entry);
+          }
+          entry.total += 1;
+          if (isCorrect) entry.correct += 1;
+        }
+      }
+    }
+  }
+
+  for (const diff of Object.keys(byDifficulty) as (keyof typeof byDifficulty)[]) {
+    const d = byDifficulty[diff];
+    d.mastery_rate = d.total_questions > 0 ? Math.round((d.correct_questions / d.total_questions) * 100) / 100 : 0;
+  }
+
+  const overallMasteryRate = totalQuestions > 0 ? Math.round((masteredQuestions / totalQuestions) * 100) / 100 : 0;
+
+  const weakPoints: QuizWeakPointRecord[] = Array.from(kpMap.entries())
+    .map(([knowledge_point, data]) => {
+      const error_count = data.total - data.correct;
+      const mastery_rate = data.total > 0 ? Math.round((data.correct / data.total) * 100) / 100 : 0;
+      return {
+        knowledge_point,
+        total: data.total,
+        mastered_count: data.correct,
+        error_count,
+        mastery_rate,
+      };
+    })
+    .filter((w) => w.error_count > 0 || w.mastery_rate < 1)
+    .sort((a, b) => b.error_count - a.error_count || a.mastery_rate - b.mastery_rate || b.total - a.total || a.knowledge_point.localeCompare(b.knowledge_point))
+    .slice(0, 10);
+
+  return {
+    total_attempts: totalAttempts,
+    completed_attempts: completedRecords.length,
+    total_questions: totalQuestions,
+    mastered_questions: masteredQuestions,
+    overall_mastery_rate: overallMasteryRate,
+    by_difficulty: byDifficulty,
+    weak_points: weakPoints,
+  };
+}
+
+/** 学情掌握度与薄弱知识点统计（双模，只读聚合，不返回任何敏感题目答案） */
+export async function getQuizStats(userId: string): Promise<QuizStatsRecord> {
+  const db = getDb();
+  if (db) {
+    try {
+      const countRes = await db.query(
+        `SELECT COUNT(*)::int AS n FROM quiz_attempts WHERE user_id = $1`,
+        [userId]
+      );
+      const totalAttempts = Number(countRes.rows[0]?.n) || 0;
+
+      const res = await db.query(
+        `SELECT difficulty, questions, answers
+         FROM quiz_attempts
+         WHERE user_id = $1 AND status = 'completed'`,
+        [userId]
+      );
+      return calculateQuizStats(totalAttempts, res.rows);
+    } catch (e) {
+      if (e instanceof AppError) throw e;
+      handlePgError(e);
+      console.warn('PG getQuizStats fallback to in-memory:', e);
+    }
+  }
+
+  let totalAttempts = 0;
+  const completedRecords: any[] = [];
+  for (const a of inMemoryStore.quizAttempts.values()) {
+    if (a.user_id === userId) {
+      totalAttempts += 1;
+      if (a.status === 'completed') {
+        completedRecords.push(a);
+      }
+    }
+  }
+  return calculateQuizStats(totalAttempts, completedRecords);
+}
+

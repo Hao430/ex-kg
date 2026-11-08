@@ -510,3 +510,77 @@ describe('R1 出题：脏 correct 归一化（线上故障回归）', () => {
     assert.equal(status, 200, 'boolean/FALSE 变体应归一化通过');
   });
 });
+
+describe('R2 功能强化：学情统计 GET /api/quiz/stats 与题型定制', () => {
+  async function getStats(cookie: string): Promise<{ status: number; body: any }> {
+    const res = await fetch(`${base}/api/quiz/stats`, {
+      method: 'GET',
+      headers: { cookie },
+    });
+    return { status: res.status, body: await res.json().catch(() => null) as any };
+  }
+
+  test('GET /api/quiz/stats 未登录 → 401', async () => {
+    const { status } = await getStats('');
+    assert.equal(status, 401, '未登录访问统计应 401');
+  });
+
+  test('GET /api/quiz/stats 体验版/VIP 登录后正常返回基础结构', async () => {
+    const { status, body } = await getStats(userCookie);
+    assert.equal(status, 200, '登录后应正常获取统计');
+    assert.equal(typeof body.totalAttempts, 'number');
+    assert.equal(typeof body.completedAttempts, 'number');
+    assert.equal(typeof body.totalQuestions, 'number');
+    assert.equal(typeof body.masteredQuestions, 'number');
+    assert.equal(typeof body.overallMasteryRate, 'number');
+    assert.ok(body.byDifficulty && typeof body.byDifficulty === 'object');
+    assert.ok(Array.isArray(body.weakPoints));
+
+    // 结构安全性断言：绝不泄漏题干、选项、正确答案或解析
+    const allKeys = collectKeys(body);
+    for (const forbidden of ['stem', 'options', 'correct', 'explanation']) {
+      assert.ok(!allKeys.has(forbidden), `stats 接口不得暴露题目敏感字段 ${forbidden}`);
+    }
+  });
+
+  test('GET /api/quiz/stats 交卷后正确累加掌握度并提取薄弱知识点', async () => {
+    // 1. 创建并提交一次测试
+    const { body: created } = await createAttempt(userCookie, { topic: '深度学习导论', difficulty: 'beginner' });
+    const { body: graded } = await submitAnswers(userCookie, created.attemptId, allFirst(created.questions));
+    assert.equal(graded.summary.status, 'completed');
+
+    // 2. 查看统计
+    const { status, body } = await getStats(userCookie);
+    assert.equal(status, 200);
+    assert.ok(body.totalAttempts >= 1);
+    assert.ok(body.completedAttempts >= 1);
+    assert.ok(body.totalQuestions >= 5);
+    assert.ok(body.masteredQuestions >= 0);
+    assert.equal(body.byDifficulty.beginner.totalAttempts >= 1, true);
+
+    // 3. 验证 weakPoints 结构与排序
+    for (const wp of body.weakPoints) {
+      assert.equal(typeof wp.knowledgePoint, 'string');
+      assert.equal(typeof wp.total, 'number');
+      assert.equal(typeof wp.masteredCount, 'number');
+      assert.equal(typeof wp.errorCount, 'number');
+      assert.equal(typeof wp.masteryRate, 'number');
+      assert.equal(wp.errorCount, wp.total - wp.masteredCount);
+    }
+  });
+
+  test('POST /api/quiz/attempts 题型定制参数校验：合法通过，非法题型 → 400', async () => {
+    const validSingle = await createAttempt(vipCookie, { questionType: 'single' });
+    assert.equal(validSingle.status, 200, 'questionType=single 应通过');
+
+    const validTf = await createAttempt(vipCookie, { questionType: 'true_false' });
+    assert.equal(validTf.status, 200, 'questionType=true_false 应通过');
+
+    const validAll = await createAttempt(vipCookie, { questionType: 'all' });
+    assert.equal(validAll.status, 200, 'questionType=all 应通过');
+
+    const invalidType = await createAttempt(vipCookie, { questionType: 'essay' });
+    assert.equal(invalidType.status, 400, '非法 questionType 应 400');
+  });
+});
+

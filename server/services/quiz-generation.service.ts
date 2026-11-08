@@ -250,7 +250,13 @@ async function assertTokenQuota(userId: string): Promise<void> {
 }
 
 function buildUserContent(input: GenerateQuizInput): string {
-  return `主题：${input.topic}\n目标难度：${input.difficulty}\n请生成 ${input.count} 道题。`;
+  let typeConstraint = '';
+  if (input.questionType === 'single') {
+    typeConstraint = '\n题型要求：全部生成单选题（4 个选项 A/B/C/D，恰好 1 个正确答案），不要生成判断题。';
+  } else if (input.questionType === 'true_false') {
+    typeConstraint = '\n题型要求：全部生成判断题（非模棱两可的陈述，正误比例约 1:1），不要生成单选题。';
+  }
+  return `主题：${input.topic}\n目标难度：${input.difficulty}\n请生成 ${input.count} 道题。${typeConstraint}`;
 }
 
 function toRecords(quiz: GeneratedQuiz): QuizQuestionRecord[] {

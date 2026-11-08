@@ -24,13 +24,14 @@ import { QuotaPolicy } from '../policies/quota.policy.js';
 import { NotFoundError } from '../lib/errors.js';
 import { generateQuiz } from '../services/quiz-generation.service.js';
 import { buildGradeResponse, gradeAttempt } from '../services/quiz-grading.service.js';
-import { CreateAttemptSchema } from '../services/quiz-schema.js';
+import { CreateAttemptSchema, type GenerateQuizInput } from '../services/quiz-schema.js';
 import {
   countAttempts,
   createAttempt,
   deleteAllAttempts,
   deleteAttempt,
   getAttempt,
+  getQuizStats,
   listAttempts,
 } from '../repositories/quiz.repository.js';
 import { recordAuditLog } from '../repositories/audit.repository.js';
@@ -132,7 +133,7 @@ const inFlightGenerations = new Map<string, Promise<GenerationOutcome>>();
 
 async function generateAndCreate(
   userId: string,
-  input: { topic: string; difficulty: 'beginner' | 'intermediate' | 'advanced'; count: number },
+  input: GenerateQuizInput,
   attemptId: string,
 ): Promise<GenerationOutcome> {
   const generated = await generateQuiz(userId, input);
@@ -186,7 +187,7 @@ quizRouter.post(
     // 用 validate() 而非 schema.parse()：后者抛原生 ZodError，errorHandler 不识别
     // → 500（既有路由的通行做法，Spec §路由分层）
     const input = validate(CreateAttemptSchema, req.body);
-    const payload = { topic: input.topic, difficulty: input.difficulty, count: input.count };
+    const payload = { topic: input.topic, difficulty: input.difficulty, count: input.count, questionType: input.questionType };
     const attemptId = input.attemptId ?? crypto.randomUUID();
 
     let outcome: GenerationOutcome;
@@ -240,6 +241,52 @@ quizRouter.post(
     const { answers } = validate(AnswersSubmitSchema, req.body);
     const result = await gradeAttempt(user.id, req.params.id, answers);
     res.json(result);
+  }),
+);
+
+/** 学情统计：掌握率、难度分布与薄弱知识点（答案绝不出网） */
+quizRouter.get(
+  '/stats',
+  authMiddleware,
+  quizAttemptRateLimiter,
+  asyncHandler(async (req: Request, res: Response) => {
+    ensureQuizEnabled();
+    const userId = req.user!.id;
+    const stats = await getQuizStats(userId);
+    res.json({
+      totalAttempts: stats.total_attempts,
+      completedAttempts: stats.completed_attempts,
+      totalQuestions: stats.total_questions,
+      masteredQuestions: stats.mastered_questions,
+      overallMasteryRate: stats.overall_mastery_rate,
+      byDifficulty: {
+        beginner: {
+          totalAttempts: stats.by_difficulty.beginner.total_attempts,
+          totalQuestions: stats.by_difficulty.beginner.total_questions,
+          correctQuestions: stats.by_difficulty.beginner.correct_questions,
+          masteryRate: stats.by_difficulty.beginner.mastery_rate,
+        },
+        intermediate: {
+          totalAttempts: stats.by_difficulty.intermediate.total_attempts,
+          totalQuestions: stats.by_difficulty.intermediate.total_questions,
+          correctQuestions: stats.by_difficulty.intermediate.correct_questions,
+          masteryRate: stats.by_difficulty.intermediate.mastery_rate,
+        },
+        advanced: {
+          totalAttempts: stats.by_difficulty.advanced.total_attempts,
+          totalQuestions: stats.by_difficulty.advanced.total_questions,
+          correctQuestions: stats.by_difficulty.advanced.correct_questions,
+          masteryRate: stats.by_difficulty.advanced.mastery_rate,
+        },
+      },
+      weakPoints: stats.weak_points.map((w) => ({
+        knowledgePoint: w.knowledge_point,
+        total: w.total,
+        masteredCount: w.mastered_count,
+        errorCount: w.error_count,
+        masteryRate: w.mastery_rate,
+      })),
+    });
   }),
 );
 
