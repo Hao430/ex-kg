@@ -225,7 +225,7 @@ export const QuizAnsweringView: React.FC<QuizAnsweringViewProps> = ({
             </span>
           ) : (
             <span className="text-xs text-slate-500 dark:text-slate-400">
-              还有 <strong className="text-indigo-600 dark:text-indigo-400 font-bold">{total - answeredCount}</strong> 道题未作答
+              还有 {total - answeredCount} 道题未作答
             </span>
           )}
         </div>
