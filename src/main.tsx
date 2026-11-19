@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import { ResetPasswordPage, VerifyEmailPage } from './components/auth/ResetPasswordPage.tsx';
 import { SharePage } from './components/share/SharePage.tsx';
+import { ProfilePage } from './components/profile/ProfilePage.tsx';
 import { initAnalytics, trackOnce } from './lib/analytics.ts';
 import './index.css';
 import 'katex/dist/katex.min.css';
@@ -56,13 +57,14 @@ if (typeof window !== 'undefined' && window.ResizeObserver) {
 }
 
 // 独立落地页分流：/reset-password（Spec F1）、/verify-email（Spec D3）、
-// /share/:code（Spec K2 公开只读分享）。
+// /share/:code（Spec K2 公开只读分享）、/profile（仅自己可见的个人中心，页内自行补 Provider）。
 // 生产由 server.ts SPA fallback、开发由 vite appType:'spa' 兜底到本应用。
 const pathname = window.location.pathname;
 let StandalonePage: ComponentType | null = null;
 if (pathname === '/reset-password') StandalonePage = ResetPasswordPage;
 else if (pathname === '/verify-email') StandalonePage = VerifyEmailPage;
 else if (pathname.startsWith('/share/')) StandalonePage = SharePage;
+else if (pathname === '/profile') StandalonePage = ProfilePage;
 
 // 服务端注入的静态回退块（仅供不执行 JS 的爬虫读取，见 server/lib/seo.ts）在 React 接管前
 // 整体移除：留着会同时出现两个 H1 与一份隐藏正文。移除后稳态 DOM 里只有 React 内容。
