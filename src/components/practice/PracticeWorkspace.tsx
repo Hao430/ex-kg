@@ -17,6 +17,7 @@ import {
   PanelLeftOpen,
 } from 'lucide-react';
 import * as quizStore from '../../lib/quiz-store';
+import { buildHistoryRows } from '../../lib/quiz-history-groups';
 import type { AuthUser } from '../../types';
 import {
   BrandLogo,
@@ -172,6 +173,16 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
   const [questionType, setQuestionType] = useState<QuizQuestionTypePreference>('all');
   const [count, setCount] = useState(5);
   const [historyFilter, setHistoryFilter] = useState<'all' | 'mistakes'>('all');
+  /** 折叠组展开态：以 topic 为键，仅本地状态；默认全折叠，筛选切换不重置 */
+  const [expandedTopics, setExpandedTopics] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleTopic = useCallback((topic: string) => {
+    setExpandedTopics((prev) => {
+      const next = new Set(prev);
+      if (next.has(topic)) next.delete(topic);
+      else next.add(topic);
+      return next;
+    });
+  }, []);
   const [serverStats, setServerStats] = useState<QuizStats | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -261,6 +272,7 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
     }
     if (changed) {
       detailSeqRef.current += 1;
+      setExpandedTopics(new Set());
       setPhase({ kind: 'form' });
       setChoices({});
     }
@@ -393,12 +405,10 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
     [historyView.items],
   );
 
-  const displayedHistoryItems = useMemo(
-    () =>
-      historyFilter === 'mistakes'
-        ? historyView.items.filter((h) => h.status === 'completed' && h.correctCount !== null && h.correctCount < h.total)
-        : historyView.items,
-    [historyFilter, historyView.items],
+  /** 派生行：分组 → 筛选 → 渲染，基于当前已加载快照（不跨服务端页聚合） */
+  const displayedRows = useMemo(
+    () => buildHistoryRows(historyView.items, historyFilter),
+    [historyView.items, historyFilter],
   );
 
   const handleStartNewWithTopic = (t: string, d?: QuizDifficulty) => {
@@ -567,7 +577,9 @@ export const PracticeWorkspace: React.FC<PracticeWorkspaceProps> = ({
           historyFilter={historyFilter}
           onSetHistoryFilter={setHistoryFilter}
           masteryStats={masteryStats}
-          displayedHistoryItems={displayedHistoryItems}
+          displayedRows={displayedRows}
+          expandedTopics={expandedTopics}
+          onToggleTopic={toggleTopic}
           mistakeItemsCount={mistakeItemsCount}
           currentAttemptId={currentAttemptId}
           onStartNew={() => {
