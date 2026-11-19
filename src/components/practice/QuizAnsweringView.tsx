@@ -7,8 +7,12 @@
  * 1. 顶部测验进度看板（动态进度条 + 题目跳转胶囊）
  * 2. 逐题作答卡片（单选 / 判断、选中动效、键盘可访问性）
  * 3. 底部悬浮交卷栏（防重复提交、完成度感知）
+ *
+ * 卷面顺序：按真实试卷惯例，单选题在前、判断题在后，分节呈现；
+ * 题号与跳转胶囊按分节后的顺序全局连续编号。判卷按 questionId 匹配，
+ * 与显示顺序无关。
  */
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   Check,
   CheckCircle2,
@@ -42,6 +46,14 @@ export const QuizAnsweringView: React.FC<QuizAnsweringViewProps> = ({
   submitting = false,
 }) => {
   const total = attempt.questions.length;
+
+  // 按题型分节：单选题在前、判断题在后；题号与跳转胶囊沿用该顺序
+  const ordered = useMemo(() => {
+    const singles = attempt.questions.filter((q) => q.type === 'single');
+    const judges = attempt.questions.filter((q) => q.type === 'true_false');
+    return { singles, judges, all: [...singles, ...judges] };
+  }, [attempt.questions]);
+
   const answeredCount = attempt.questions.filter(
     (q) => choices[q.id] || choices[q.id.replace(/^q_att_/, 'q_')],
   ).length;
@@ -91,10 +103,10 @@ export const QuizAnsweringView: React.FC<QuizAnsweringViewProps> = ({
           />
         </div>
 
-        {/* 快速题目跳转胶囊 */}
+        {/* 快速题目跳转胶囊（按分节后的卷面顺序） */}
         <div className="flex items-center gap-1.5 pt-1 overflow-x-auto pb-0.5">
           <span className="text-xxs text-slate-400 font-medium shrink-0 mr-1">跳至题目:</span>
-          {attempt.questions.map((q, i) => {
+          {ordered.all.map((q, i) => {
             const hasAnswer = Boolean(choices[q.id] || choices[q.id.replace(/^q_att_/, 'q_')]);
             return (
               <button
@@ -115,103 +127,121 @@ export const QuizAnsweringView: React.FC<QuizAnsweringViewProps> = ({
         </div>
       </div>
 
-      {/* 题目卡片列表 */}
-      {attempt.questions.map((q, i) => {
+      {/* 题目卡片列表：单选题在前、判断题在后，分节呈现 */}
+      {ordered.all.map((q, i) => {
         const pickedVal = choices[q.id] ?? choices[q.id.replace(/^q_att_/, 'q_')];
         const isAnswered = Boolean(pickedVal);
 
-        return (
-          <div
-            key={q.id}
-            id={`quiz-question-${i}`}
-            className={`p-5 sm:p-6 rounded-2xl bg-white dark:bg-[#0c1222] border transition-all duration-200 shadow-xs flex flex-col gap-4 ${
-              isAnswered
-                ? 'border-slate-200/90 dark:border-slate-800/90'
-                : 'border-slate-200 dark:border-slate-800'
-            }`}
-          >
-            <div className="flex items-start gap-3">
-              <span
-                className={`w-7 h-7 rounded-xl font-bold text-xs flex items-center justify-center shrink-0 transition-colors ${
-                  isAnswered
-                    ? 'bg-indigo-600 text-white shadow-2xs'
-                    : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
-                }`}
-              >
-                {i + 1}
-              </span>
-              <div className="flex-1 min-w-0">
-                <span className="text-xxs font-semibold text-slate-400 uppercase tracking-wider block mb-1">
-                  {q.type === 'single' ? '单选题' : '判断题'}
-                </span>
-                <p className="text-sm font-semibold text-slate-850 dark:text-slate-100 leading-relaxed">
-                  {q.stem}
-                </p>
-              </div>
-            </div>
+        // 分节起始：第一节单选（i===0），或判断题首题（紧接单选之后）
+        const isSectionStart =
+          (q.type === 'single' && i === 0) ||
+          (q.type === 'true_false' && i === ordered.singles.length);
+        const sectionTitle =
+          q.type === 'single'
+            ? `一、单选题（共 ${ordered.singles.length} 题）`
+            : `${ordered.singles.length > 0 ? '二' : '一'}、判断题（共 ${ordered.judges.length} 题）`;
 
-            {/* 单选题选项列表 */}
-            {q.type === 'single' && q.options ? (
-              <div className="flex flex-col gap-2 pt-1 pl-0 sm:pl-10">
-                {q.options.map((o) => {
-                  const isPicked = pickedVal === o.label;
-                  return (
-                    <button
-                      key={o.label}
-                      type="button"
-                      onClick={() => onPickChoice(q.id, o.label)}
-                      className={`flex items-start gap-3 p-3.5 rounded-xl border text-left text-xs transition-all cursor-pointer group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
-                        isPicked
-                          ? 'border-indigo-600 bg-indigo-50/80 dark:bg-indigo-950/40 dark:border-indigo-500 font-medium shadow-xs'
-                          : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 hover:bg-slate-50/60 dark:hover:bg-slate-900/50'
-                      }`}
-                    >
-                      <span
-                        className={`w-5 h-5 rounded-md text-xs font-bold flex items-center justify-center shrink-0 transition-colors ${
-                          isPicked
-                            ? 'bg-indigo-600 text-white shadow-2xs'
-                            : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 group-hover:bg-slate-200 dark:group-hover:bg-slate-700'
-                        }`}
-                      >
-                        {o.label}
-                      </span>
-                      <span className="flex-1 pt-0.5 text-slate-800 dark:text-slate-200 leading-relaxed">
-                        {o.text}
-                      </span>
-                      {isPicked && (
-                        <Check className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0 mt-0.5" />
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            ) : (
-              /* 判断题选项 */
-              <div className="flex gap-3 pl-0 sm:pl-10">
-                {[
-                  ['true', '✓ 正确'],
-                  ['false', '✕ 错误'],
-                ].map(([val, label]) => {
-                  const isPicked = pickedVal === val;
-                  return (
-                    <button
-                      key={val}
-                      type="button"
-                      onClick={() => onPickChoice(q.id, val)}
-                      className={`flex-1 py-3 px-4 rounded-xl border font-semibold text-xs text-center transition-all cursor-pointer flex items-center justify-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
-                        isPicked
-                          ? 'border-indigo-600 bg-indigo-50/80 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 shadow-xs'
-                          : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50/60 dark:hover:bg-slate-900/50'
-                      }`}
-                    >
-                      <span>{label}</span>
-                      {isPicked && <Check className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />}
-                    </button>
-                  );
-                })}
+        return (
+          <React.Fragment key={q.id}>
+            {isSectionStart && (
+              <div className="flex items-center gap-2.5 pt-1">
+                <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400 tracking-wide shrink-0">
+                  {sectionTitle}
+                </span>
+                <span className="flex-1 h-px bg-slate-200/80 dark:bg-slate-800" />
               </div>
             )}
-          </div>
+            <div
+              id={`quiz-question-${i}`}
+              className={`p-5 sm:p-6 rounded-2xl bg-white dark:bg-[#0c1222] border transition-all duration-200 shadow-xs flex flex-col gap-4 ${
+                isAnswered
+                  ? 'border-slate-200/90 dark:border-slate-800/90'
+                  : 'border-slate-200 dark:border-slate-800'
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                <span
+                  className={`w-7 h-7 rounded-xl font-bold text-xs flex items-center justify-center shrink-0 transition-colors ${
+                    isAnswered
+                      ? 'bg-indigo-600 text-white shadow-2xs'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
+                  }`}
+                >
+                  {i + 1}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <span className="text-xxs font-semibold text-slate-400 uppercase tracking-wider block mb-1">
+                    {q.type === 'single' ? '单选题' : '判断题'}
+                  </span>
+                  <p className="text-sm font-semibold text-slate-850 dark:text-slate-100 leading-relaxed">
+                    {q.stem}
+                  </p>
+                </div>
+              </div>
+
+              {/* 单选题选项列表 */}
+              {q.type === 'single' && q.options ? (
+                <div className="flex flex-col gap-2 pt-1 pl-0 sm:pl-10">
+                  {q.options.map((o) => {
+                    const isPicked = pickedVal === o.label;
+                    return (
+                      <button
+                        key={o.label}
+                        type="button"
+                        onClick={() => onPickChoice(q.id, o.label)}
+                        className={`flex items-start gap-3 p-3.5 rounded-xl border text-left text-xs transition-all cursor-pointer group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
+                          isPicked
+                            ? 'border-indigo-600 bg-indigo-50/80 dark:bg-indigo-950/40 dark:border-indigo-500 font-medium shadow-xs'
+                            : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 hover:bg-slate-50/60 dark:hover:bg-slate-900/50'
+                        }`}
+                      >
+                        <span
+                          className={`w-5 h-5 rounded-md text-xs font-bold flex items-center justify-center shrink-0 transition-colors ${
+                            isPicked
+                              ? 'bg-indigo-600 text-white shadow-2xs'
+                              : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 group-hover:bg-slate-200 dark:group-hover:bg-slate-700'
+                          }`}
+                        >
+                          {o.label}
+                        </span>
+                        <span className="flex-1 pt-0.5 text-slate-800 dark:text-slate-200 leading-relaxed">
+                          {o.text}
+                        </span>
+                        {isPicked && (
+                          <Check className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0 mt-0.5" />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                /* 判断题选项 */
+                <div className="flex gap-3 pl-0 sm:pl-10">
+                  {[
+                    ['true', '✓ 正确'],
+                    ['false', '✕ 错误'],
+                  ].map(([val, label]) => {
+                    const isPicked = pickedVal === val;
+                    return (
+                      <button
+                        key={val}
+                        type="button"
+                        onClick={() => onPickChoice(q.id, val)}
+                        className={`flex-1 py-3 px-4 rounded-xl border font-semibold text-xs text-center transition-all cursor-pointer flex items-center justify-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
+                          isPicked
+                            ? 'border-indigo-600 bg-indigo-50/80 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 shadow-xs'
+                            : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50/60 dark:hover:bg-slate-900/50'
+                        }`}
+                      >
+                        <span>{label}</span>
+                        {isPicked && <Check className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </React.Fragment>
         );
       })}
 
